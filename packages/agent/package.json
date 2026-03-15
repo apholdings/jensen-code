@@ -33,7 +33,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/apholdings/jensen-code",
+		"url": "git+https://github.com/apholdings/jensen-code.git",
 		"directory": "packages/agent"
 	},
 	"homepage": "https://github.com/apholdings/jensen-code/tree/main/packages/agent",
