@@ -50,5 +50,10 @@
 		"mini-lit"
 	],
 	"author": "AP Holdings",
-	"license": "MIT"
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/apholdings/jensen-code",
+		"directory": "packages/web-ui"
+	}
 }

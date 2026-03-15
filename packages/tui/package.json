@@ -32,7 +32,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/apholdings/jensen-code.git",
+		"url": "https://github.com/apholdings/jensen-code",
 		"directory": "packages/tui"
 	},
 	"homepage": "https://github.com/apholdings/jensen-code/tree/main/packages/tui",
