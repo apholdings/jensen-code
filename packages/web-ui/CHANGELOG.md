@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.57.2
+
+### Patch Changes
+
+- a55721e: Normalize package publish metadata and internal dependency ranges for the Changesets-based release flow.
+- Updated dependencies [a55721e]
+  - @apholdings/jensen-ai@0.0.2
+
 ## [Unreleased]
 
 ## [0.57.1] - 2026-03-07
@@ -231,6 +239,7 @@
 - **`createStreamFn`**: Creates a stream function with CORS proxy support. Reads proxy settings on each call for dynamic configuration.
 
 - **Default `streamFn` and `getApiKey`**: `AgentInterface` now sets sensible defaults if not provided:
+
   - `streamFn`: Uses `createStreamFn` with proxy settings from storage
   - `getApiKey`: Reads from `providerKeys` storage
 
@@ -249,6 +258,7 @@
 ### Migration Guide
 
 **Before (0.30.x):**
+
 ```typescript
 import { Agent, ProviderTransport, type AppMessage } from '@apholdings/jensen-web-ui';
 
@@ -259,20 +269,22 @@ const agent = new Agent({
 ```
 
 **After:**
+
 ```typescript
-import { Agent, type AgentMessage } from '@apholdings/jensen-agent-core';
-import { defaultConvertToLlm } from '@apholdings/jensen-web-ui';
+import { Agent, type AgentMessage } from "@apholdings/jensen-agent-core";
+import { defaultConvertToLlm } from "@apholdings/jensen-web-ui";
 
 const agent = new Agent({
   convertToLlm: (messages: AgentMessage[]) => {
     // Extend defaultConvertToLlm for custom types
     return defaultConvertToLlm(messages);
-  }
+  },
 });
 // AgentInterface will set streamFn and getApiKey defaults automatically
 ```
 
 **Custom message types:**
+
 ```typescript
 // Before: declaration merging on CustomMessages
 declare module "@apholdings/jensen-web-ui" {

@@ -1,6 +1,6 @@
 {
 	"name": "@apholdings/jensen-pods",
-	"version": "0.0.1",
+	"version": "0.0.2",
 	"description": "CLI tool for managing vLLM deployments on GPU pods",
 	"type": "module",
 	"bin": {
@@ -37,7 +37,7 @@
 	},
 	"dependencies": {
 		"chalk": "^5.5.0",
-		"@apholdings/jensen-agent-core": "^0.0.2"
+		"@apholdings/jensen-agent-core": "^0.0.3"
 	},
 	"devDependencies": {}
 }
