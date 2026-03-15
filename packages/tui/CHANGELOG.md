@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0
+
+### Minor Changes
+
+- 2f3d37c: chore: version bump all packages
+
 ## [Unreleased]
 
 ## [0.0.1] - 2026-03-15

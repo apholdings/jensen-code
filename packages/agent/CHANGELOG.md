@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.0
+
+### Minor Changes
+
+- 2f3d37c: chore: version bump all packages
+
+### Patch Changes
+
+- Updated dependencies [a55721e]
+- Updated dependencies [2f3d37c]
+  - @apholdings/jensen-ai@0.1.0
+
 ## [Unreleased]
 
 ## [0.0.1] - 2026-03-15
@@ -247,6 +259,7 @@
 - **Transport abstraction removed**: `ProviderTransport`, `AppTransport`, and `AgentTransport` interface have been removed. Use the `streamFn` option directly for custom streaming implementations.
 
 - **Agent options renamed**:
+
   - `transport` → removed (use `streamFn` instead)
   - `messageTransformer` → `convertToLlm`
   - `preprocessor` → `transformContext`
