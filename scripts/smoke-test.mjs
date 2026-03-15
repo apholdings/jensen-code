@@ -70,12 +70,12 @@ try {
 	}
 
 	const findCmd = process.platform === 'win32' 
-		? `findstr /s /i /c:"@mariozechner/pi-ai" "${tempDir}\\node_modules\\@apholdings\\*.js"`
-		: `grep -r "@mariozechner/pi-ai" "${tempDir}/node_modules/@apholdings"`;
+		? `findstr /s /i /c:"@mariozechner/pi" "${tempDir}\\node_modules\\@apholdings\\*.js"`
+		: `grep -r "@mariozechner/pi" "${tempDir}/node_modules/@apholdings"`;
 	console.log(`> ${findCmd}`);
 	try {
 		execSync(findCmd);
-		throw new Error('Found stale import "@mariozechner/pi-ai" in installed files!');
+		throw new Error('Found stale import "@mariozechner/pi" in installed files!');
 	} catch (e) {
 		// findstr returns exit code 1 if NOT found, which is what we want
 		console.log('  SUCCESS: No stale imports found in installed files.');

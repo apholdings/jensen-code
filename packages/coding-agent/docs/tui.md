@@ -4,7 +4,7 @@
 
 Extensions and custom tools can render custom TUI components for interactive user interfaces. This page covers the component system and available building blocks.
 
-**Source:** [`@apholdings/jensen-tui`](https://github.com/badlogic/pi-mono/tree/main/packages/tui)
+**Source:** [`@apholdings/jensen-tui`](https://github.com/apholdings/jensen-code/tree/main/packages/tui)
 
 ## Component Interface
 
