@@ -14,7 +14,7 @@
 		"build": "tsgo -p tsconfig.build.json",
 		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
 		"test": "vitest --run",
-		"prepublishOnly": "npm run clean && npm run build"
+		"prepublishOnly": "npm run clean && npm run build -w @apholdings/jensen-ai && npm run build"
 	},
 	"publishConfig": {
 		"access": "public"
