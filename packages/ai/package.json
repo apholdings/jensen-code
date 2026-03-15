@@ -69,7 +69,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/apholdings/jensen-code",
+		"url": "git+https://github.com/apholdings/jensen-code.git",
 		"directory": "packages/ai"
 	},
 	"engines": {

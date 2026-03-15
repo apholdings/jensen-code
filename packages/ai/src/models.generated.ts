@@ -9261,7 +9261,7 @@ export const MODELS = {
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
 			reasoning: true,
-			input: ["text"],
+			input: ["text", "image"],
 			cost: {
 				input: 0,
 				output: 0,
