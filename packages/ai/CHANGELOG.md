@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.0
+
+### Minor Changes
+
+- 2f3d37c: chore: version bump all packages
+
+### Patch Changes
+
+- a55721e: Normalize package publish metadata and internal dependency ranges for the Changesets-based release flow.
+
 ## [Unreleased]
 
 ## [0.0.1] - 2026-03-15
