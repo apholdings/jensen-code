@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.7
+
+### Patch Changes
+
+- a55721e: Normalize package publish metadata and internal dependency ranges for the Changesets-based release flow.
+- Updated dependencies [a55721e]
+  - @apholdings/jensen-ai@0.0.2
+  - @apholdings/jensen-agent-core@0.0.3
+
 ## [Unreleased]
 
 ## [0.0.1] - 2026-03-13
@@ -7,6 +16,7 @@
 Jensen Code is a fork of [pi-mono](https://github.com/badlogic/pi-mono). This release marks the baseline for Jensen Code.
 
 ### Changed
+
 - Rebranded to Jensen Code
 - Updated repository and package metadata
 - Pointed update notifications and changelog links to the Jensen Code repository
@@ -25,16 +35,19 @@ Jensen Code is a fork of [pi-mono](https://github.com/badlogic/pi-mono). This re
 ## [0.57.1] - 2026-03-07
 
 ### New Features
+
 - Tree branch folding and segment-jump navigation in `/tree`, with `Ctrl+←`/`Ctrl+→` and `Alt+←`/`Alt+→` shortcuts while `←`/`→` and `Page Up`/`Page Down` remain available for paging. See [docs/tree.md](docs/tree.md) and [docs/keybindings.md](docs/keybindings.md).
 - `session_directory` extension event for customizing session directory paths before session manager creation. See [docs/extensions.md](docs/extensions.md).
 - Digit keybindings (`0-9`) in the TUI keybinding system, including modified combos like `ctrl+1`. See [docs/keybindings.md](docs/keybindings.md).
 
 ### Added
+
 - Added `/tree` branch folding and segment-jump navigation with `Ctrl+←`/`Ctrl+→` and `Alt+←`/`Alt+→`, while keeping `←`/`→` and `Page Up`/`Page Down` for paging ([#1724](https://github.com/badlogic/pi-mono/pull/1724) by [@Perlence](https://github.com/Perlence))
 - Added `session_directory` extension event that fires before session manager creation, allowing extensions to customize the session directory path based on cwd and other factors. CLI `--session-dir` flag takes precedence over extension-provided paths ([#1730](https://github.com/badlogic/pi-mono/pull/1730) by [@hjanuschka](https://github.com/hjanuschka)).
 - Added digit keys (`0-9`) to the keybinding system, including Kitty CSI-u and xterm `modifyOtherKeys` support for bindings like `ctrl+1` ([#1905](https://github.com/badlogic/pi-mono/issues/1905))
 
 ### Fixed
+
 - Fixed custom tool collapsed/expanded rendering in HTML exports. Custom tools that define different collapsed vs expanded displays now render correctly in exported HTML, with expandable sections when both states differ and direct display when only expanded exists ([#1934](https://github.com/badlogic/pi-mono/pull/1934) by [@aliou](https://github.com/aliou))
 - Fixed tmux startup guidance and keyboard setup warnings for modified key handling, including Ghostty `shift+enter=text:\n` remap guidance and tmux `extended-keys-format` detection ([#1872](https://github.com/badlogic/pi-mono/issues/1872))
 - Fixed z.ai context overflow recovery so `model_context_window_exceeded` errors trigger auto-compaction instead of surfacing as unhandled stop reason failures ([#1937](https://github.com/badlogic/pi-mono/issues/1937))
@@ -177,6 +190,7 @@ Jensen Code is a fork of [pi-mono](https://github.com/badlogic/pi-mono). This re
 - Fixed Bedrock `AWS_PROFILE` region resolution by honoring profile `region` values ([#1800](https://github.com/badlogic/pi-mono/issues/1800)).
 - Fixed Gemini 3.1 thinking-level detection for `google` and `google-vertex` providers ([#1785](https://github.com/badlogic/pi-mono/issues/1785)).
 - Fixed browser bundling compatibility for `@apholdings/jensen-ai` by removing Node-only side effects from default browser import paths ([#1814](https://github.com/badlogic/pi-mono/issues/1814)).
+
 ## [0.55.4] - 2026-03-02
 
 ### New Features
@@ -620,6 +634,7 @@ Jensen Code is a fork of [pi-mono](https://github.com/badlogic/pi-mono). This re
 ### Breaking Changes
 
 - **Extension tool signature change**: `ToolDefinition.execute` now uses `(toolCallId, params, signal, onUpdate, ctx)` parameter order to match `AgentTool.execute`. Previously it was `(toolCallId, params, onUpdate, ctx, signal)`. This makes wrapping built-in tools trivial since the first four parameters now align. Update your extensions by swapping the `signal` and `onUpdate` parameters:
+
   ```ts
   // Before
   async execute(toolCallId, params, onUpdate, ctx, signal) { ... }
@@ -953,6 +968,7 @@ There are multiple SDK breaking changes since v0.49.3. For the quickest migratio
 - Improved error message for OAuth authentication failures (expired credentials, offline) instead of generic 'No API key found' ([#849](https://github.com/badlogic/pi-mono/pull/849) by [@zedrdave](https://github.com/zedrdave))
 
 ### Fixed
+
 - Fixed `/model` selector scope toggle so you can switch between all and scoped models when scoped models are saved ([#844](https://github.com/badlogic/pi-mono/issues/844))
 - Fixed OpenAI Responses 400 error "reasoning without following item" when replaying aborted turns ([#838](https://github.com/badlogic/pi-mono/pull/838))
 - Fixed pi exiting with code 0 when cancelling resume session selection
@@ -1200,6 +1216,7 @@ There are multiple SDK breaking changes since v0.49.3. For the quickest migratio
 - `SessionManager.list()` and `SessionManager.listAll()` are now async, returning `Promise<SessionInfo[]>`. Callers must await them. ([#620](https://github.com/badlogic/pi-mono/pull/620) by [@tmustier](https://github.com/tmustier))
 
 ### Added
+
 - `/resume` selector now toggles between current-folder and all sessions with Tab, showing the session cwd in the All view and loading progress. ([#620](https://github.com/badlogic/pi-mono/pull/620) by [@tmustier](https://github.com/tmustier))
 - `SessionManager.list()` and `SessionManager.listAll()` accept optional `onProgress` callback for progress updates
 - `SessionInfo.cwd` field containing the session's working directory (empty string for old sessions)
@@ -1979,10 +1996,7 @@ See [docs/custom-tools.md](docs/custom-tools.md) and [examples/custom-tools/](ex
 `ModelRegistry` is a new class that manages model discovery and API key resolution. It combines built-in models with custom models from `models.json` and resolves API keys via `AuthStorage`.
 
 ```typescript
-import {
-  discoverAuthStorage,
-  discoverModels,
-} from "@apholdings/jensen-code";
+import { discoverAuthStorage, discoverModels } from "@apholdings/jensen-code";
 
 const authStorage = discoverAuthStorage(); // ~/.pi/agent/auth.json
 const modelRegistry = discoverModels(authStorage); // + ~/.pi/agent/models.json
@@ -3059,4 +3073,3 @@ Initial public release.
 - Message queueing during streaming responses
 - OAuth integration for Gmail and Google Calendar access
 - HTML export with syntax highlighting and collapsible sections
-
