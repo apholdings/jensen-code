@@ -52,6 +52,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install dependencies after versioning
+        run: npm install --no-package-lock
+
       - name: Detect unpublished package versions
         if: steps.changesets.outputs.hasChangesets == 'false'
         id: unpublished
@@ -108,7 +111,7 @@ jobs:
 
       - name: Publish to npm with OIDC
         if: steps.changesets.outputs.hasChangesets == 'false' && steps.unpublished.outputs.needs_publish == 'true'
-        run: npx changeset publish
+        run: npx changeset publish --access public
 
       - name: Push release tags
         if: steps.changesets.outputs.hasChangesets == 'false' && steps.unpublished.outputs.needs_publish == 'true'
