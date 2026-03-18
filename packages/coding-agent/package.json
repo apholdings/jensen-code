@@ -43,7 +43,7 @@
 		"access": "public"
 	},
 	"dependencies": {
-		"@apholdings/jensen-agent-core": "0.1.0",
+		"@apholdings/jensen-agent-core": "0.1.1",
 		"@apholdings/jensen-ai": "0.1.1",
 		"@apholdings/jensen-tui": "0.1.0",
 		"@mariozechner/jiti": "^2.6.2",

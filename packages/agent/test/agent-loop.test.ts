@@ -307,9 +307,10 @@ describe("agentLoop with AgentMessage", () => {
 		}
 	});
 
-	it("should inject queued messages and skip remaining tool calls", async () => {
+	it("should inject queued messages after current tool calls finish", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: string[] = [];
+		let steeringQueued = false;
 		const tool: AgentTool<typeof toolSchema, { value: string }> = {
 			name: "echo",
 			label: "Echo",
@@ -317,6 +318,9 @@ describe("agentLoop with AgentMessage", () => {
 			parameters: toolSchema,
 			async execute(_toolCallId, params) {
 				executed.push(params.value);
+				if (params.value === "first") {
+					steeringQueued = true;
+				}
 				return {
 					content: [{ type: "text", text: `ok:${params.value}` }],
 					details: { value: params.value },
@@ -341,8 +345,8 @@ describe("agentLoop with AgentMessage", () => {
 			model: createModel(),
 			convertToLlm: identityConverter,
 			getSteeringMessages: async () => {
-				// Return steering message after first tool executes
-				if (executed.length === 1 && !queuedDelivered) {
+				// Deliver steering after the current turn's tool phase completes
+				if (steeringQueued && !queuedDelivered) {
 					queuedDelivered = true;
 					return [queuedUserMessage];
 				}
@@ -385,19 +389,15 @@ describe("agentLoop with AgentMessage", () => {
 			events.push(event);
 		}
 
-		// Only first tool should have executed
-		expect(executed).toEqual(["first"]);
+		// Current-turn tool calls should still finish before steering is injected
+		expect(executed).toEqual(["first", "second"]);
 
-		// Second tool should be skipped
 		const toolEnds = events.filter(
 			(e): e is Extract<AgentEvent, { type: "tool_execution_end" }> => e.type === "tool_execution_end",
 		);
 		expect(toolEnds.length).toBe(2);
 		expect(toolEnds[0].isError).toBe(false);
-		expect(toolEnds[1].isError).toBe(true);
-		if (toolEnds[1].result.content[0]?.type === "text") {
-			expect(toolEnds[1].result.content[0].text).toContain("Skipped due to queued user message");
-		}
+		expect(toolEnds[1].isError).toBe(false);
 
 		// Queued message should appear in events
 		const queuedMessageEvent = events.find(
