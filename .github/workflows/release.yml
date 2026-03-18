@@ -113,7 +113,7 @@ jobs:
         if: steps.changesets.outputs.hasChangesets == 'false' && steps.unpublished.outputs.needs_publish == 'true'
         env:
           NPM_CONFIG_PROVENANCE: "true"
-        run: npx changeset publish --access public
+        run: node scripts/publish-unpublished-packages.mjs
 
       - name: Push release tags
         if: steps.changesets.outputs.hasChangesets == 'false' && steps.unpublished.outputs.needs_publish == 'true'
