@@ -73,8 +73,8 @@ import type {
 } from "../tools/index.js";
 
 export type { ExecOptions, ExecResult } from "../exec.js";
-export type { AppAction, KeybindingsManager } from "../keybindings.js";
 export type { AgentToolResult, AgentToolUpdateCallback };
+export type { AppAction, KeybindingsManager } from "../keybindings.js";
 
 // ============================================================================
 // UI Context
@@ -190,12 +190,12 @@ export interface ExtensionUIContext {
 	 * - `keybindings`: KeybindingsManager for app-level keybindings
 	 *
 	 * For full app keybinding support (escape, ctrl+d, model switching, etc.),
-	 * extend `CustomEditor` from `@apholdings/jensen-code` and call
+	 * extend `CustomEditor` from `@apholdings/jensen-coding-agent` and call
 	 * `super.handleInput(data)` for keys you don't handle.
 	 *
 	 * @example
 	 * ```ts
-	 * import { CustomEditor } from "@apholdings/jensen-code";
+	 * import { CustomEditor } from "@apholdings/jensen-coding-agent";
 	 *
 	 * class VimEditor extends CustomEditor {
 	 *   private mode: "normal" | "insert" = "insert";
@@ -339,7 +339,7 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	label: string;
 	/** Description for LLM */
 	description: string;
-	/** Optional one-line snippet for the Available tools section in the default system prompt. Falls back to description when omitted. */
+	/** Optional one-line snippet for the Available tools section in the default system prompt. Custom tools are omitted from that section when this is not provided. */
 	promptSnippet?: string;
 	/** Optional guideline bullets appended to the default system prompt Guidelines section when this tool is active. */
 	promptGuidelines?: string[];

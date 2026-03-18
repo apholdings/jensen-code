@@ -14,6 +14,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Corrected the deferred-tools queue test to match steering semantics: queued steering messages are injected before the next LLM call after the current assistant turn finishes its tool calls.
+
 ## [0.0.1] - 2026-03-15
 
 - Reset version for Jensen Code fork
