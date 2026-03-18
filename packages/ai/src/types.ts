@@ -19,6 +19,7 @@ export type Api = KnownApi | (string & {});
 export type KnownProvider =
 	| "amazon-bedrock"
 	| "anthropic"
+	| "deepseek"
 	| "google"
 	| "google-gemini-cli"
 	| "google-antigravity"

@@ -328,13 +328,27 @@ function createClient(
 	apiKey?: string,
 	optionsHeaders?: Record<string, string>,
 ) {
-	if (!apiKey) {
-		if (!process.env.OPENAI_API_KEY) {
+	const resolvedApiKey = apiKey || getEnvApiKey(model.provider);
+	if (!resolvedApiKey) {
+		if (model.provider === "deepseek") {
+			throw new Error(
+				"DeepSeek API key is required. Set DEEPSEEK_API_KEY environment variable or pass it as an argument.",
+			);
+		}
+		if (model.provider === "zai") {
+			throw new Error("Z.AI API key is required. Set ZAI_API_KEY environment variable or pass it as an argument.");
+		}
+		if (model.provider === "openrouter") {
+			throw new Error(
+				"OpenRouter API key is required. Set OPENROUTER_API_KEY environment variable or pass it as an argument.",
+			);
+		}
+		if (model.provider === "openai") {
 			throw new Error(
 				"OpenAI API key is required. Set OPENAI_API_KEY environment variable or pass it as an argument.",
 			);
 		}
-		apiKey = process.env.OPENAI_API_KEY;
+		throw new Error(`No API key for provider: ${model.provider}`);
 	}
 
 	const headers = { ...model.headers };
@@ -353,7 +367,7 @@ function createClient(
 	}
 
 	return new OpenAI({
-		apiKey,
+		apiKey: resolvedApiKey,
 		baseURL: model.baseUrl,
 		dangerouslyAllowBrowser: true,
 		defaultHeaders: headers,
@@ -784,15 +798,16 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 	const provider = model.provider;
 	const baseUrl = model.baseUrl;
 
+	const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
 	const isZai = provider === "zai" || baseUrl.includes("api.z.ai");
 
 	const isNonStandard =
+		isDeepSeek ||
 		provider === "cerebras" ||
 		baseUrl.includes("cerebras.ai") ||
 		provider === "xai" ||
 		baseUrl.includes("api.x.ai") ||
 		baseUrl.includes("chutes.ai") ||
-		baseUrl.includes("deepseek.com") ||
 		isZai ||
 		provider === "opencode" ||
 		baseUrl.includes("opencode.ai");
