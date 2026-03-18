@@ -111,6 +111,8 @@ jobs:
 
       - name: Publish to npm with OIDC
         if: steps.changesets.outputs.hasChangesets == 'false' && steps.unpublished.outputs.needs_publish == 'true'
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
         run: npx changeset publish --access public
 
       - name: Push release tags

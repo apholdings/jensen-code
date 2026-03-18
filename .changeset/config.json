@@ -2,7 +2,17 @@
   "$schema": "https://unpkg.com/@changesets/config@3.1.3/schema.json",
   "changelog": "@changesets/cli/changelog",
   "commit": false,
-  "fixed": [],
+  "fixed": [
+    [
+      "@apholdings/jensen-agent-core",
+      "@apholdings/jensen-ai",
+      "@apholdings/jensen-code",
+      "@apholdings/jensen-mom",
+      "@apholdings/jensen-pods",
+      "@apholdings/jensen-tui",
+      "@apholdings/jensen-web-ui"
+    ]
+  ],
   "linked": [],
   "access": "public",
   "baseBranch": "main",

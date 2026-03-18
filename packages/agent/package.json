@@ -17,7 +17,8 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"publishConfig": {
-		"access": "public"
+		"access": "public",
+		"provenance": true
 	},
 	"dependencies": {
 		"@apholdings/jensen-ai": "0.1.1"
