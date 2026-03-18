@@ -80,7 +80,7 @@ const GEMINI_CLI_HEADERS = {
 const DEFAULT_ANTIGRAVITY_VERSION = "1.18.4";
 
 function getAntigravityHeaders() {
-	const version = process.env.JENSEN_AI_ANTIGRAVITY_VERSION || DEFAULT_ANTIGRAVITY_VERSION;
+	const version = process.env.PI_AI_ANTIGRAVITY_VERSION || DEFAULT_ANTIGRAVITY_VERSION;
 	return {
 		"User-Agent": `antigravity/${version} darwin/arm64`,
 	};
@@ -548,6 +548,9 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli", GoogleGe
 							// Unwrap the response
 							const responseData = chunk.response;
 							if (!responseData) continue;
+							// Cloud Code Assist mirrors Gemini's responseId field. Keep the first non-empty one.
+							// A single streamed response should retain the same ID across chunks.
+							output.responseId ||= responseData.responseId;
 
 							const candidate = responseData.candidates?.[0];
 							if (candidate?.content?.parts) {
