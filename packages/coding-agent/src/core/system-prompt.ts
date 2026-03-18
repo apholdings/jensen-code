@@ -2,7 +2,7 @@
  * System prompt construction and project context loading
  */
 
-import { APP_NAME, getDocsPath, getExamplesPath, getReadmePath } from "../config.js";
+import { getDocsPath, getExamplesPath, getReadmePath } from "../config.js";
 import { formatSkillsForPrompt, type Skill } from "./skills.js";
 
 /** Tool descriptions for system prompt */
@@ -48,18 +48,9 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 		skills: providedSkills,
 	} = options;
 	const resolvedCwd = cwd ?? process.cwd();
+	const promptCwd = resolvedCwd.replace(/\\/g, "/");
 
-	const now = new Date();
-	const dateTime = now.toLocaleString("en-US", {
-		weekday: "long",
-		year: "numeric",
-		month: "long",
-		day: "numeric",
-		hour: "2-digit",
-		minute: "2-digit",
-		second: "2-digit",
-		timeZoneName: "short",
-	});
+	const date = new Date().toISOString().slice(0, 10);
 
 	const appendSection = appendSystemPrompt ? `\n\n${appendSystemPrompt}` : "";
 
@@ -88,9 +79,9 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 			prompt += formatSkillsForPrompt(skills);
 		}
 
-		// Add date/time and working directory last
-		prompt += `\nCurrent date and time: ${dateTime}`;
-		prompt += `\nCurrent working directory: ${resolvedCwd}`;
+		// Add date and working directory last
+		prompt += `\nCurrent date: ${date}`;
+		prompt += `\nCurrent working directory: ${promptCwd}`;
 
 		return prompt;
 	}
@@ -103,9 +94,10 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 	// Build tools list based on selected tools.
 	// Built-ins use toolDescriptions. Custom tools can provide one-line snippets.
 	const tools = selectedTools || ["read", "bash", "edit", "write"];
+	const visibleTools = tools.filter((name) => name in toolDescriptions || toolSnippets?.[name]);
 	const toolsList =
-		tools.length > 0
-			? tools
+		visibleTools.length > 0
+			? visibleTools
 					.map((name) => {
 						const snippet = toolSnippets?.[name] ?? toolDescriptions[name] ?? name;
 						return `- ${name}: ${snippet}`;
@@ -174,7 +166,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 
 	const guidelines = guidelinesList.map((g) => `- ${g}`).join("\n");
 
-	let prompt = `You are an expert coding assistant operating inside ${APP_NAME}, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
+	let prompt = `You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
 
 Available tools:
 ${toolsList}
@@ -184,13 +176,13 @@ In addition to the tools above, you may have access to other custom tools depend
 Guidelines:
 ${guidelines}
 
-${APP_NAME} documentation (read only when the user asks about ${APP_NAME} itself, its SDK, extensions, themes, skills, or TUI):
+Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
 - Main documentation: ${readmePath}
 - Additional docs: ${docsPath}
 - Examples: ${examplesPath} (extensions, custom tools, SDK)
-- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), ${APP_NAME} packages (docs/packages.md)
-- When working on ${APP_NAME} topics, read the docs and examples, and follow .md cross-references before implementing
-- Always read ${APP_NAME} .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`;
+- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md)
+- When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
+- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`;
 
 	if (appendSection) {
 		prompt += appendSection;
@@ -210,9 +202,9 @@ ${APP_NAME} documentation (read only when the user asks about ${APP_NAME} itself
 		prompt += formatSkillsForPrompt(skills);
 	}
 
-	// Add date/time and working directory last
-	prompt += `\nCurrent date and time: ${dateTime}`;
-	prompt += `\nCurrent working directory: ${resolvedCwd}`;
+	// Add date and working directory last
+	prompt += `\nCurrent date: ${date}`;
+	prompt += `\nCurrent working directory: ${promptCwd}`;
 
 	return prompt;
 }
