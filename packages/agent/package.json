@@ -20,7 +20,7 @@
 		"access": "public"
 	},
 	"dependencies": {
-		"@apholdings/jensen-ai": "0.1.0"
+		"@apholdings/jensen-ai": "0.1.1"
 	},
 	"keywords": [
 		"ai",
