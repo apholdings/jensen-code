@@ -109,10 +109,12 @@ jobs:
           }
           NODE
 
-      - name: Publish to npm with OIDC
+      - name: Publish to npm
         if: steps.changesets.outputs.hasChangesets == 'false' && steps.unpublished.outputs.needs_publish == 'true'
         env:
           NPM_CONFIG_PROVENANCE: "true"
+          JENSEN_NPM_PUBLISH_AUTH_MODE: ${{ vars.JENSEN_NPM_PUBLISH_AUTH_MODE || 'auto' }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: node scripts/publish-unpublished-packages.mjs
 
       - name: Push release tags

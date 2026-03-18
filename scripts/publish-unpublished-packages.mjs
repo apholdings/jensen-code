@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -42,6 +42,101 @@ function run(command, args, options = {}) {
 	});
 }
 
+function runWithOutput(command, args, options = {}) {
+	console.log(`$ ${command} ${args.join(" ")}`);
+	return spawnSync(command, args, {
+		encoding: "utf8",
+		stdio: "pipe",
+		...options,
+	});
+}
+
+function getPublishAuthMode() {
+	const requestedMode = process.env.JENSEN_NPM_PUBLISH_AUTH_MODE ?? "auto";
+	if (!["auto", "oidc", "token"].includes(requestedMode)) {
+		throw new Error(
+			`Invalid JENSEN_NPM_PUBLISH_AUTH_MODE: ${requestedMode}. Expected one of: auto, oidc, token.`,
+		);
+	}
+
+	const hasToken = Boolean(process.env.NODE_AUTH_TOKEN || process.env.NPM_TOKEN);
+	if (requestedMode === "auto") {
+		return hasToken ? "token" : "oidc";
+	}
+
+	return requestedMode;
+}
+
+function isAuthPublishFailure(output) {
+	const normalized = output.toLowerCase();
+	return (
+		normalized.includes("e404") ||
+		normalized.includes("not found or you do not have permission") ||
+		normalized.includes("could not be found or you do not have permission") ||
+		normalized.includes("trusted publisher") ||
+		normalized.includes("trusted publishing") ||
+		normalized.includes("you do not have permission to publish") ||
+		normalized.includes("authentication token") ||
+		normalized.includes("requires authentication") ||
+		normalized.includes("must be logged in to publish packages")
+	);
+}
+
+function publishPackage(pkg, authMode) {
+	console.log(`Publishing ${pkg.name}@${pkg.version} from ${pkg.dir}`);
+	const result = runWithOutput("npm", ["publish", "--access", "public", "--provenance"], {
+		cwd: pkg.dir,
+	});
+
+	if (result.stdout) {
+		process.stdout.write(result.stdout);
+	}
+	if (result.stderr) {
+		process.stderr.write(result.stderr);
+	}
+	if (result.status === 0) {
+		return;
+	}
+
+	const combinedOutput = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+	if (isAuthPublishFailure(combinedOutput)) {
+		const failureLines = combinedOutput
+			.split(/\r?\n/u)
+			.map((line) => line.trim())
+			.filter(Boolean)
+			.filter(
+					(line) =>
+						line.includes("E404") ||
+						line.toLowerCase().includes("not found or you do not have permission") ||
+						line.toLowerCase().includes("could not be found or you do not have permission") ||
+						line.toLowerCase().includes("trusted publish") ||
+						line.toLowerCase().includes("permission") ||
+						line.toLowerCase().includes("authentication"),
+			);
+		const details = failureLines.length > 0 ? `\nRelevant npm output:\n${failureLines.join("\n")}` : "";
+		const tokenHint =
+			authMode === "token"
+				? "Token mode was selected, so verify NODE_AUTH_TOKEN or NPM_TOKEN has publish access for the npm scope/package."
+				: "If npm token publishing is configured in CI, rerun with JENSEN_NPM_PUBLISH_AUTH_MODE=token or let auto mode pick it when NODE_AUTH_TOKEN / NPM_TOKEN is present.";
+
+		throw new Error(
+			[
+				`npm publish failed for ${pkg.name}@${pkg.version}.`,
+				"Publish failed before tagging, so no release tags were created.",
+				"Likely causes: missing npm trusted-publisher configuration for this package/repo, or insufficient npm organization/package publish permissions.",
+				tokenHint,
+				details,
+			]
+				.filter(Boolean)
+				.join("\n"),
+		);
+	}
+
+	throw new Error(
+		`npm publish failed for ${pkg.name}@${pkg.version} with exit code ${result.status ?? "unknown"}.`,
+	);
+}
+
 function hasTag(tagName) {
 	try {
 		execFileSync("git", ["rev-parse", "--verify", "--quiet", `refs/tags/${tagName}`], {
@@ -69,6 +164,11 @@ const packages = packageDirs
 	.filter((pkg) => pkg !== null);
 
 const unpublishedPackages = packages.filter((pkg) => !isPublished(pkg.name, pkg.version));
+const authMode = getPublishAuthMode();
+const hasToken = Boolean(process.env.NODE_AUTH_TOKEN || process.env.NPM_TOKEN);
+
+console.log(`Publish auth mode: ${authMode}`);
+console.log(`Token env present: ${hasToken}`);
 
 if (unpublishedPackages.length > 0) {
 	console.log("Unpublished packages detected:");
@@ -80,10 +180,7 @@ if (unpublishedPackages.length > 0) {
 }
 
 for (const pkg of unpublishedPackages) {
-	console.log(`Publishing ${pkg.name}@${pkg.version} from ${pkg.dir}`);
-	run("npm", ["publish", "--access", "public", "--provenance"], {
-		cwd: pkg.dir,
-	});
+	publishPackage(pkg, authMode);
 }
 
 for (const pkg of packages) {
