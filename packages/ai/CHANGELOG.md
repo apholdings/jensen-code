@@ -12,6 +12,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Regenerated the Z.AI model catalog to use `https://api.z.ai/api/paas/v4` as the generated base URL, keeping generated metadata aligned with runtime provider wiring.
+
 ## [0.0.1] - 2026-03-15
 
 - Reset version for Jensen Code fork

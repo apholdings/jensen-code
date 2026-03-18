@@ -112,6 +112,7 @@ export function getEnvApiKey(provider: any): string | undefined {
 	const envMap: Record<string, string> = {
 		openai: "OPENAI_API_KEY",
 		"azure-openai-responses": "AZURE_OPENAI_API_KEY",
+		deepseek: "DEEPSEEK_API_KEY",
 		google: "GEMINI_API_KEY",
 		groq: "GROQ_API_KEY",
 		cerebras: "CEREBRAS_API_KEY",
