@@ -38,7 +38,8 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"publishConfig": {
-		"access": "public"
+		"access": "public",
+		"provenance": true
 	},
 	"dependencies": {
 		"@anthropic-ai/sdk": "^0.73.0",

@@ -1,6 +1,6 @@
 {
 	"name": "@apholdings/jensen-mom",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Slack bot that delegates messages to Jensen Code",
 	"type": "module",
 	"bin": {
@@ -19,11 +19,12 @@
 		"prepublishOnly": "npm run clean && npm run build -w @apholdings/jensen-ai -w @apholdings/jensen-agent-core -w @apholdings/jensen-code && npm run build"
 	},
 	"publishConfig": {
-		"access": "public"
+		"access": "public",
+		"provenance": true
 	},
 	"dependencies": {
 		"@anthropic-ai/sandbox-runtime": "^0.0.16",
-		"@apholdings/jensen-code": "0.1.0",
+		"@apholdings/jensen-code": "0.1.1",
 		"@sinclair/typebox": "^0.34.0",
 		"@slack/socket-mode": "^2.0.0",
 		"@slack/web-api": "^7.0.0",
