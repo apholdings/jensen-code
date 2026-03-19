@@ -114,6 +114,7 @@ jobs:
         env:
           NPM_CONFIG_PROVENANCE: "true"
           JENSEN_NPM_PUBLISH_AUTH_MODE: ${{ vars.JENSEN_NPM_PUBLISH_AUTH_MODE || 'auto' }}
+          JENSEN_NPM_DIST_TAG: ${{ vars.JENSEN_NPM_DIST_TAG || 'fork' }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: node scripts/publish-unpublished-packages.mjs
 

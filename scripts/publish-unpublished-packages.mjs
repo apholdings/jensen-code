@@ -120,6 +120,10 @@ function getPublishAuthMode() {
 	return requestedMode;
 }
 
+function getPublishTag() {
+	return process.env.JENSEN_NPM_DIST_TAG ?? "latest";
+}
+
 function isAuthPublishFailure(output) {
 	const normalized = output.toLowerCase();
 	return (
@@ -135,11 +139,15 @@ function isAuthPublishFailure(output) {
 	);
 }
 
-function publishPackage(pkg, authMode) {
-	console.log(`Publishing ${pkg.name}@${pkg.version} from ${pkg.dir}`);
-	const result = runWithOutput("npm", ["publish", "--access", "public", "--provenance"], {
+function publishPackage(pkg, authMode, publishTag) {
+	console.log(`Publishing ${pkg.name}@${pkg.version} from ${pkg.dir} with dist-tag "${publishTag}"`);
+	const result = runWithOutput(
+		"npm",
+		["publish", "--access", "public", "--provenance", "--tag", publishTag],
+		{
 		cwd: pkg.dir,
-	});
+		},
+	);
 
 	if (result.stdout) {
 		process.stdout.write(result.stdout);
@@ -216,19 +224,21 @@ const packages = packageDirs
 	})
 	.filter((pkg) => pkg !== null);
 
+const publishTag = getPublishTag();
+
 for (const pkg of packages) {
 	const highestPublishedVersion = getHighestPublishedVersion(pkg.name);
 	if (!highestPublishedVersion) {
 		continue;
 	}
 
-	if (compareVersions(pkg.version, highestPublishedVersion) < 0) {
+	if (compareVersions(pkg.version, highestPublishedVersion) < 0 && publishTag === "latest") {
 		throw new Error(
 			[
-				`Version regression detected for ${pkg.name}.`,
+				`Version regression detected for ${pkg.name} when publishing with the "latest" dist-tag.`,
 				`Local version: ${pkg.version}`,
 				`Highest published version: ${highestPublishedVersion}`,
-				"Release versions must keep moving forward. Bump the monorepo lockstep version before publishing.",
+				`Set JENSEN_NPM_DIST_TAG to a fork-specific tag or bump the monorepo version above ${highestPublishedVersion}.`,
 			].join("\n"),
 		);
 	}
@@ -240,6 +250,7 @@ const hasToken = Boolean(process.env.NODE_AUTH_TOKEN || process.env.NPM_TOKEN);
 
 console.log(`Publish auth mode: ${authMode}`);
 console.log(`Token env present: ${hasToken}`);
+console.log(`Publish dist-tag: ${publishTag}`);
 
 if (unpublishedPackages.length > 0) {
 	console.log("Unpublished packages detected:");
@@ -251,7 +262,7 @@ if (unpublishedPackages.length > 0) {
 }
 
 for (const pkg of unpublishedPackages) {
-	publishPackage(pkg, authMode);
+	publishPackage(pkg, authMode, publishTag);
 }
 
 for (const pkg of packages) {
