@@ -34,6 +34,59 @@ function isPublished(name, version) {
 	}
 }
 
+function parseVersion(version) {
+	const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+	if (!match) {
+		throw new Error(`Unsupported version format: ${version}`);
+	}
+
+	return match.slice(1).map((part) => Number(part));
+}
+
+function compareVersions(left, right) {
+	const leftParts = parseVersion(left);
+	const rightParts = parseVersion(right);
+
+	for (let index = 0; index < leftParts.length; index += 1) {
+		const delta = leftParts[index] - rightParts[index];
+		if (delta !== 0) {
+			return delta;
+		}
+	}
+
+	return 0;
+}
+
+function getPublishedVersions(name) {
+	try {
+		const output = execFileSync("npm", ["view", name, "versions", "--json"], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+		}).trim();
+		if (!output) {
+			return [];
+		}
+
+		const parsed = JSON.parse(output);
+		if (Array.isArray(parsed)) {
+			return parsed;
+		}
+
+		return typeof parsed === "string" ? [parsed] : [];
+	} catch {
+		return [];
+	}
+}
+
+function getHighestPublishedVersion(name) {
+	const versions = getPublishedVersions(name);
+	if (versions.length === 0) {
+		return null;
+	}
+
+	return versions.sort(compareVersions).at(-1) ?? null;
+}
+
 function run(command, args, options = {}) {
 	console.log(`$ ${command} ${args.join(" ")}`);
 	execFileSync(command, args, {
@@ -162,6 +215,24 @@ const packages = packageDirs
 		};
 	})
 	.filter((pkg) => pkg !== null);
+
+for (const pkg of packages) {
+	const highestPublishedVersion = getHighestPublishedVersion(pkg.name);
+	if (!highestPublishedVersion) {
+		continue;
+	}
+
+	if (compareVersions(pkg.version, highestPublishedVersion) < 0) {
+		throw new Error(
+			[
+				`Version regression detected for ${pkg.name}.`,
+				`Local version: ${pkg.version}`,
+				`Highest published version: ${highestPublishedVersion}`,
+				"Release versions must keep moving forward. Bump the monorepo lockstep version before publishing.",
+			].join("\n"),
+		);
+	}
+}
 
 const unpublishedPackages = packages.filter((pkg) => !isPublished(pkg.name, pkg.version));
 const authMode = getPublishAuthMode();
