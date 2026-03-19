@@ -115,7 +115,7 @@ See [docs/providers.md](docs/providers.md) for detailed setup instructions.
 
 The interface from top to bottom:
 
-- **Startup header** - Shows shortcuts (`/hotkeys` for all), loaded AGENTS.md files, prompt templates, skills, and extensions
+- **Startup header** - Shows shortcuts (`/hotkeys` for all), loaded `JENSEN.md` context files, prompt templates, skills, and extensions
 - **Messages** - Your messages, assistant responses, tool calls and results, notifications, errors, and extension UI
 - **Editor** - Where you type; border color indicates thinking level
 - **Footer** - Working directory, session name, total token/cache usage, cost, context usage, current model
@@ -246,12 +246,12 @@ See [docs/settings.md](docs/settings.md) for all options.
 
 ## Context Files
 
-Pi loads `AGENTS.md` (or `CLAUDE.md`) at startup from:
-- `~/.pi/agent/AGENTS.md` (global)
-- Parent directories (walking up from cwd)
-- Current directory
+Pi loads instruction files at startup from the global config directory and each directory from the filesystem root down to `cwd`. At each level it uses the first matching file in this order:
+- `JENSEN.md` (preferred)
+- `AGENTS.md` (legacy fallback)
+- `CLAUDE.md`
 
-Use for project instructions, conventions, common commands. All matching files are concatenated.
+Use these files for project instructions, conventions, and common commands.
 
 ### System Prompt
 
@@ -569,4 +569,3 @@ MIT
 - [@apholdings/jensen-ai](https://www.npmjs.com/package/@apholdings/jensen-ai): Core LLM toolkit
 - [@apholdings/jensen-pods-agent](https://www.npmjs.com/package/@apholdings/jensen-pods-agent): Agent framework
 - [@apholdings/jensen-tui](https://www.npmjs.com/package/@apholdings/jensen-tui): Terminal UI components
-

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.3
+
+### Patch Changes
+
+- Promote `JENSEN.md` as the preferred project instruction file, keep `AGENTS.md` as a supported fallback with deprecation diagnostics, and update the related interactive messaging and documentation.
+- Updated dependencies
+  - @apholdings/jensen-ai@0.1.3
+  - @apholdings/jensen-agent-core@0.1.3
+  - @apholdings/jensen-tui@0.1.3
+
 ## 0.1.0
 
 ### Minor Changes
@@ -20,6 +30,7 @@
 ### Changed
 
 - Updated the bundled Z.AI default model wiring to consume the regenerated `@apholdings/jensen-ai` model catalog with the corrected base URL metadata.
+- Made `JENSEN.md` the primary instruction file for context discovery, while keeping `AGENTS.md` as a deprecated fallback and preferring `JENSEN.md` whenever both are present.
 
 ## [0.0.7] - 2026-03-15
 

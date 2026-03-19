@@ -8,7 +8,7 @@ Thanks for wanting to contribute! This guide exists to save both of us time.
 
 Using AI to write code is fine. You can gain understanding by interrogating an agent with access to the codebase until you grasp all edge cases and effects of your changes. What's not fine is submitting agent-generated slop without that understanding.
 
-If you use an agent, run it from the `jensen-code` root directory so it picks up `AGENTS.md` automatically. Your agent must follow the rules and guidelines in that file.
+If you use an agent, run it from the `jensen-code` root directory so it picks up `JENSEN.md` automatically. `AGENTS.md` still works as a fallback for now. Your agent must follow the rules and guidelines in that file.
 
 ## First-Time Contributors
 
@@ -31,7 +31,7 @@ npm run check  # must pass with no errors
 
 Do not edit `CHANGELOG.md`. Changelog entries are added by maintainers.
 
-If you're adding a new provider to `packages/ai`, see `AGENTS.md` for required tests.
+If you're adding a new provider to `packages/ai`, see `JENSEN.md` for required tests.
 
 ## Philosophy
 

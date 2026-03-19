@@ -19,7 +19,7 @@ const TITLE = packageJson.displayTitle ?? packageJson.productTitle ?? packageJso
 
 const VERSION = packageJson.version ? `v${packageJson.version}` : "v0.0.0";
 
-const LOGO = [" █████████ ", "██▓░░░░░▓██", "█░░░█░█░░░█", "█░░░░░░░░░█", " █████████ "];
+const LOGO = [" ████████████ ", "██▓░░░░░░░░▓██", "█░░░░█░░█░░░░█", "█░░░░░░░░░░░░█", " ████████████ "];
 
 const GRADIENT_STOPS: RGB[] = [
 	{ r: 0x1a, g: 0xf5, b: 0x8a },

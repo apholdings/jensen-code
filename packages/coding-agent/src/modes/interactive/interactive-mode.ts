@@ -48,6 +48,7 @@ import {
 } from "../../config.js";
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.js";
 import type { CompactionResult } from "../../core/compaction/index.js";
+import { describeContextFiles } from "../../core/context-files.js";
 import type {
 	ExtensionContext,
 	ExtensionRunner,
@@ -457,7 +458,7 @@ export class InteractiveMode {
 			.join("\n");
 
 		const resources = [
-			["Context files", "AGENTS.md or CLAUDE.md from global + parent directories"],
+			["Context files", `${describeContextFiles()} from global + parent directories`],
 			["Prompts", "/name-style prompt templates from prompts directories"],
 			["Skills", "/skill:name commands and automatic skill discovery"],
 			["Extensions", "custom tools, commands, UI, hooks, and provider integrations"],
@@ -1235,6 +1236,13 @@ export class InteractiveMode {
 		}
 
 		if (showDiagnostics) {
+			const contextDiagnostics = this.session.resourceLoader.getContextDiagnostics().diagnostics;
+			if (contextDiagnostics.length > 0) {
+				const warningLines = this.formatDiagnostics(contextDiagnostics, metadata);
+				container.addChild(new Text(`${theme.fg("warning", "[Context issues]")}\n${warningLines}`, 0, 0));
+				container.addChild(new Spacer(1));
+			}
+
 			const skillDiagnostics = skillsResult.diagnostics;
 			if (skillDiagnostics.length > 0) {
 				const warningLines = this.formatDiagnostics(skillDiagnostics, metadata);

@@ -1,6 +1,6 @@
 # Development
 
-See [AGENTS.md](../../../AGENTS.md) for additional guidelines.
+See [JENSEN.md](../../../JENSEN.md) for additional guidelines.
 
 ## Setup
 

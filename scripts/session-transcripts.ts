@@ -15,6 +15,11 @@ import { createInterface } from "readline";
 import { homedir } from "os";
 import { join, resolve } from "path";
 import { parseSessionEntries, type SessionMessageEntry } from "../packages/coding-agent/src/core/session-manager.js";
+import {
+	findContextFileInDir,
+	PRIMARY_CONTEXT_FILE,
+	LEGACY_CONTEXT_FILE,
+} from "../packages/coding-agent/src/core/context-files.js";
 import chalk from "chalk";
 
 const MAX_CHARS_PER_FILE = 100_000; // ~20k tokens, leaving room for prompt + analysis + output
@@ -247,19 +252,19 @@ async function main() {
 		return;
 	}
 
-	// Find AGENTS.md files to compare against
-	const globalAgentsMd = join(homedir(), ".jensen/agent/AGENTS.md");
-	const localAgentsMd = join(cwd, "AGENTS.md");
-	const agentsMdFiles = [globalAgentsMd, localAgentsMd].filter(existsSync);
-	const agentsMdSection =
-		agentsMdFiles.length > 0
-			? `STEP 1: Read the existing AGENTS.md file(s) to see what's already encoded:\n${agentsMdFiles.join("\n")}\n\nSTEP 2: `
+	// Find instruction files to compare against
+	const instructionFiles = [join(homedir(), ".jensen/agent"), cwd]
+		.map((dir) => findContextFileInDir(dir)?.path)
+		.filter((filePath): filePath is string => filePath !== undefined);
+	const instructionFilesSection =
+		instructionFiles.length > 0
+			? `STEP 1: Read the existing instruction file(s) to see what's already encoded (${PRIMARY_CONTEXT_FILE} is preferred; ${LEGACY_CONTEXT_FILE} is a fallback):\n${instructionFiles.join("\n")}\n\nSTEP 2: `
 			: "";
 
 	// Spawn subagents to analyze each file
 	const analysisPrompt = `You are analyzing session transcripts to identify recurring user instructions that could be automated.
 
-${agentsMdSection}READING THE TRANSCRIPT:
+${instructionFilesSection}READING THE TRANSCRIPT:
 The transcript file is large. Read it in chunks of 1000 lines using offset/limit parameters:
 1. First: read with limit=1000 (lines 1-1000)
 2. Then: read with offset=1001, limit=1000 (lines 1001-2000)
@@ -268,30 +273,30 @@ The transcript file is large. Read it in chunks of 1000 lines using offset/limit
 
 ANALYSIS TASK:
 Look for patterns where the user repeatedly gives similar instructions. These could become:
-- AGENTS.md entries: coding style rules, behavior guidelines, project conventions
+- ${PRIMARY_CONTEXT_FILE} entries: coding style rules, behavior guidelines, project conventions
 - Skills: multi-step workflows with external tools (search, browser, APIs)
 - Prompt templates: reusable prompts for common tasks
 
-Compare each pattern against the existing AGENTS.md content to determine if it's NEW or EXISTING.
+Compare each pattern against the existing instruction file content to determine if it's NEW or EXISTING.
 
 OUTPUT FORMAT (strict):
 Write a file with exactly this structure. Use --- as separator between patterns.
 
 PATTERN: <short descriptive name>
 STATUS: NEW | EXISTING
-TYPE: agents-md | skill | prompt-template
+TYPE: jensen-md | skill | prompt-template
 FREQUENCY: <number of times observed>
 EVIDENCE:
 - "<exact quote 1>"
 - "<exact quote 2>"
 - "<exact quote 3>"
 DRAFT:
-<proposed content for AGENTS.md entry, SKILL.md, or prompt template>
+<proposed content for JENSEN.md entry, SKILL.md, or prompt template>
 ---
 
 Rules:
 - Only include patterns that appear 2+ times
-- STATUS is NEW if not in AGENTS.md, EXISTING if already covered
+- STATUS is NEW if not in the existing instruction file, EXISTING if already covered
 - EVIDENCE must contain exact quotes from the transcripts
 - DRAFT must be ready-to-use content
 - If no patterns found, write "NO PATTERNS FOUND"
@@ -343,8 +348,8 @@ Rules:
 
 	const aggregationPrompt = `You are aggregating pattern analysis results from multiple summary files.
 
-STEP 1: Read the existing AGENTS.md file(s) to understand what patterns are already encoded:
-${agentsMdFiles.length > 0 ? agentsMdFiles.join("\n") : "(no AGENTS.md files found)"}
+STEP 1: Read the existing instruction file(s) to understand what patterns are already encoded:
+${instructionFiles.length > 0 ? instructionFiles.join("\n") : "(no instruction files found)"}
 
 STEP 2: Read ALL of the following summary files:
 ${summaryPaths}
@@ -354,14 +359,14 @@ STEP 3: Create a consolidated final summary that:
 2. Ranks patterns by total frequency across all files
 3. Groups by status (NEW first, then EXISTING) and type
 4. Provides the best/most complete DRAFT for each unique pattern
-5. Verify STATUS against AGENTS.md content (pattern may be marked NEW in summaries but actually exists)
+5. Verify STATUS against the existing instruction file content (pattern may be marked NEW in summaries but actually exists)
 
 OUTPUT FORMAT (strict):
 Write the final summary with this structure:
 
-# NEW PATTERNS (not yet in AGENTS.md)
+# NEW PATTERNS (not yet in JENSEN.md)
 
-## AGENTS.MD: <pattern name>
+## JENSEN.MD: <pattern name>
 Total Frequency: <sum across all files>
 Evidence:
 - "<best quotes>"
@@ -376,11 +381,11 @@ Draft:
 
 ---
 
-# EXISTING PATTERNS (already in AGENTS.md, for reference)
+# EXISTING PATTERNS (already in the instruction file, for reference)
 
 ## <pattern name>
 Total Frequency: <N>
-Already covered by: <quote relevant section from AGENTS.md>
+Already covered by: <quote relevant section from JENSEN.md or AGENTS.md>
 
 ---
 

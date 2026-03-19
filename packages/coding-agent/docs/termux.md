@@ -32,9 +32,9 @@ Clipboard operations use `termux-clipboard-set` and `termux-clipboard-get` when 
 
 Image clipboard is not supported on Termux (the `ctrl+v` image paste feature will not work).
 
-## Example AGENTS.md for Termux
+## Example JENSEN.md for Termux
 
-Create `~/.pi/agent/AGENTS.md` to help the agent understand the Termux environment:
+Create `~/.pi/agent/JENSEN.md` to help the agent understand the Termux environment:
 
 ```markdown
 # Agent Environment: Termux on Android
@@ -125,4 +125,3 @@ If npm fails, try clearing the cache:
 ```bash
 npm cache clean --force
 ```
-
