@@ -3,6 +3,8 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 
 const packageDirs = [
 	"packages/tui",
@@ -21,17 +23,6 @@ function readPackage(dir) {
 	}
 
 	return JSON.parse(readFileSync(packageJsonPath, "utf8"));
-}
-
-function isPublished(name, version) {
-	try {
-		execFileSync("npm", ["view", `${name}@${version}`, "version"], {
-			stdio: "ignore",
-		});
-		return true;
-	} catch {
-		return false;
-	}
 }
 
 function parseVersion(version) {
@@ -102,6 +93,109 @@ function runWithOutput(command, args, options = {}) {
 		stdio: "pipe",
 		...options,
 	});
+}
+
+function summarizeRegistryResponse(output) {
+	const trimmed = output.trim();
+	if (!trimmed) {
+		return "<empty>";
+	}
+
+	return trimmed.replace(/\s+/gu, " ").slice(0, 500);
+}
+
+export function checkPublishedVersion(name, version) {
+	const result = runWithOutput("npm", ["view", `${name}@${version}`, "version", "--json"]);
+	const stdout = (result.stdout ?? "").trim();
+	const stderr = (result.stderr ?? "").trim();
+
+	if (result.error) {
+		return {
+			published: false,
+			status: null,
+			stdout,
+			stderr,
+			summary: `spawn error: ${result.error.message}`,
+		};
+	}
+
+	if (result.status !== 0) {
+		return {
+			published: false,
+			status: result.status ?? null,
+			stdout,
+			stderr,
+			summary: `exit=${result.status ?? "unknown"} stdout=${summarizeRegistryResponse(stdout)} stderr=${summarizeRegistryResponse(stderr)}`,
+		};
+	}
+
+	if (!stdout) {
+		return {
+			published: false,
+			status: result.status ?? 0,
+			stdout,
+			stderr,
+			summary: "npm view returned success with empty stdout",
+		};
+	}
+
+	try {
+		const parsed = JSON.parse(stdout);
+		const published = Array.isArray(parsed) ? parsed.includes(version) : parsed === version;
+		return {
+			published,
+			status: result.status ?? 0,
+			stdout,
+			stderr,
+			summary: published
+				? `confirmed version ${version}`
+				: `unexpected npm view payload: ${summarizeRegistryResponse(stdout)}`,
+		};
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return {
+			published: false,
+			status: result.status ?? 0,
+			stdout,
+			stderr,
+			summary: `invalid JSON from npm view: ${message}; stdout=${summarizeRegistryResponse(stdout)}`,
+		};
+	}
+}
+
+export async function waitForPublishedVersion(name, version, options = {}) {
+	const {
+		maxAttempts = 6,
+		initialDelayMs = 1000,
+		maxDelayMs = 10000,
+		checkVersion = checkPublishedVersion,
+		sleep = delay,
+	} = options;
+
+	let lastSummary = "no registry response";
+
+	for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+		console.log(`[verify] ${name}@${version} attempt ${attempt}/${maxAttempts}`);
+		const result = await checkVersion(name, version);
+		lastSummary = result.summary;
+
+		if (result.published) {
+			console.log(`[verify] ${name}@${version} is available on npm (${lastSummary})`);
+			return;
+		}
+
+		console.log(`[verify] ${name}@${version} not visible yet: ${lastSummary}`);
+
+		if (attempt < maxAttempts) {
+			const waitMs = Math.min(initialDelayMs * 2 ** (attempt - 1), maxDelayMs);
+			console.log(`[verify] waiting ${waitMs}ms before retrying ${name}@${version}`);
+			await sleep(waitMs);
+		}
+	}
+
+	throw new Error(
+		`Published version verification failed for ${name}@${version} after ${maxAttempts} attempts. Last registry response: ${lastSummary}`,
+	);
 }
 
 function getPublishAuthMode() {
@@ -198,6 +292,15 @@ function publishPackage(pkg, authMode, publishTag) {
 	);
 }
 
+function createTagIfMissing(pkg) {
+	const tagName = `${pkg.name}@${pkg.version}`;
+	if (hasTag(tagName)) {
+		return;
+	}
+
+	run("git", ["tag", "-a", tagName, "-m", tagName]);
+}
+
 function hasTag(tagName) {
 	try {
 		execFileSync("git", ["rev-parse", "--verify", "--quiet", `refs/tags/${tagName}`], {
@@ -209,72 +312,84 @@ function hasTag(tagName) {
 	}
 }
 
-const packages = packageDirs
-	.map((dir) => {
-		const pkg = readPackage(dir);
-		if (!pkg || pkg.private) {
-			return null;
+export async function main() {
+	const packages = packageDirs
+		.map((dir) => {
+			const pkg = readPackage(dir);
+			if (!pkg || pkg.private) {
+				return null;
+			}
+
+			return {
+				dir,
+				name: pkg.name,
+				version: pkg.version,
+			};
+		})
+		.filter((pkg) => pkg !== null);
+
+	const publishTag = getPublishTag();
+
+	for (const pkg of packages) {
+		const highestPublishedVersion = getHighestPublishedVersion(pkg.name);
+		if (!highestPublishedVersion) {
+			continue;
 		}
 
-		return {
-			dir,
-			name: pkg.name,
-			version: pkg.version,
-		};
-	})
-	.filter((pkg) => pkg !== null);
-
-const publishTag = getPublishTag();
-
-for (const pkg of packages) {
-	const highestPublishedVersion = getHighestPublishedVersion(pkg.name);
-	if (!highestPublishedVersion) {
-		continue;
+		if (compareVersions(pkg.version, highestPublishedVersion) < 0 && publishTag === "latest") {
+			throw new Error(
+				[
+					`Version regression detected for ${pkg.name} when publishing with the "latest" dist-tag.`,
+					`Local version: ${pkg.version}`,
+					`Highest published version: ${highestPublishedVersion}`,
+					`Set JENSEN_NPM_DIST_TAG to a fork-specific tag or bump the monorepo version above ${highestPublishedVersion}.`,
+				].join("\n"),
+			);
+		}
 	}
 
-	if (compareVersions(pkg.version, highestPublishedVersion) < 0 && publishTag === "latest") {
-		throw new Error(
-			[
-				`Version regression detected for ${pkg.name} when publishing with the "latest" dist-tag.`,
-				`Local version: ${pkg.version}`,
-				`Highest published version: ${highestPublishedVersion}`,
-				`Set JENSEN_NPM_DIST_TAG to a fork-specific tag or bump the monorepo version above ${highestPublishedVersion}.`,
-			].join("\n"),
-		);
+	const authMode = getPublishAuthMode();
+	const hasToken = Boolean(process.env.NODE_AUTH_TOKEN || process.env.NPM_TOKEN);
+	const publishedStatuses = new Map(
+		packages.map((pkg) => [`${pkg.name}@${pkg.version}`, checkPublishedVersion(pkg.name, pkg.version)]),
+	);
+	const unpublishedPackages = packages.filter(
+		(pkg) => !publishedStatuses.get(`${pkg.name}@${pkg.version}`)?.published,
+	);
+
+	console.log(`Publish auth mode: ${authMode}`);
+	console.log(`Token env present: ${hasToken}`);
+	console.log(`Publish dist-tag: ${publishTag}`);
+
+	if (unpublishedPackages.length > 0) {
+		console.log("Unpublished packages detected:");
+		for (const pkg of unpublishedPackages) {
+			console.log(`- ${pkg.name}@${pkg.version}`);
+		}
+	} else {
+		console.log("No unpublished package versions detected.");
+	}
+
+	for (const pkg of packages) {
+		const key = `${pkg.name}@${pkg.version}`;
+		const publishedStatus = publishedStatuses.get(key);
+
+		if (publishedStatus?.published) {
+			createTagIfMissing(pkg);
+			continue;
+		}
+
+		publishPackage(pkg, authMode, publishTag);
+		await waitForPublishedVersion(pkg.name, pkg.version);
+		createTagIfMissing(pkg);
 	}
 }
 
-const unpublishedPackages = packages.filter((pkg) => !isPublished(pkg.name, pkg.version));
-const authMode = getPublishAuthMode();
-const hasToken = Boolean(process.env.NODE_AUTH_TOKEN || process.env.NPM_TOKEN);
+const entrypoint = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;
 
-console.log(`Publish auth mode: ${authMode}`);
-console.log(`Token env present: ${hasToken}`);
-console.log(`Publish dist-tag: ${publishTag}`);
-
-if (unpublishedPackages.length > 0) {
-	console.log("Unpublished packages detected:");
-	for (const pkg of unpublishedPackages) {
-		console.log(`- ${pkg.name}@${pkg.version}`);
-	}
-} else {
-	console.log("No unpublished package versions detected.");
-}
-
-for (const pkg of unpublishedPackages) {
-	publishPackage(pkg, authMode, publishTag);
-}
-
-for (const pkg of packages) {
-	if (!isPublished(pkg.name, pkg.version)) {
-		console.error(`Package ${pkg.name}@${pkg.version} is still not published. Skipping tag creation.`);
+if (entrypoint && import.meta.url === entrypoint) {
+	await main().catch((error) => {
+		console.error(error instanceof Error ? error.message : error);
 		process.exit(1);
-	}
-
-	const tagName = `${pkg.name}@${pkg.version}`;
-	if (hasTag(tagName)) {
-		continue;
-	}
-
-	run("git", ["tag", "-a", tagName, "-m", tagName]);
+	});
 }

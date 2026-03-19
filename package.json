@@ -23,6 +23,7 @@
 		"check": "biome check --write --error-on-warnings . && tsgo --noEmit && npm run check:browser-smoke && cd packages/web-ui && npm run check",
 		"check:browser-smoke": "esbuild scripts/browser-smoke-entry.ts --bundle --platform=browser --format=esm --log-limit=0 --outdir=.browser-smoke",
 		"test": "npm run test --workspaces --if-present",
+		"test:publish-script": "node --test scripts/publish-unpublished-packages.test.mjs",
 		"test:smoke": "node scripts/smoke-test.mjs",
 		"version:packages": "changeset version",
 		"prepublishOnly": "npm run clean && npm run build && npm run check",
