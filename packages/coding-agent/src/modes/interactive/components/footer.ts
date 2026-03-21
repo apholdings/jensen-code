@@ -72,19 +72,66 @@ export class FooterComponent implements Component {
 		return "success";
 	}
 
+	private compactPath(input: string, maxWidth = 44): string {
+		const normalized = input.replaceAll("/", process.platform === "win32" ? "\\" : "/");
+		if (normalized.length <= maxWidth) return normalized;
+
+		const separator = normalized.includes("\\") ? "\\" : "/";
+		const parts = normalized.split(separator).filter(Boolean);
+		if (parts.length <= 2) return normalized;
+
+		const first = normalized.startsWith(separator) ? separator : "";
+		const driveMatch = parts[0]?.match(/^[A-Za-z]:$/);
+		const head = driveMatch ? `${parts[0]}${separator}` : first;
+		const tail = parts.slice(-2).join(separator);
+		return `${head}…${separator}${tail}`;
+	}
+
+	private getLeftContent(): string {
+		const cwd = process.cwd();
+		const repo = this.footerData.getGitRepoName();
+		const branch = this.footerData.getGitBranch();
+
+		const parts: string[] = [];
+		parts.push(`${theme.fg("dim", "cwd")} ${this.compactPath(cwd)}`);
+		if (repo) {
+			parts.push(`${theme.fg("dim", "repo")} ${repo}`);
+		}
+		if (branch) {
+			parts.push(`${theme.fg("dim", "branch")} ${branch}`);
+		}
+		const separator = theme.fg("dim", " · ");
+		return parts.join(separator);
+	}
+
 	render(width: number): string[] {
 		if (width <= 0) return [""];
 
 		const separator = theme.fg("dim", " · ");
 		const ellipsis = theme.fg("dim", "...");
 
+		const left = this.getLeftContent();
 		const right = [
 			theme.fg("dim", "tok ") + theme.fg("success", this.getContextTokens()),
 			theme.fg("dim", "ctx ") + theme.fg(this.getContextPercentColor(), this.getContextPercentDisplay()),
 		].join(separator);
 
-		const gap = Math.max(0, width - visibleWidth(right) - 1);
-		const footerLine = truncateToWidth(`${" ".repeat(gap)} ${right}`, width, ellipsis);
+		const leftWidth = visibleWidth(left);
+		const rightWidth = visibleWidth(right);
+		const gap = width - leftWidth - rightWidth;
+
+		let footerLine: string;
+		if (gap >= 0) {
+			// Enough space: left aligned, right aligned
+			footerLine = left + " ".repeat(gap) + right;
+		} else {
+			// Not enough space, truncate left
+			const truncatedLeft = truncateToWidth(left, width - rightWidth - 1, ellipsis);
+			footerLine = `${truncatedLeft} ${right}`;
+		}
+
+		// Ensure we don't exceed width due to rounding errors
+		footerLine = truncateToWidth(footerLine, width, ellipsis);
 		const lines = [footerLine];
 
 		const extensionStatuses = this.footerData.getExtensionStatuses();

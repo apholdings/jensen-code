@@ -27,6 +27,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added working directory, repository, and branch information to the footer in interactive mode.
+
 ### Changed
 
 - Updated the bundled Z.AI default model wiring to consume the regenerated `@apholdings/jensen-ai` model catalog with the corrected base URL metadata.
