@@ -2283,7 +2283,7 @@ export class InteractiveMode {
 	 */
 	private showExtensionError(extensionPath: string, error: string, stack?: string): void {
 		const errorMsg = `Extension "${extensionPath}" error: ${error}`;
-		const errorText = new Text(theme.fg("error", errorMsg), 1, 0);
+		const errorText = new Text(theme.fg("error", errorMsg), 2, 0);
 		this.chatContainer.addChild(errorText);
 		if (stack) {
 			// Show stack trace in dim color, indented
@@ -2293,7 +2293,7 @@ export class InteractiveMode {
 				.map((line) => theme.fg("dim", `  ${line.trim()}`))
 				.join("\n");
 			if (stackLines) {
-				this.chatContainer.addChild(new Text(stackLines, 1, 0));
+				this.chatContainer.addChild(new Text(stackLines, 2, 0));
 			}
 		}
 		this.ui.requestRender();
@@ -2645,6 +2645,9 @@ export class InteractiveMode {
 						this.streamingComponent = undefined;
 					}
 
+					// Add spacing before new assistant message
+					this.chatContainer.addChild(new Spacer(1));
+
 					this.streamingComponent = new AssistantMessageComponent(
 						undefined,
 						this.hideThinkingBlock,
@@ -2675,6 +2678,17 @@ export class InteractiveMode {
 									this.ui,
 								);
 								component.setExpanded(this.toolOutputExpanded);
+								// Add spacing before tool execution
+								const lastChild =
+									this.chatContainer.children.length > 0
+										? this.chatContainer.children[this.chatContainer.children.length - 1]
+										: null;
+								if (
+									!lastChild ||
+									(!(lastChild instanceof Spacer) && !(lastChild instanceof ToolExecutionComponent))
+								) {
+									this.chatContainer.addChild(new Spacer(1));
+								}
 								this.chatContainer.addChild(component);
 								this.pendingTools.set(content.id, component);
 							} else {
@@ -2740,6 +2754,14 @@ export class InteractiveMode {
 						this.ui,
 					);
 					component.setExpanded(this.toolOutputExpanded);
+					// Add spacing before tool execution
+					const lastChild =
+						this.chatContainer.children.length > 0
+							? this.chatContainer.children[this.chatContainer.children.length - 1]
+							: null;
+					if (!lastChild || (!(lastChild instanceof Spacer) && !(lastChild instanceof ToolExecutionComponent))) {
+						this.chatContainer.addChild(new Spacer(1));
+					}
 					this.chatContainer.addChild(component);
 					this.pendingTools.set(event.toolCallId, component);
 					this.ui.requestRender();
@@ -2849,7 +2871,7 @@ export class InteractiveMode {
 				} else if (event.errorMessage) {
 					// Compaction failed (e.g., quota exceeded, API error)
 					this.chatContainer.addChild(new Spacer(1));
-					this.chatContainer.addChild(new Text(theme.fg("error", event.errorMessage), 1, 0));
+					this.chatContainer.addChild(new Text(theme.fg("error", event.errorMessage), 2, 0));
 				}
 				void this.flushCompactionQueue({ willRetry: event.willRetry });
 				this.ui.requestRender();
@@ -2936,7 +2958,7 @@ export class InteractiveMode {
 		}
 
 		const spacer = new Spacer(1);
-		const text = new Text(theme.fg("dim", message), 1, 0);
+		const text = new Text(theme.fg("dim", message), 2, 0);
 		this.chatContainer.addChild(spacer);
 		this.chatContainer.addChild(text);
 		this.lastStatusSpacer = spacer;
@@ -2945,6 +2967,15 @@ export class InteractiveMode {
 	}
 
 	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
+		// Add consistent spacing before each message, unless previous component already provides spacing
+		const lastChild =
+			this.chatContainer.children.length > 0
+				? this.chatContainer.children[this.chatContainer.children.length - 1]
+				: null;
+		if (!lastChild || (!(lastChild instanceof Spacer) && !(lastChild instanceof ToolExecutionComponent))) {
+			this.chatContainer.addChild(new Spacer(1));
+		}
+
 		switch (message.role) {
 			case "bashExecution": {
 				const component = new BashExecutionComponent(message.command, this.ui, message.excludeFromContext);
@@ -2970,14 +3001,12 @@ export class InteractiveMode {
 				break;
 			}
 			case "compactionSummary": {
-				this.chatContainer.addChild(new Spacer(1));
 				const component = new CompactionSummaryMessageComponent(message, this.getMarkdownThemeWithSettings());
 				component.setExpanded(this.toolOutputExpanded);
 				this.chatContainer.addChild(component);
 				break;
 			}
 			case "branchSummary": {
-				this.chatContainer.addChild(new Spacer(1));
 				const component = new BranchSummaryMessageComponent(message, this.getMarkdownThemeWithSettings());
 				component.setExpanded(this.toolOutputExpanded);
 				this.chatContainer.addChild(component);
@@ -2989,7 +3018,6 @@ export class InteractiveMode {
 					const skillBlock = parseSkillBlock(textContent);
 					if (skillBlock) {
 						// Render skill block (collapsible)
-						this.chatContainer.addChild(new Spacer(1));
 						const component = new SkillInvocationMessageComponent(
 							skillBlock,
 							this.getMarkdownThemeWithSettings(),
@@ -3065,6 +3093,17 @@ export class InteractiveMode {
 							this.ui,
 						);
 						component.setExpanded(this.toolOutputExpanded);
+						// Add spacing before tool execution
+						const lastChild =
+							this.chatContainer.children.length > 0
+								? this.chatContainer.children[this.chatContainer.children.length - 1]
+								: null;
+						if (
+							!lastChild ||
+							(!(lastChild instanceof Spacer) && !(lastChild instanceof ToolExecutionComponent))
+						) {
+							this.chatContainer.addChild(new Spacer(1));
+						}
 						this.chatContainer.addChild(component);
 
 						if (message.stopReason === "aborted" || message.stopReason === "error") {
@@ -3270,7 +3309,7 @@ export class InteractiveMode {
 	}
 
 	private getPromptPlaceholderText(): string {
-		return this.isBashMode ? "Run a bash command…" : " Type your message, @file, or /command";
+		return this.isBashMode ? "Run a bash command..." : " Type your message, @file, or /command";
 	}
 
 	private getPromptGlyphColor(): (str: string) => string {
@@ -3432,7 +3471,7 @@ export class InteractiveMode {
 	showError(errorMessage: string, ownerEpoch?: number): void {
 		if (ownerEpoch !== undefined && this.sessionEpoch !== ownerEpoch) return;
 		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new Text(theme.fg("error", `Error: ${errorMessage}`), 1, 0));
+		this.chatContainer.addChild(new Text(theme.fg("error", `Error: ${errorMessage}`), 2, 0));
 		this.ui.requestRender();
 	}
 
@@ -3466,7 +3505,7 @@ export class InteractiveMode {
 		if (ownerEpoch !== undefined && this.sessionEpoch !== ownerEpoch) return;
 		this.enqueueStartupNotice(() => {
 			this.chatContainer.addChild(new Spacer(1));
-			this.chatContainer.addChild(new Text(theme.fg("warning", `Warning: ${warningMessage}`), 1, 0));
+			this.chatContainer.addChild(new Text(theme.fg("warning", `Warning: ${warningMessage}`), 2, 0));
 		});
 	}
 
@@ -3486,7 +3525,7 @@ export class InteractiveMode {
 			this.chatContainer.addChild(
 				new Text(
 					`${theme.bold(theme.fg("warning", "Update Available"))}\n${updateInstruction}\n${changelogLine}`,
-					1,
+					2,
 					0,
 				),
 			);
@@ -3537,15 +3576,15 @@ export class InteractiveMode {
 			this.pendingMessagesContainer.addChild(new Spacer(1));
 			for (const message of steeringMessages) {
 				const text = theme.fg("dim", `Steering: ${message}`);
-				this.pendingMessagesContainer.addChild(new TruncatedText(text, 1, 0));
+				this.pendingMessagesContainer.addChild(new TruncatedText(text, 2, 0));
 			}
 			for (const message of followUpMessages) {
 				const text = theme.fg("dim", `Follow-up: ${message}`);
-				this.pendingMessagesContainer.addChild(new TruncatedText(text, 1, 0));
+				this.pendingMessagesContainer.addChild(new TruncatedText(text, 2, 0));
 			}
 			const dequeueHint = this.getAppKeyDisplay("dequeue");
 			const hintText = theme.fg("dim", `↳ ${dequeueHint} to edit all queued messages`);
-			this.pendingMessagesContainer.addChild(new TruncatedText(hintText, 1, 0));
+			this.pendingMessagesContainer.addChild(new TruncatedText(hintText, 2, 0));
 		}
 	}
 
@@ -4633,7 +4672,7 @@ export class InteractiveMode {
 			const currentName = this.sessionManager.getSessionName();
 			if (currentName) {
 				this.chatContainer.addChild(new Spacer(1));
-				this.chatContainer.addChild(new Text(theme.fg("dim", `Session name: ${currentName}`), 1, 0));
+				this.chatContainer.addChild(new Text(theme.fg("dim", `Session name: ${currentName}`), 2, 0));
 			} else {
 				this.showWarning("Usage: /name <name>");
 			}
@@ -4644,7 +4683,7 @@ export class InteractiveMode {
 		this.sessionManager.appendSessionInfo(name);
 		this.updateTerminalTitle();
 		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new Text(theme.fg("dim", `Session name set: ${name}`), 1, 0));
+		this.chatContainer.addChild(new Text(theme.fg("dim", `Session name set: ${name}`), 2, 0));
 		this.ui.requestRender();
 	}
 

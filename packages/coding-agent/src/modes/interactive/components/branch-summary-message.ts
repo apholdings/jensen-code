@@ -13,7 +13,7 @@ export class BranchSummaryMessageComponent extends Box {
 	private markdownTheme: MarkdownTheme;
 
 	constructor(message: BranchSummaryMessage, markdownTheme: MarkdownTheme = getMarkdownTheme()) {
-		super(1, 1, (t) => theme.bg("customMessageBg", t));
+		super(2, 1, (t) => theme.bg("customMessageBg", t));
 		this.message = message;
 		this.markdownTheme = markdownTheme;
 		this.updateDisplay();
@@ -33,13 +33,13 @@ export class BranchSummaryMessageComponent extends Box {
 		this.clear();
 
 		const label = theme.fg("customMessageLabel", `\x1b[1m[branch]\x1b[22m`);
-		this.addChild(new Text(label, 0, 0));
+		this.addChild(new Text(label, 2, 1));
 		this.addChild(new Spacer(1));
 
 		if (this.expanded) {
 			const header = "**Branch Summary**\n\n";
 			this.addChild(
-				new Markdown(header + this.message.summary, 0, 0, this.markdownTheme, {
+				new Markdown(header + this.message.summary, 2, 1, this.markdownTheme, {
 					color: (text: string) => theme.fg("customMessageText", text),
 				}),
 			);
@@ -49,8 +49,8 @@ export class BranchSummaryMessageComponent extends Box {
 					theme.fg("customMessageText", "Branch summary (") +
 						theme.fg("dim", editorKey("expandTools")) +
 						theme.fg("customMessageText", " to expand)"),
-					0,
-					0,
+					2,
+					1,
 				),
 			);
 		}

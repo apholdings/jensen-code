@@ -2,7 +2,7 @@
  * Component for displaying bash command execution with streaming output.
  */
 
-import { Container, Loader, Spacer, Text, type TUI } from "@apholdings/jensen-tui";
+import { Container, Loader, Text, type TUI } from "@apholdings/jensen-tui";
 import stripAnsi from "strip-ansi";
 import {
 	DEFAULT_MAX_BYTES,
@@ -39,8 +39,7 @@ export class BashExecutionComponent extends Container {
 		const colorKey = excludeFromContext ? "dim" : "bashMode";
 		const borderColor = (str: string) => theme.fg(colorKey, str);
 
-		// Add spacer
-		this.addChild(new Spacer(1));
+		// No spacer - spacing managed by parent container
 
 		// Top border
 		this.addChild(new DynamicBorder(borderColor));
@@ -50,7 +49,7 @@ export class BashExecutionComponent extends Container {
 		this.addChild(this.contentContainer);
 
 		// Command header
-		const header = new Text(theme.fg(colorKey, theme.bold(`$ ${command}`)), 1, 0);
+		const header = new Text(theme.fg(colorKey, theme.bold(`$ ${command}`)), 2, 1);
 		this.contentContainer.addChild(header);
 
 		// Loader
@@ -137,7 +136,7 @@ export class BashExecutionComponent extends Container {
 		this.contentContainer.clear();
 
 		// Command header
-		const header = new Text(theme.fg("bashMode", theme.bold(`$ ${this.command}`)), 1, 0);
+		const header = new Text(theme.fg("bashMode", theme.bold(`$ ${this.command}`)), 2, 1);
 		this.contentContainer.addChild(header);
 
 		// Output
@@ -145,7 +144,7 @@ export class BashExecutionComponent extends Container {
 			if (this.expanded) {
 				// Show all lines
 				const displayText = availableLines.map((line) => theme.fg("muted", line)).join("\n");
-				this.contentContainer.addChild(new Text(`\n${displayText}`, 1, 0));
+				this.contentContainer.addChild(new Text(`\n${displayText}`, 2, 1));
 			} else {
 				// Use shared visual truncation utility
 				const styledOutput = previewLogicalLines.map((line) => theme.fg("muted", line)).join("\n");
@@ -189,7 +188,7 @@ export class BashExecutionComponent extends Container {
 			}
 
 			if (statusParts.length > 0) {
-				this.contentContainer.addChild(new Text(`\n${statusParts.join("\n")}`, 1, 0));
+				this.contentContainer.addChild(new Text(`\n${statusParts.join("\n")}`, 2, 1));
 			}
 		}
 	}

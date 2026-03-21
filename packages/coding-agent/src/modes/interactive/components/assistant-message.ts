@@ -51,9 +51,7 @@ export class AssistantMessageComponent extends Container {
 			(c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()),
 		);
 
-		if (hasVisibleContent) {
-			this.contentContainer.addChild(new Spacer(1));
-		}
+		// No top spacer - spacing managed by parent container
 
 		// Render content in order
 		for (let i = 0; i < message.content.length; i++) {
@@ -61,7 +59,7 @@ export class AssistantMessageComponent extends Container {
 			if (content.type === "text" && content.text.trim()) {
 				// Assistant text messages with no background - trim the text
 				// Set paddingY=0 to avoid extra spacing before tool executions
-				this.contentContainer.addChild(new Markdown(content.text.trim(), 1, 0, this.markdownTheme));
+				this.contentContainer.addChild(new Markdown(content.text.trim(), 2, 0, this.markdownTheme));
 			} else if (content.type === "thinking" && content.thinking.trim()) {
 				// Add spacing only when another visible assistant content block follows.
 				// This avoids a superfluous blank line before separately-rendered tool execution blocks.
@@ -71,14 +69,14 @@ export class AssistantMessageComponent extends Container {
 
 				if (this.hideThinkingBlock) {
 					// Show static "Thinking..." label when hidden
-					this.contentContainer.addChild(new Text(theme.italic(theme.fg("thinkingText", "Thinking...")), 1, 0));
+					this.contentContainer.addChild(new Text(theme.italic(theme.fg("thinkingText", "Thinking...")), 2, 0));
 					if (hasVisibleContentAfter) {
 						this.contentContainer.addChild(new Spacer(1));
 					}
 				} else {
 					// Thinking traces in thinkingText color, italic
 					this.contentContainer.addChild(
-						new Markdown(content.thinking.trim(), 1, 0, this.markdownTheme, {
+						new Markdown(content.thinking.trim(), 2, 0, this.markdownTheme, {
 							color: (text: string) => theme.fg("thinkingText", text),
 							italic: true,
 						}),
@@ -90,9 +88,14 @@ export class AssistantMessageComponent extends Container {
 			}
 		}
 
+		// Add bottom spacing when there's visible content and no tool calls
+		const hasToolCalls = message.content.some((c) => c.type === "toolCall");
+		if (hasVisibleContent && !hasToolCalls && message.stopReason !== "aborted" && message.stopReason !== "error") {
+			this.contentContainer.addChild(new Spacer(1));
+		}
+
 		// Check if aborted - show after partial content
 		// But only if there are no tool calls (tool execution components will show the error)
-		const hasToolCalls = message.content.some((c) => c.type === "toolCall");
 		if (!hasToolCalls) {
 			if (message.stopReason === "aborted") {
 				const abortMessage =
@@ -104,11 +107,11 @@ export class AssistantMessageComponent extends Container {
 				} else {
 					this.contentContainer.addChild(new Spacer(1));
 				}
-				this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), 1, 0));
+				this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), 2, 1));
 			} else if (message.stopReason === "error") {
 				const errorMsg = message.errorMessage || "Unknown error";
 				this.contentContainer.addChild(new Spacer(1));
-				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), 1, 0));
+				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), 2, 1));
 			}
 		}
 	}

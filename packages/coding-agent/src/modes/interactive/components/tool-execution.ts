@@ -123,8 +123,8 @@ export class ToolExecutionComponent extends Container {
 		this.cwd = cwd;
 
 		// Always create both - contentBox for custom tools/bash, contentText for other built-ins
-		this.contentBox = new Box(1, 1, (text: string) => theme.bg("toolPendingBg", text));
-		this.contentText = new Text("", 1, 1, (text: string) => theme.bg("toolPendingBg", text));
+		this.contentBox = new Box(2, 1, (text: string) => theme.bg("toolPendingBg", text));
+		this.contentText = new Text("", 2, 1, (text: string) => theme.bg("toolPendingBg", text));
 
 		// Use contentBox for bash (visual truncation) or custom tools with custom renderers
 		// Use contentText for built-in tools (including overrides without custom renderers)

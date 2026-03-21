@@ -87,7 +87,7 @@ export class FooterComponent implements Component {
 		return `${head}…${separator}${tail}`;
 	}
 
-	private getLeftContent(): string {
+	private getLeftContentParts(): string[] {
 		const cwd = process.cwd();
 		const repo = this.footerData.getGitRepoName();
 		const branch = this.footerData.getGitBranch();
@@ -100,8 +100,39 @@ export class FooterComponent implements Component {
 		if (branch) {
 			parts.push(`${theme.fg("dim", "branch")} ${branch}`);
 		}
-		const separator = theme.fg("dim", " · ");
-		return parts.join(separator);
+		return parts;
+	}
+
+	/**
+	 * Progressive truncation of left content parts to fit within available width.
+	 * Parts are removed from right to left (least important first), preserving
+	 * the most important content like cwd and path components.
+	 */
+	private truncateLeftContent(parts: string[], availableWidth: number, separator: string, ellipsis: string): string {
+		if (parts.length === 0) return "";
+
+		// Start with all parts
+		const currentParts = [...parts];
+		let result = currentParts.join(separator);
+		let currentWidth = visibleWidth(result);
+
+		// If everything fits, return as-is
+		if (currentWidth <= availableWidth) {
+			return truncateToWidth(result, availableWidth, ellipsis);
+		}
+
+		// Progressive truncation: remove parts from right to left
+		while (currentParts.length > 1 && currentWidth > availableWidth) {
+			// Remove the last part (least important)
+			currentParts.pop();
+
+			// Reconstruct with separator
+			result = currentParts.join(separator);
+			currentWidth = visibleWidth(result);
+		}
+
+		// Now we have at most one part (the cwd), truncate it to fit
+		return truncateToWidth(result, availableWidth, ellipsis);
 	}
 
 	render(width: number): string[] {
@@ -110,23 +141,26 @@ export class FooterComponent implements Component {
 		const separator = theme.fg("dim", " · ");
 		const ellipsis = theme.fg("dim", "...");
 
-		const left = this.getLeftContent();
+		const leftParts = this.getLeftContentParts();
 		const right = [
 			theme.fg("dim", "tok ") + theme.fg("success", this.getContextTokens()),
 			theme.fg("dim", "ctx ") + theme.fg(this.getContextPercentColor(), this.getContextPercentDisplay()),
 		].join(separator);
 
-		const leftWidth = visibleWidth(left);
 		const rightWidth = visibleWidth(right);
-		const gap = width - leftWidth - rightWidth;
+
+		// Calculate space needed for left content (all parts joined)
+		const fullLeftWidth = visibleWidth(leftParts.join(separator));
+		const gap = width - fullLeftWidth - rightWidth;
 
 		let footerLine: string;
 		if (gap >= 0) {
 			// Enough space: left aligned, right aligned
-			footerLine = left + " ".repeat(gap) + right;
+			footerLine = leftParts.join(separator) + " ".repeat(gap) + right;
 		} else {
-			// Not enough space, truncate left
-			const truncatedLeft = truncateToWidth(left, width - rightWidth - 1, ellipsis);
+			// Not enough space, progressively truncate left parts
+			const availableForLeft = width - rightWidth - 1; // -1 for space between
+			const truncatedLeft = this.truncateLeftContent(leftParts, availableForLeft, separator, ellipsis);
 			footerLine = `${truncatedLeft} ${right}`;
 		}
 

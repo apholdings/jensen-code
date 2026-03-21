@@ -14,7 +14,7 @@ export class SkillInvocationMessageComponent extends Box {
 	private markdownTheme: MarkdownTheme;
 
 	constructor(skillBlock: ParsedSkillBlock, markdownTheme: MarkdownTheme = getMarkdownTheme()) {
-		super(1, 1, (t) => theme.bg("customMessageBg", t));
+		super(2, 1, (t) => theme.bg("customMessageBg", t));
 		this.skillBlock = skillBlock;
 		this.markdownTheme = markdownTheme;
 		this.updateDisplay();
@@ -36,10 +36,10 @@ export class SkillInvocationMessageComponent extends Box {
 		if (this.expanded) {
 			// Expanded: label + skill name header + full content
 			const label = theme.fg("customMessageLabel", `\x1b[1m[skill]\x1b[22m`);
-			this.addChild(new Text(label, 0, 0));
+			this.addChild(new Text(label, 2, 1));
 			const header = `**${this.skillBlock.name}**\n\n`;
 			this.addChild(
-				new Markdown(header + this.skillBlock.content, 0, 0, this.markdownTheme, {
+				new Markdown(header + this.skillBlock.content, 2, 1, this.markdownTheme, {
 					color: (text: string) => theme.fg("customMessageText", text),
 				}),
 			);
@@ -49,7 +49,7 @@ export class SkillInvocationMessageComponent extends Box {
 				theme.fg("customMessageLabel", `\x1b[1m[skill]\x1b[22m `) +
 				theme.fg("customMessageText", this.skillBlock.name) +
 				theme.fg("dim", ` (${editorKey("expandTools")} to expand)`);
-			this.addChild(new Text(line, 0, 0));
+			this.addChild(new Text(line, 2, 1));
 		}
 	}
 }

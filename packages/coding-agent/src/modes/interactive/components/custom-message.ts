@@ -27,10 +27,9 @@ export class CustomMessageComponent extends Container {
 		this.customRenderer = customRenderer;
 		this.markdownTheme = markdownTheme;
 
-		this.addChild(new Spacer(1));
-
+		// No spacer - spacing managed by parent container
 		// Create box with purple background (used for default rendering)
-		this.box = new Box(1, 1, (t) => theme.bg("customMessageBg", t));
+		this.box = new Box(2, 1, (t) => theme.bg("customMessageBg", t));
 
 		this.rebuild();
 	}
@@ -76,7 +75,7 @@ export class CustomMessageComponent extends Container {
 
 		// Default rendering: label + content
 		const label = theme.fg("customMessageLabel", `\x1b[1m[${this.message.customType}]\x1b[22m`);
-		this.box.addChild(new Text(label, 0, 0));
+		this.box.addChild(new Text(label, 2, 1));
 		this.box.addChild(new Spacer(1));
 
 		// Extract text content
@@ -91,7 +90,7 @@ export class CustomMessageComponent extends Container {
 		}
 
 		this.box.addChild(
-			new Markdown(text, 0, 0, this.markdownTheme, {
+			new Markdown(text, 2, 1, this.markdownTheme, {
 				color: (text: string) => theme.fg("customMessageText", text),
 			}),
 		);

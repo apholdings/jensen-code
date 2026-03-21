@@ -1,4 +1,4 @@
-import { Container, Markdown, type MarkdownTheme, Spacer } from "@apholdings/jensen-tui";
+import { Container, Markdown, type MarkdownTheme } from "@apholdings/jensen-tui";
 import { getMarkdownTheme, theme } from "../theme/theme.js";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
@@ -10,9 +10,9 @@ const OSC133_ZONE_END = "\x1b]133;B\x07";
 export class UserMessageComponent extends Container {
 	constructor(text: string, markdownTheme: MarkdownTheme = getMarkdownTheme()) {
 		super();
-		this.addChild(new Spacer(1));
+		// No spacer - spacing managed by parent container
 		this.addChild(
-			new Markdown(text, 1, 1, markdownTheme, {
+			new Markdown(text, 2, 1, markdownTheme, {
 				bgColor: (text: string) => theme.bg("userMessageBg", text),
 				color: (text: string) => theme.fg("userMessageText", text),
 			}),

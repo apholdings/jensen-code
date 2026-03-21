@@ -9,7 +9,19 @@ export type LoaderState = "idle" | "running" | "stopped" | "disposed";
  * Kept as a single-line loader so it still fits the current status row layout.
  */
 export class Loader extends Text {
-	private readonly frames = ["▱▱▱", "▰▱▱", "▰▰▱", "▰▰▰", "▱▱▱"];
+	private readonly frames = [
+		"▰▱▱▱▱",
+		"▰▰▱▱▱",
+		"▱▰▰▱▱",
+		"▱▱▰▰▱",
+		"▱▱▱▰▰",
+		"▱▱▱▱▰",
+		"▱▱▱▰▰",
+		"▱▱▰▰▱",
+		"▱▰▰▱▱",
+		"▰▰▱▱▱",
+		"▰▱▱▱▱",
+	];
 
 	private readonly frameWidth = Math.max(...this.frames.map((frame) => visibleWidth(frame)));
 

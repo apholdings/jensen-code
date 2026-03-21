@@ -36,6 +36,11 @@
 - Updated the bundled Z.AI default model wiring to consume the regenerated `@apholdings/jensen-ai` model catalog with the corrected base URL metadata.
 - Made `JENSEN.md` the primary instruction file for context discovery, while keeping `AGENTS.md` as a deprecated fallback and preferring `JENSEN.md` whenever both are present.
 
+### Fixed
+
+- Fixed assistant message bottom spacing to add an extra blank line after assistant content when there are no tool calls.
+- Fixed tool execution component missing top margin in chat history.
+
 ## [0.0.7] - 2026-03-15
 
 - Updated Jensen Code branding and alignment
