@@ -410,12 +410,12 @@ export class ToolExecutionComponent extends Container {
 					}
 				} catch {
 					// Fall back to default on error
-					this.contentBox.addChild(new Text(theme.fg("toolTitle", theme.bold(this.toolName)), 0, 0));
+					this.contentBox.addChild(new Text(theme.fg("accent", theme.bold(this.toolName)), 0, 0));
 					customRendererHasContent = true;
 				}
 			} else {
 				// No custom renderCall, show tool name
-				this.contentBox.addChild(new Text(theme.fg("toolTitle", theme.bold(this.toolName)), 0, 0));
+				this.contentBox.addChild(new Text(theme.fg("accent", theme.bold(this.toolName)), 0, 0));
 				customRendererHasContent = true;
 			}
 
@@ -512,7 +512,11 @@ export class ToolExecutionComponent extends Container {
 		const commandDisplay =
 			command === null ? theme.fg("error", "[invalid arg]") : command ? command : theme.fg("toolOutput", "...");
 		this.contentBox.addChild(
-			new Text(theme.fg("toolTitle", theme.bold(`$ ${commandDisplay}`)) + timeoutSuffix, 0, 0),
+			new Text(
+				theme.fg("accent", theme.bold("$ ")) + theme.fg("toolTitle", theme.bold(commandDisplay)) + timeoutSuffix,
+				0,
+				0,
+			),
 		);
 
 		if (this.result) {
@@ -626,7 +630,7 @@ export class ToolExecutionComponent extends Container {
 				pathDisplay += theme.fg("warning", `:${startLine}${endLine ? `-${endLine}` : ""}`);
 			}
 
-			text = `${theme.fg("toolTitle", theme.bold("read"))} ${pathDisplay}`;
+			text = `${theme.fg("accent", theme.bold("read"))} ${pathDisplay}`;
 
 			if (this.result) {
 				const output = this.getTextOutput();
@@ -679,9 +683,9 @@ export class ToolExecutionComponent extends Container {
 			const path = rawPath !== null ? shortenPath(rawPath) : null;
 
 			text =
-				theme.fg("toolTitle", theme.bold("write")) +
+				theme.fg("accent", theme.bold("write")) +
 				" " +
-				(path === null ? invalidArg : path ? theme.fg("accent", path) : theme.fg("toolOutput", "..."));
+				(path === null ? invalidArg : path ? theme.fg("text", path) : theme.fg("toolOutput", "..."));
 
 			if (fileContent === null) {
 				text += `\n\n${theme.fg("error", "[invalid content arg - expected string]")}`;
@@ -747,7 +751,7 @@ export class ToolExecutionComponent extends Container {
 				pathDisplay += theme.fg("warning", `:${firstChangedLine}`);
 			}
 
-			text = `${theme.fg("toolTitle", theme.bold("edit"))} ${pathDisplay}`;
+			text = `${theme.fg("accent", theme.bold("edit"))} ${pathDisplay}`;
 
 			if (this.result?.isError) {
 				// Show error from result
@@ -773,7 +777,7 @@ export class ToolExecutionComponent extends Container {
 			const path = rawPath !== null ? shortenPath(rawPath || ".") : null;
 			const limit = this.args?.limit;
 
-			text = `${theme.fg("toolTitle", theme.bold("ls"))} ${path === null ? invalidArg : theme.fg("accent", path)}`;
+			text = `${theme.fg("accent", theme.bold("ls"))} ${path === null ? invalidArg : theme.fg("text", path)}`;
 			if (limit !== undefined) {
 				text += theme.fg("toolOutput", ` (limit ${limit})`);
 			}
@@ -812,9 +816,9 @@ export class ToolExecutionComponent extends Container {
 			const limit = this.args?.limit;
 
 			text =
-				theme.fg("toolTitle", theme.bold("find")) +
+				theme.fg("accent", theme.bold("find")) +
 				" " +
-				(pattern === null ? invalidArg : theme.fg("accent", pattern || "")) +
+				(pattern === null ? invalidArg : theme.fg("text", pattern || "")) +
 				theme.fg("toolOutput", ` in ${path === null ? invalidArg : path}`);
 			if (limit !== undefined) {
 				text += theme.fg("toolOutput", ` (limit ${limit})`);
@@ -855,9 +859,9 @@ export class ToolExecutionComponent extends Container {
 			const limit = this.args?.limit;
 
 			text =
-				theme.fg("toolTitle", theme.bold("grep")) +
+				theme.fg("accent", theme.bold("grep")) +
 				" " +
-				(pattern === null ? invalidArg : theme.fg("accent", `/${pattern || ""}/`)) +
+				(pattern === null ? invalidArg : theme.fg("text", `/${pattern || ""}/`)) +
 				theme.fg("toolOutput", ` in ${path === null ? invalidArg : path}`);
 			if (glob) {
 				text += theme.fg("toolOutput", ` (${glob})`);
@@ -899,7 +903,7 @@ export class ToolExecutionComponent extends Container {
 			}
 		} else {
 			// Generic tool (shouldn't reach here for custom tools)
-			text = theme.fg("toolTitle", theme.bold(this.toolName));
+			text = theme.fg("accent", theme.bold(this.toolName));
 
 			const content = JSON.stringify(this.args, null, 2);
 			text += `\n\n${content}`;

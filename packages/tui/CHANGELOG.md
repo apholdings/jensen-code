@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.57.3
+
+### Patch Changes
+
+- fix: resolve rendering and spacing issues in user messages and components
+
 ## 0.57.2
 
 ## 0.1.3

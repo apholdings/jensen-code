@@ -22,18 +22,18 @@ const VERSION = packageJson.version ? `v${packageJson.version}` : "v0.0.0";
 const LOGO = [" ████████████ ", "██▓░░░░░░░░▓██", "█░░░░█░░█░░░░█", "█░░░░░░░░░░░░█", " ████████████ "];
 
 const GRADIENT_STOPS: RGB[] = [
-	{ r: 0x1a, g: 0xf5, b: 0x8a },
-	{ r: 0x57, g: 0xe3, b: 0xf7 },
-	{ r: 0x8c, g: 0xb6, b: 0xff },
-	{ r: 0xc0, g: 0x7b, b: 0xff },
+	{ r: 0x73, g: 0xda, b: 0xca },
+	{ r: 0x7a, g: 0xa2, b: 0xf7 },
+	{ r: 0xbb, g: 0x9a, b: 0xf7 },
+	{ r: 0xad, g: 0x8e, b: 0xe6 },
 ];
 
 const COLORS = {
-	border: { r: 0x72, g: 0x7c, b: 0xb0 },
-	title: { r: 0xd5, g: 0xd6, b: 0xdb },
-	muted: { r: 0x7a, g: 0x84, b: 0xb2 },
+	border: { r: 0x56, g: 0x5f, b: 0x89 },
+	title: { r: 0xc0, g: 0xca, b: 0xf5 },
+	muted: { r: 0x78, g: 0x7c, b: 0x99 },
 	subtle: { r: 0x56, g: 0x5f, b: 0x89 },
-	accent: { r: 0xa1, g: 0x88, b: 0xf1 },
+	accent: { r: 0x7a, g: 0xa2, b: 0xf7 },
 };
 
 function truncatePlain(input: string, maxWidth: number): string {
@@ -141,7 +141,12 @@ function renderColoredLogoLine(line: string): string {
 }
 
 function compactPath(input: string, maxWidth = 44): string {
-	const normalized = input.replaceAll("/", process.platform === "win32" ? "\\" : "/");
+	const home = os.homedir();
+	let normalized = input;
+	if (normalized.startsWith(home)) {
+		normalized = `~${normalized.slice(home.length)}`;
+	}
+	normalized = normalized.replaceAll("/", process.platform === "win32" ? "\\" : "/");
 	if (normalized.length <= maxWidth) return normalized;
 
 	const separator = normalized.includes("\\") ? "\\" : "/";
@@ -149,10 +154,13 @@ function compactPath(input: string, maxWidth = 44): string {
 	if (parts.length <= 2) return normalized;
 
 	const first = normalized.startsWith(separator) ? separator : "";
+	const isHome = parts[0] === "~";
 	const driveMatch = parts[0]?.match(/^[A-Za-z]:$/);
-	const head = driveMatch ? `${parts[0]}${separator}` : first;
+
+	const head = isHome ? "~" : driveMatch ? `${parts[0]}${separator}` : first + parts[0];
 	const tail = parts.slice(-2).join(separator);
-	return `${head}…${separator}${tail}`;
+
+	return `${head}${separator}…${separator}${tail}`;
 }
 
 function padAnsi(input: string, width: number): string {
@@ -253,6 +261,7 @@ export class Header implements Component {
 			lines.push(`${color(COLORS.border, "│")} ${logo}${" ".repeat(gap)}${text} ${color(COLORS.border, "│")}`);
 		}
 		lines.push(bottomBorder);
+
 		// lines.push("");
 		return lines.map((line) => truncateToWidth(line, width));
 	}

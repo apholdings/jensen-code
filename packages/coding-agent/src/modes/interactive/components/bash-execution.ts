@@ -49,7 +49,7 @@ export class BashExecutionComponent extends Container {
 		this.addChild(this.contentContainer);
 
 		// Command header
-		const header = new Text(theme.fg(colorKey, theme.bold(`$ ${command}`)), 2, 1);
+		const header = new Text(theme.fg("accent", theme.bold("$ ")) + theme.fg(colorKey, theme.bold(command)), 2, 1);
 		this.contentContainer.addChild(header);
 
 		// Loader
@@ -136,7 +136,11 @@ export class BashExecutionComponent extends Container {
 		this.contentContainer.clear();
 
 		// Command header
-		const header = new Text(theme.fg("bashMode", theme.bold(`$ ${this.command}`)), 2, 1);
+		const header = new Text(
+			theme.fg("accent", theme.bold("$ ")) + theme.fg("bashMode", theme.bold(this.command)),
+			2,
+			1,
+		);
 		this.contentContainer.addChild(header);
 
 		// Output

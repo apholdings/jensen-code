@@ -84,18 +84,22 @@ export class TopBar implements Component {
 			const colorKey = `thinking${level.charAt(0).toUpperCase()}${level.slice(1)}` as ThemeColor;
 
 			parts.push(
-				theme.fg("muted", this.getAppKeyDisplay("cycleThinkingLevel")) +
-					theme.fg("dim", " Thinking: ") +
+				theme.fg("accent", this.getAppKeyDisplay("cycleThinkingLevel")) +
+					theme.fg("text", " Thinking: ") +
 					theme.fg(colorKey, level),
 			);
 		}
 
-		parts.push(theme.fg("muted", this.getAppKeyDisplay("selectModel")) + theme.fg("dim", " Model"));
+		parts.push(theme.fg("accent", this.getAppKeyDisplay("selectModel")) + theme.fg("text", " Model"));
 
 		const leftString = ` ${parts.join(theme.fg("dim", " · "))}`;
 		const pm = this.getProviderModel();
 
-		const rightCandidates = [theme.fg("dim", `${pm.provider}/${pm.model} `), theme.fg("dim", `${pm.model} `), ""];
+		const rightCandidates = [
+			theme.fg("accent", `${pm.provider}/`) + theme.fg("text", `${pm.model} `),
+			theme.fg("text", `${pm.model} `),
+			"",
+		];
 
 		const maxRightWidth = Math.max(0, width - visibleWidth(leftString));
 		const rightString = rightCandidates.find((candidate) => visibleWidth(candidate) <= maxRightWidth) ?? "";

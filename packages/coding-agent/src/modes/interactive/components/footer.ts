@@ -1,3 +1,4 @@
+import * as os from "node:os";
 import { type Component, truncateToWidth, visibleWidth } from "@apholdings/jensen-tui";
 import type { AgentSession } from "../../../core/agent-session.js";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.js";
@@ -73,7 +74,12 @@ export class FooterComponent implements Component {
 	}
 
 	private compactPath(input: string, maxWidth = 44): string {
-		const normalized = input.replaceAll("/", process.platform === "win32" ? "\\" : "/");
+		const home = os.homedir();
+		let normalized = input;
+		if (normalized.startsWith(home)) {
+			normalized = `~${normalized.slice(home.length)}`;
+		}
+		normalized = normalized.replaceAll("/", process.platform === "win32" ? "\\" : "/");
 		if (normalized.length <= maxWidth) return normalized;
 
 		const separator = normalized.includes("\\") ? "\\" : "/";
@@ -81,10 +87,13 @@ export class FooterComponent implements Component {
 		if (parts.length <= 2) return normalized;
 
 		const first = normalized.startsWith(separator) ? separator : "";
+		const isHome = parts[0] === "~";
 		const driveMatch = parts[0]?.match(/^[A-Za-z]:$/);
-		const head = driveMatch ? `${parts[0]}${separator}` : first;
+
+		const head = isHome ? "~" : driveMatch ? `${parts[0]}${separator}` : first + parts[0];
 		const tail = parts.slice(-2).join(separator);
-		return `${head}…${separator}${tail}`;
+
+		return `${head}${separator}…${separator}${tail}`;
 	}
 
 	private getLeftContentParts(): string[] {
@@ -93,12 +102,12 @@ export class FooterComponent implements Component {
 		const branch = this.footerData.getGitBranch();
 
 		const parts: string[] = [];
-		parts.push(`${theme.fg("dim", "cwd")} ${this.compactPath(cwd)}`);
+		parts.push(`${theme.fg("accent", "cwd")} ${theme.fg("text", this.compactPath(cwd))}`);
 		if (repo) {
-			parts.push(`${theme.fg("dim", "repo")} ${repo}`);
+			parts.push(`${theme.fg("accent", "repo")} ${theme.fg("text", repo)}`);
 		}
 		if (branch) {
-			parts.push(`${theme.fg("dim", "branch")} ${branch}`);
+			parts.push(`${theme.fg("accent", "branch")} ${theme.fg("text", branch)}`);
 		}
 		return parts;
 	}
@@ -143,8 +152,8 @@ export class FooterComponent implements Component {
 
 		const leftParts = this.getLeftContentParts();
 		const right = [
-			theme.fg("dim", "tok ") + theme.fg("success", this.getContextTokens()),
-			theme.fg("dim", "ctx ") + theme.fg(this.getContextPercentColor(), this.getContextPercentDisplay()),
+			theme.fg("accent", "tok ") + theme.fg("text", this.getContextTokens()),
+			theme.fg("accent", "ctx ") + theme.fg(this.getContextPercentColor(), this.getContextPercentDisplay()),
 		].join(separator);
 
 		const rightWidth = visibleWidth(right);

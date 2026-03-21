@@ -75,8 +75,8 @@ export class OAuthSelectorComponent extends Container {
 
 			let line = "";
 			if (isSelected) {
-				const prefix = theme.fg("accent", "→ ");
-				const text = theme.fg("accent", provider.name);
+				const prefix = theme.fg("accent", "› ");
+				const text = theme.fg("text", theme.bold(provider.name));
 				line = prefix + text + statusIndicator;
 			} else {
 				const text = `  ${provider.name}`;

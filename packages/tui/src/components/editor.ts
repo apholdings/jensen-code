@@ -21,16 +21,6 @@ export interface TextChunk {
 	endIndex: number;
 }
 
-function splitFirstGrapheme(text: string): { first: string; rest: string } {
-	if (!text) return { first: "", rest: "" };
-
-	const first = [...segmenter.segment(text)][0]?.segment ?? "";
-	return {
-		first,
-		rest: text.slice(first.length),
-	};
-}
-
 /**
  * Split a line into word-wrapped chunks.
  * Wraps at word boundaries when possible, falling back to character-level
@@ -375,18 +365,16 @@ export class Editor implements Component, Focusable {
 
 	private getPlaceholderLayout(contentWidth: number): LayoutLine[] {
 		const promptPrefix = this.promptGlyph ? `${this.promptGlyph} ` : "";
-		const promptPrefixLength = promptPrefix.length;
 		const promptPrefixWidth = visibleWidth(promptPrefix);
 		const body = this.getPlaceholderBody();
 
 		if (!body) {
 			return [
 				{
-					text: promptPrefix,
+					text: "",
 					hasCursor: true,
-					cursorPos: promptPrefixLength,
+					cursorPos: 0,
 					isPlaceholder: true,
-					promptPrefixLength,
 				},
 			];
 		}
@@ -397,19 +385,17 @@ export class Editor implements Component, Focusable {
 		return chunks.map((chunk, index) => {
 			if (index === 0) {
 				return {
-					text: `${promptPrefix}${chunk.text}`,
+					text: chunk.text,
 					hasCursor: true,
-					cursorPos: promptPrefixLength,
+					cursorPos: 0,
 					isPlaceholder: true,
-					promptPrefixLength,
 				};
 			}
 
 			return {
-				text: `${" ".repeat(promptPrefixLength)}${chunk.text}`,
+				text: chunk.text,
 				hasCursor: false,
 				isPlaceholder: true,
-				promptPrefixLength,
 			};
 		});
 	}
@@ -487,16 +473,9 @@ export class Editor implements Component, Focusable {
 			let prefixPart = leftPadding;
 			let bodyPart = "";
 
-			if (layoutLine.isPlaceholder && layoutLine.promptPrefixLength !== undefined) {
-				const promptPrefixText = layoutLine.text.slice(0, layoutLine.promptPrefixLength);
-				const { first: glyph } = splitFirstGrapheme(promptPrefixText);
-				const glyphSpace = promptPrefixText.slice(glyph.length);
-
-				prefixPart += glyph.trim() ? this.promptGlyphStyle(glyph) : " ".repeat(visibleWidth(glyph));
-				bodyPart = glyphSpace;
-			} else if (promptPrefixWidth > 0) {
+			if (promptPrefixWidth > 0) {
 				if (absoluteLineIndex === 0) {
-					prefixPart += this.promptGlyphStyle(this.promptGlyph);
+					prefixPart += this.promptGlyph ? this.promptGlyphStyle(this.promptGlyph) : "";
 					bodyPart = " ";
 				} else {
 					prefixPart += " ".repeat(glyphWidth);
@@ -514,7 +493,7 @@ export class Editor implements Component, Focusable {
 
 				if (layoutLine.isPlaceholder) {
 					const cursor = "\x1b[7m \x1b[27m";
-					const placeholderBodyText = layoutLine.text.slice(layoutLine.promptPrefixLength ?? 0);
+					const placeholderBodyText = layoutLine.text;
 					displayText = marker + cursor + this.placeholderStyle(placeholderBodyText);
 					lineVisibleWidth = 1 + visibleWidth(placeholderBodyText);
 				} else {
@@ -540,7 +519,7 @@ export class Editor implements Component, Focusable {
 					}
 				}
 			} else if (layoutLine.isPlaceholder) {
-				const placeholderBodyText = layoutLine.text.slice(layoutLine.promptPrefixLength ?? 0);
+				const placeholderBodyText = layoutLine.text;
 				displayText = this.placeholderStyle(placeholderBodyText);
 				lineVisibleWidth = visibleWidth(placeholderBodyText);
 			} else {

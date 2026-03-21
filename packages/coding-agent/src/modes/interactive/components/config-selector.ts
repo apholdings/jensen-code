@@ -339,7 +339,7 @@ class ResourceList implements Component, Focusable {
 			} else {
 				// Resource item (cursor only on items)
 				const item = entry.item;
-				const cursor = isSelected ? "> " : "  ";
+				const cursor = isSelected ? theme.fg("accent", "› ") : "  ";
 				const checkbox = item.enabled ? theme.fg("success", "[x]") : theme.fg("dim", "[ ]");
 				const name = isSelected ? theme.bold(item.displayName) : item.displayName;
 				lines.push(truncateToWidth(`${cursor}    ${checkbox} ${name}`, width, "..."));

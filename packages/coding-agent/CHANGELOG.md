@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.57.3
+
+### Patch Changes
+
+- fix: resolve rendering and spacing issues in user messages and components
+- Updated dependencies
+  - @apholdings/jensen-tui@0.57.3
+  - @apholdings/jensen-agent-core@0.57.3
+  - @apholdings/jensen-ai@0.57.3
+
 ## 0.57.2
 
 ### Patch Changes
