@@ -12,6 +12,8 @@
 
 - 2f3d37c: chore: version bump all packages
 
+## [0.1.5] - 2026-03-21
+
 ## [Unreleased]
 
 ## [0.0.1] - 2026-03-15

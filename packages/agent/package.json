@@ -1,51 +1,51 @@
 {
-	"name": "@apholdings/jensen-agent-core",
-	"version": "0.1.4",
-	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
-	"type": "module",
-	"main": "./dist/index.js",
-	"types": "./dist/index.d.ts",
-	"files": [
-		"dist",
-		"README.md"
-	],
-	"scripts": {
-		"clean": "shx rm -rf dist",
-		"build": "tsgo -p tsconfig.build.json",
-		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
-		"test": "vitest --run",
-		"prepublishOnly": "npm run clean && npm run build -w @apholdings/jensen-ai && npm run build"
-	},
-	"publishConfig": {
-		"access": "public",
-		"provenance": true
-	},
-	"dependencies": {
-		"@apholdings/jensen-ai": "0.1.4"
-	},
-	"keywords": [
-		"ai",
-		"agent",
-		"llm",
-		"transport",
-		"state-management"
-	],
-	"author": "AP Holdings",
-	"license": "MIT",
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/apholdings/jensen-code.git",
-		"directory": "packages/agent"
-	},
-	"homepage": "https://github.com/apholdings/jensen-code/tree/main/packages/agent",
-	"bugs": {
-		"url": "https://github.com/apholdings/jensen-code/issues"
-	},
-	"engines": {
-		"node": ">=20.0.0"
-	},
-	"devDependencies": {
-		"@types/node": "^24.3.0",
-		"vitest": "^3.2.4"
-	}
+  "name": "@apholdings/jensen-agent-core",
+  "version": "0.1.5",
+  "description": "General-purpose agent with transport abstraction, state management, and attachment support",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "shx rm -rf dist",
+    "build": "tsgo -p tsconfig.build.json",
+    "dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
+    "test": "vitest --run",
+    "prepublishOnly": "npm run clean && npm run build -w @apholdings/jensen-ai && npm run build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "dependencies": {
+    "@apholdings/jensen-ai": "0.1.5"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "transport",
+    "state-management"
+  ],
+  "author": "AP Holdings",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/apholdings/jensen-code.git",
+    "directory": "packages/agent"
+  },
+  "homepage": "https://github.com/apholdings/jensen-code/tree/main/packages/agent",
+  "bugs": {
+    "url": "https://github.com/apholdings/jensen-code/issues"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "vitest": "^3.2.4"
+  }
 }

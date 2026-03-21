@@ -20,11 +20,13 @@
 - Updated dependencies [2f3d37c]
   - @apholdings/jensen-ai@0.1.0
 
-## [Unreleased]
+## [0.1.5] - 2026-03-21
 
 ### Fixed
 
 - Corrected the deferred-tools queue test to match steering semantics: queued steering messages are injected before the next LLM call after the current assistant turn finishes its tool calls.
+
+## [Unreleased]
 
 ## [0.0.1] - 2026-03-15
 

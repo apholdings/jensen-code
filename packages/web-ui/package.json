@@ -1,60 +1,60 @@
 {
-	"name": "@apholdings/jensen-web-ui",
-	"version": "0.1.4",
-	"description": "Reusable web UI components for AI chat interfaces powered by @apholdings/jensen-ai",
-	"type": "module",
-	"main": "dist/index.js",
-	"types": "dist/index.d.ts",
-	"exports": {
-		".": "./dist/index.js",
-		"./app.css": "./dist/app.css"
-	},
-	"scripts": {
-		"clean": "shx rm -rf dist",
-		"build": "tsgo -p tsconfig.build.json && tailwindcss -i ./src/app.css -o ./dist/app.css --minify",
-		"dev": "concurrently --names \"build,example\" --prefix-colors \"cyan,green\" \"tsc -p tsconfig.build.json --watch --preserveWatchOutput\" \"tailwindcss -i ./src/app.css -o ./dist/app.css --watch\" \"npm run dev --prefix example\"",
-		"dev:tsc": "concurrently --names \"build\" --prefix-colors \"cyan\" \"tsc -p tsconfig.build.json --watch --preserveWatchOutput\" \"tailwindcss -i ./src/app.css -o ./dist/app.css --watch\"",
-		"check": "biome check --write --error-on-warnings . && tsc --noEmit && cd example && biome check --write --error-on-warnings . && tsc --noEmit"
-	},
-	"publishConfig": {
-		"access": "public",
-		"provenance": true
-	},
-	"dependencies": {
-		"@lmstudio/sdk": "^1.5.0",
-		"docx-preview": "^0.3.7",
-		"jszip": "^3.10.1",
-		"lucide": "^0.544.0",
-		"ollama": "^0.6.0",
-		"pdfjs-dist": "5.4.394",
-		"xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
-		"@apholdings/jensen-tui": "0.1.4",
-		"@apholdings/jensen-ai": "0.1.4"
-	},
-	"peerDependencies": {
-		"@mariozechner/mini-lit": "^0.2.0",
-		"lit": "^3.3.1"
-	},
-	"devDependencies": {
-		"@mariozechner/mini-lit": "^0.2.0",
-		"@tailwindcss/cli": "^4.0.0-beta.14",
-		"concurrently": "^9.2.1",
-		"typescript": "^5.7.3"
-	},
-	"keywords": [
-		"ai",
-		"chat",
-		"ui",
-		"components",
-		"llm",
-		"web-components",
-		"mini-lit"
-	],
-	"author": "AP Holdings",
-	"license": "MIT",
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/apholdings/jensen-code.git",
-		"directory": "packages/web-ui"
-	}
+  "name": "@apholdings/jensen-web-ui",
+  "version": "0.1.5",
+  "description": "Reusable web UI components for AI chat interfaces powered by @apholdings/jensen-ai",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./app.css": "./dist/app.css"
+  },
+  "scripts": {
+    "clean": "shx rm -rf dist",
+    "build": "tsgo -p tsconfig.build.json && tailwindcss -i ./src/app.css -o ./dist/app.css --minify",
+    "dev": "concurrently --names \"build,example\" --prefix-colors \"cyan,green\" \"tsc -p tsconfig.build.json --watch --preserveWatchOutput\" \"tailwindcss -i ./src/app.css -o ./dist/app.css --watch\" \"npm run dev --prefix example\"",
+    "dev:tsc": "concurrently --names \"build\" --prefix-colors \"cyan\" \"tsc -p tsconfig.build.json --watch --preserveWatchOutput\" \"tailwindcss -i ./src/app.css -o ./dist/app.css --watch\"",
+    "check": "biome check --write --error-on-warnings . && tsc --noEmit && cd example && biome check --write --error-on-warnings . && tsc --noEmit"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "dependencies": {
+    "@lmstudio/sdk": "^1.5.0",
+    "docx-preview": "^0.3.7",
+    "jszip": "^3.10.1",
+    "lucide": "^0.544.0",
+    "ollama": "^0.6.0",
+    "pdfjs-dist": "5.4.394",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "@apholdings/jensen-tui": "0.1.5",
+    "@apholdings/jensen-ai": "0.1.5"
+  },
+  "peerDependencies": {
+    "@mariozechner/mini-lit": "^0.2.0",
+    "lit": "^3.3.1"
+  },
+  "devDependencies": {
+    "@mariozechner/mini-lit": "^0.2.0",
+    "@tailwindcss/cli": "^4.0.0-beta.14",
+    "concurrently": "^9.2.1",
+    "typescript": "^5.7.3"
+  },
+  "keywords": [
+    "ai",
+    "chat",
+    "ui",
+    "components",
+    "llm",
+    "web-components",
+    "mini-lit"
+  ],
+  "author": "AP Holdings",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/apholdings/jensen-code.git",
+    "directory": "packages/web-ui"
+  }
 }

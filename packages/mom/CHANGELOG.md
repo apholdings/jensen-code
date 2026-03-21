@@ -25,6 +25,8 @@
   - @apholdings/jensen-code@0.1.0
   - @apholdings/jensen-agent-core@0.1.0
 
+## [0.1.5] - 2026-03-21
+
 ## [Unreleased]
 
 ## [0.0.1] - 2026-03-15

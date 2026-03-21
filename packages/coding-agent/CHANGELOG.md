@@ -25,7 +25,7 @@
   - @apholdings/jensen-agent-core@0.1.0
   - @apholdings/jensen-tui@0.1.0
 
-## [Unreleased]
+## [0.1.5] - 2026-03-21
 
 ### Added
 
@@ -40,6 +40,8 @@
 
 - Fixed assistant message bottom spacing to add an extra blank line after assistant content when there are no tool calls.
 - Fixed tool execution component missing top margin in chat history.
+
+## [Unreleased]
 
 ## [0.0.7] - 2026-03-15
 
