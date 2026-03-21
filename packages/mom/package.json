@@ -1,57 +1,57 @@
 {
-  "name": "@apholdings/jensen-mom",
-  "version": "0.1.5",
-  "description": "Slack bot that delegates messages to Jensen Code",
-  "type": "module",
-  "bin": {
-    "mom": "dist/main.js"
-  },
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "files": [
-    "dist",
-    "CHANGELOG.md"
-  ],
-  "scripts": {
-    "clean": "shx rm -rf dist",
-    "build": "tsgo -p tsconfig.build.json && shx chmod +x dist/main.js",
-    "dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
-    "prepublishOnly": "npm run clean && npm run build -w @apholdings/jensen-ai -w @apholdings/jensen-agent-core -w @apholdings/jensen-code && npm run build"
-  },
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
-  },
-  "dependencies": {
-    "@anthropic-ai/sandbox-runtime": "^0.0.16",
-    "@apholdings/jensen-code": "0.1.5",
-    "@sinclair/typebox": "^0.34.0",
-    "@slack/socket-mode": "^2.0.0",
-    "@slack/web-api": "^7.0.0",
-    "chalk": "^5.6.2",
-    "croner": "^9.1.0",
-    "diff": "^8.0.2",
-    "@apholdings/jensen-ai": "0.1.5",
-    "@apholdings/jensen-agent-core": "0.1.5"
-  },
-  "devDependencies": {
-    "@types/diff": "^7.0.2",
-    "@types/node": "^24.3.0"
-  },
-  "keywords": [
-    "slack",
-    "bot",
-    "ai",
-    "agent"
-  ],
-  "author": "AP Holdings",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/apholdings/jensen-code.git",
-    "directory": "packages/mom"
-  },
-  "engines": {
-    "node": ">=20.0.0"
-  }
+	"name": "@apholdings/jensen-mom",
+	"version": "0.57.2",
+	"description": "Slack bot that delegates messages to Jensen Code",
+	"type": "module",
+	"bin": {
+		"mom": "dist/main.js"
+	},
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"files": [
+		"dist",
+		"CHANGELOG.md"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/main.js",
+		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
+		"prepublishOnly": "npm run clean && npm run build -w @apholdings/jensen-ai -w @apholdings/jensen-agent-core -w @apholdings/jensen-code && npm run build"
+	},
+	"publishConfig": {
+		"access": "public",
+		"provenance": true
+	},
+	"dependencies": {
+		"@anthropic-ai/sandbox-runtime": "^0.0.16",
+		"@apholdings/jensen-code": "0.57.2",
+		"@sinclair/typebox": "^0.34.0",
+		"@slack/socket-mode": "^2.0.0",
+		"@slack/web-api": "^7.0.0",
+		"chalk": "^5.6.2",
+		"croner": "^9.1.0",
+		"diff": "^8.0.2",
+		"@apholdings/jensen-ai": "0.57.2",
+		"@apholdings/jensen-agent-core": "0.57.2"
+	},
+	"devDependencies": {
+		"@types/diff": "^7.0.2",
+		"@types/node": "^24.3.0"
+	},
+	"keywords": [
+		"slack",
+		"bot",
+		"ai",
+		"agent"
+	],
+	"author": "AP Holdings",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/apholdings/jensen-code.git",
+		"directory": "packages/mom"
+	},
+	"engines": {
+		"node": ">=20.0.0"
+	}
 }

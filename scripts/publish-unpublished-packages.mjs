@@ -95,6 +95,11 @@ function runWithOutput(command, args, options = {}) {
 	});
 }
 
+function hasLocalNpmAuth() {
+	const result = runWithOutput("npm", ["whoami"]);
+	return result.status === 0 && Boolean((result.stdout ?? "").trim());
+}
+
 function summarizeRegistryResponse(output) {
 	const trimmed = output.trim();
 	if (!trimmed) {
@@ -208,7 +213,7 @@ function getPublishAuthMode() {
 
 	const hasToken = Boolean(process.env.NODE_AUTH_TOKEN || process.env.NPM_TOKEN);
 	if (requestedMode === "auto") {
-		return hasToken ? "token" : "oidc";
+		return hasToken || hasLocalNpmAuth() ? "token" : "oidc";
 	}
 
 	return requestedMode;
@@ -235,9 +240,15 @@ function isAuthPublishFailure(output) {
 
 function publishPackage(pkg, authMode, publishTag) {
 	console.log(`Publishing ${pkg.name}@${pkg.version} from ${pkg.dir} with dist-tag "${publishTag}"`);
+	const publishArgs = ["publish", "--access", "public", "--tag", publishTag];
+	if (authMode === "oidc") {
+		publishArgs.push("--provenance");
+	} else {
+		publishArgs.push("--provenance=false");
+	}
 	const result = runWithOutput(
 		"npm",
-		["publish", "--access", "public", "--provenance", "--tag", publishTag],
+		publishArgs,
 		{
 		cwd: pkg.dir,
 		},

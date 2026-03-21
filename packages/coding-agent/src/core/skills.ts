@@ -141,8 +141,8 @@ export interface LoadSkillsFromDirOptions {
  *
  * Discovery rules:
  * - if a directory contains SKILL.md, treat it as a skill root and do not recurse further
- * - otherwise, load direct .md children in the root
- * - recurse into subdirectories to find SKILL.md
+ * - otherwise, recurse into subdirectories to find SKILL.md
+ * - ignore non-entrypoint markdown such as README.md, notes, fixtures, and inventories
  */
 export function loadSkillsFromDir(options: LoadSkillsFromDirOptions): LoadSkillsResult {
 	const { dir, source } = options;
@@ -238,7 +238,7 @@ function loadSkillsFromDirInternal(
 				continue;
 			}
 
-			if (!isFile || !includeRootFiles || !entry.name.endsWith(".md")) {
+			if (!isFile || !includeRootFiles || entry.name !== "SKILL.md") {
 				continue;
 			}
 

@@ -1,8 +1,11 @@
 # @apholdings/jensen-pods
 
-## [0.1.5] - 2026-03-21
+## 0.57.2
 
-## [Unreleased]
+### Patch Changes
+
+- Updated dependencies
+  - @apholdings/jensen-agent-core@0.57.2
 
 ## 0.1.3
 

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.57.2
+
+### Patch Changes
+
+- Fix project skill discovery so only `SKILL.md` entrypoints are loaded, ignoring inventory markdown such as `README.md`.
+
+  Add explicit package exports for `@apholdings/jensen-agent-core` so workspace consumers resolve it correctly during builds and tests.
+
+- Updated dependencies
+  - @apholdings/jensen-agent-core@0.57.2
+  - @apholdings/jensen-ai@0.57.2
+  - @apholdings/jensen-tui@0.57.2
+
 ## 0.1.3
 
 ### Patch Changes

@@ -141,7 +141,7 @@ If both are set, video takes precedence.
 If no `pi` manifest is present, pi auto-discovers resources from these directories:
 
 - `extensions/` loads `.ts` and `.js` files
-- `skills/` recursively finds `SKILL.md` folders and loads top-level `.md` files as skills
+- `skills/` recursively finds `SKILL.md` entrypoints and ignores non-entrypoint markdown such as `README.md`
 - `prompts/` loads `.md` files
 - `themes/` loads `.json` files
 
