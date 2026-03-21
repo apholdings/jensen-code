@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.57.4
+
+### Patch Changes
+
+- chore: bump version to 0.57.4 to retry publish without provenance
+
 ## 0.57.3
 
 ### Patch Changes
