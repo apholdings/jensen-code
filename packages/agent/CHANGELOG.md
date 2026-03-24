@@ -48,7 +48,7 @@
 
 - Corrected the deferred-tools queue test to match steering semantics: queued steering messages are injected before the next LLM call after the current assistant turn finishes its tool calls.
 
-## [Unreleased]
+## [0.57.5] - 2026-03-24
 
 ## [0.0.1] - 2026-03-15
 

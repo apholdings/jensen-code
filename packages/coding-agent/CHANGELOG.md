@@ -74,7 +74,7 @@
 - Fixed assistant message bottom spacing to add an extra blank line after assistant content when there are no tool calls.
 - Fixed tool execution component missing top margin in chat history.
 
-## [Unreleased]
+## [0.57.5] - 2026-03-24
 
 ### Changed
 

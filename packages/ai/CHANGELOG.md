@@ -28,7 +28,7 @@
 
 - Regenerated the Z.AI model catalog to use `https://api.z.ai/api/paas/v4` as the generated base URL, keeping generated metadata aligned with runtime provider wiring.
 
-## [Unreleased]
+## [0.57.5] - 2026-03-24
 
 ## [0.0.1] - 2026-03-15
 
