@@ -2470,7 +2470,7 @@ export class InteractiveMode {
 			}
 			if (text === "/new" || text === "/clear") {
 				this.editor.setText("");
-				await this.handleClearCommand();
+				await this.handleClearCommand(text === "/clear");
 				return;
 			}
 			if (text === "/compact" || text.startsWith("/compact ")) {
@@ -4885,7 +4885,7 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	private async handleClearCommand(): Promise<void> {
+	private async handleClearCommand(clearTerminal: boolean = false): Promise<void> {
 		// New session via session (emits extension session events)
 		const success = await this.session.newSession();
 		if (!success) {
@@ -4893,7 +4893,12 @@ export class InteractiveMode {
 		}
 
 		this.resetInteractiveSessionUI(true);
-		this.ui.requestRender();
+
+		if (clearTerminal) {
+			this.ui.requestRender(true);
+		} else {
+			this.ui.requestRender();
+		}
 	}
 
 	private handleDebugCommand(): void {

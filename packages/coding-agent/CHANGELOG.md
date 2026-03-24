@@ -76,6 +76,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Default `quietStartup` to `true`.
+- Update `/clear` command to clear the terminal screen and reset the session.
+- Update `jensen-theme-v2` surface color for better contrast.
+
 ## [0.0.7] - 2026-03-15
 
 - Updated Jensen Code branding and alignment
