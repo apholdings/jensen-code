@@ -319,14 +319,22 @@ export class InteractiveMode {
 		this.header = new Header(this.session, this.footerDataProvider);
 		const editorPaddingX = this.settingsManager.getEditorPaddingX();
 		const autocompleteMaxVisible = this.settingsManager.getAutocompleteMaxVisible();
-		this.defaultEditor = new CustomEditor(this.ui, getEditorTheme(), this.keybindings, {
-			paddingX: editorPaddingX,
-			autocompleteMaxVisible,
-			promptGlyph: this.getPromptGlyph(),
-			placeholderText: this.getPromptPlaceholderText(),
-			promptGlyphStyle: (str) => this.getPromptGlyphColor()(str),
-			placeholderStyle: (str) => theme.fg(this.isPromptActive() ? "muted" : "dim", str),
-		});
+		this.defaultEditor = new CustomEditor(
+			this.ui,
+			getEditorTheme({
+				bgEnabled: this.settingsManager.getEditorBackgroundEnabled(),
+				bgColor: this.settingsManager.getEditorBackgroundColor(),
+			}),
+			this.keybindings,
+			{
+				paddingX: editorPaddingX,
+				autocompleteMaxVisible,
+				promptGlyph: this.getPromptGlyph(),
+				placeholderText: this.getPromptPlaceholderText(),
+				promptGlyphStyle: (str) => this.getPromptGlyphColor()(str),
+				placeholderStyle: (str) => theme.fg(this.isPromptActive() ? "muted" : "dim", str),
+			},
+		);
 		this.editor = this.defaultEditor;
 		this.editorContainer = new Container();
 		this.editorContainer.addChild(this.editor as Component);
@@ -2100,6 +2108,11 @@ export class InteractiveMode {
 					this.hideExtensionEditor(this.extensionEditor);
 					resolve(undefined);
 				},
+				undefined,
+				getEditorTheme({
+					bgEnabled: this.settingsManager.getEditorBackgroundEnabled(),
+					bgColor: this.settingsManager.getEditorBackgroundColor(),
+				}),
 			);
 
 			this.mountPromptOwner(this.extensionEditor, this.extensionEditor);
@@ -2126,7 +2139,14 @@ export class InteractiveMode {
 
 		if (factory) {
 			// Create the custom editor with tui, theme, and keybindings
-			const newEditor = factory(this.ui, getEditorTheme(), this.keybindings);
+			const newEditor = factory(
+				this.ui,
+				getEditorTheme({
+					bgEnabled: this.settingsManager.getEditorBackgroundEnabled(),
+					bgColor: this.settingsManager.getEditorBackgroundColor(),
+				}),
+				this.keybindings,
+			);
 
 			// Wire up callbacks from the default editor
 			newEditor.onSubmit = this.defaultEditor.onSubmit;
@@ -2922,6 +2942,12 @@ export class InteractiveMode {
 				if (!event.success) {
 					this.showError(`Retry failed after ${event.attempt} attempts: ${event.finalError || "Unknown error"}`);
 				}
+				this.ui.requestRender();
+				break;
+			}
+
+			case "auto_fallback": {
+				this.showStatus(`Fallback to ${event.fallbackModel.id} (${event.reason})`);
 				this.ui.requestRender();
 				break;
 			}

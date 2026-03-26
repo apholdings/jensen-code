@@ -1100,11 +1100,23 @@ export function getSelectListTheme(): SelectListTheme {
 	};
 }
 
-export function getEditorTheme(): EditorTheme {
+export function getEditorTheme(options?: { bgEnabled?: boolean; bgColor?: ThemeBg }): EditorTheme {
+	const bgEnabled = options?.bgEnabled ?? false;
+	const defaultBg: ThemeBg = "userMessageBg";
+	const bgThemeKey = options?.bgColor || defaultBg;
+
+	const safeBg = (str: string) => {
+		try {
+			return theme.bg(bgThemeKey, str);
+		} catch {
+			return theme.bg(defaultBg, str);
+		}
+	};
+
 	return {
 		borderColor: (text: string) => theme.fg("borderMuted", text),
-		promptBg: (text: string) => theme.bg("userMessageBg", text),
-		promptChromeBg: (str) => theme.bg("userMessageBg", str),
+		promptBg: bgEnabled ? safeBg : undefined,
+		promptChromeBg: bgEnabled ? safeBg : undefined,
 		selectList: getSelectListTheme(),
 	};
 }

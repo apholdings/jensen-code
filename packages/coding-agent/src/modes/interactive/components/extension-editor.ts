@@ -47,6 +47,7 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 		onSubmit: (value: string) => void,
 		onCancel: () => void,
 		options?: EditorOptions,
+		editorTheme: import("@apholdings/jensen-tui").EditorTheme = getEditorTheme(),
 	) {
 		super();
 
@@ -64,7 +65,7 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 		this.addChild(new Spacer(1));
 
 		// Create editor
-		this.editor = new Editor(tui, getEditorTheme(), options);
+		this.editor = new Editor(tui, editorTheme, options);
 		if (prefill) {
 			this.editor.setText(prefill);
 		}

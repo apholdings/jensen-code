@@ -43,6 +43,11 @@ export interface MarkdownSettings {
 	codeBlockIndent?: string; // default: "  "
 }
 
+export interface EditorBackgroundSettings {
+	enabled?: boolean; // default: false
+	color?: "selectedBg" | "userMessageBg" | "customMessageBg" | "toolPendingBg" | "toolSuccessBg" | "toolErrorBg"; // Optional ThemeBg color override
+}
+
 export type TransportSetting = Transport;
 
 /**
@@ -94,6 +99,7 @@ export interface Settings {
 	autocompleteMaxVisible?: number; // Max visible items in autocomplete dropdown (default: 5)
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
 	markdown?: MarkdownSettings;
+	editorBackground?: EditorBackgroundSettings; // Optional override for editor/prompt background
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -949,5 +955,47 @@ export class SettingsManager {
 
 	getCodeBlockIndent(): string {
 		return this.settings.markdown?.codeBlockIndent ?? "  ";
+	}
+
+	getEditorBackgroundEnabled(): boolean {
+		return this.settings.editorBackground?.enabled ?? false;
+	}
+
+	setEditorBackgroundEnabled(enabled: boolean): void {
+		if (!this.globalSettings.editorBackground) {
+			this.globalSettings.editorBackground = {};
+		}
+		this.globalSettings.editorBackground.enabled = enabled;
+		this.markModified("editorBackground", "enabled");
+		this.save();
+	}
+
+	getEditorBackgroundColor():
+		| "selectedBg"
+		| "userMessageBg"
+		| "customMessageBg"
+		| "toolPendingBg"
+		| "toolSuccessBg"
+		| "toolErrorBg"
+		| undefined {
+		return this.settings.editorBackground?.color;
+	}
+
+	setEditorBackgroundColor(
+		color:
+			| "selectedBg"
+			| "userMessageBg"
+			| "customMessageBg"
+			| "toolPendingBg"
+			| "toolSuccessBg"
+			| "toolErrorBg"
+			| undefined,
+	): void {
+		if (!this.globalSettings.editorBackground) {
+			this.globalSettings.editorBackground = {};
+		}
+		this.globalSettings.editorBackground.color = color;
+		this.markModified("editorBackground", "color");
+		this.save();
 	}
 }

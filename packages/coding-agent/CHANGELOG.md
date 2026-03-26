@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+- Added `editorBackground` to `settings.json` to allow users to configure or disable the interactive mode editor and prompt backgrounds.
+
+### Changed
+- The interactive mode editor and prompt backgrounds are now transparent by default.
+- Added `fallbackModels` option to `AgentSessionConfig` and `CreateAgentSessionOptions`. The agent will automatically fallback to configured models if the primary model fails validation or exhausts retry limits.
+
+
 ## 0.57.4
 
 ### Patch Changes

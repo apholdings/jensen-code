@@ -4,8 +4,8 @@ Pi uses JSON settings files with project settings overriding global settings.
 
 | Location | Scope |
 |----------|-------|
-| `~/.pi/agent/settings.json` | Global (all projects) |
-| `.pi/settings.json` | Project (current directory) |
+| `~/.jensen/agent/settings.json` | Global (all projects) |
+| `.jensen/settings.json` | Project (current directory) |
 
 Edit directly or use `/settings` for common options.
 
@@ -46,6 +46,18 @@ Edit directly or use `/settings` for common options.
 | `editorPaddingX` | number | `0` | Horizontal padding for input editor (0-3) |
 | `autocompleteMaxVisible` | number | `5` | Max visible items in autocomplete dropdown (3-20) |
 | `showHardwareCursor` | boolean | `false` | Show terminal cursor |
+| `editorBackground` | object | - | Optional overrides for the editor/prompt background |
+
+#### editorBackground
+
+```json
+{
+  "editorBackground": {
+    "enabled": false,
+    "color": "userMessageBg"
+  }
+}
+```
 
 ### Compaction
 
@@ -140,7 +152,7 @@ When a provider requests a retry delay longer than `maxDelayMs` (e.g., Google's 
 
 These settings define where to load extensions, skills, prompts, and themes from.
 
-Paths in `~/.pi/agent/settings.json` resolve relative to `~/.pi/agent`. Paths in `.pi/settings.json` resolve relative to `.pi`. Absolute paths and `~` are supported.
+Paths in `~/.jensen/agent/settings.json` resolve relative to `~/.jensen/agent`. Paths in `.jensen/settings.json` resolve relative to `.jensen`. Absolute paths and `~` are supported.
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
@@ -203,16 +215,16 @@ See [packages.md](packages.md) for package management details.
 
 ## Project Overrides
 
-Project settings (`.pi/settings.json`) override global settings. Nested objects are merged:
+Project settings (`.jensen/settings.json`) override global settings. Nested objects are merged:
 
 ```json
-// ~/.pi/agent/settings.json (global)
+// ~/.jensen/agent/settings.json (global)
 {
   "theme": "dark",
   "compaction": { "enabled": true, "reserveTokens": 16384 }
 }
 
-// .pi/settings.json (project)
+// .jensen/settings.json (project)
 {
   "compaction": { "reserveTokens": 8192 }
 }
@@ -221,5 +233,8 @@ Project settings (`.pi/settings.json`) override global settings. Nested objects 
 {
   "theme": "dark",
   "compaction": { "enabled": true, "reserveTokens": 8192 }
+}
+```
+": 8192 }
 }
 ```
