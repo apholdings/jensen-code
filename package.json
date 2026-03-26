@@ -45,7 +45,7 @@
   "engines": {
     "node": ">=20.0.0"
   },
-  "version": "0.1.4",
+  "version": "0.1.5",
   "dependencies": {
     "@apholdings/jensen-code": "0.1.5",
     "@mariozechner/jiti": "^2.6.5",
