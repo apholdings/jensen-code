@@ -51,6 +51,8 @@ export interface CreateAgentSessionOptions {
 
 	/** Model to use. Default: from settings, else first available */
 	model?: Model<any>;
+	/** Fallback models to try if the primary model fails */
+	fallbackModels?: Model<any>[];
 	/** Thinking level. Default: from settings, else 'medium' (clamped to model capabilities) */
 	thinkingLevel?: ThinkingLevel;
 	/** Models available for cycling (Ctrl+P in interactive mode) */
@@ -357,6 +359,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		settingsManager,
 		cwd,
 		scopedModels: options.scopedModels,
+		fallbackModels: options.fallbackModels,
 		resourceLoader,
 		customTools: options.customTools,
 		modelRegistry,

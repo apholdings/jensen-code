@@ -301,6 +301,7 @@ const available = await modelRegistry.getAvailable();
 
 const { session } = await createAgentSession({
   model: opus,
+  fallbackModels: [haiku, sonnet],
   thinkingLevel: "medium", // off, minimal, low, medium, high, xhigh
   
   // Models for cycling (Ctrl+P in interactive mode)

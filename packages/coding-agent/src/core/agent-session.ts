@@ -119,7 +119,8 @@ export type AgentSessionEvent =
 			errorMessage?: string;
 	  }
 	| { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
-	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string };
+	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
+	| { type: "auto_fallback"; model: Model<any>; fallbackModel: Model<any>; reason: string };
 
 /** Listener function for agent session events */
 export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
@@ -135,6 +136,8 @@ export interface AgentSessionConfig {
 	cwd: string;
 	/** Models to cycle through with Ctrl+P (from --models flag) */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	/** Fallback models to try if the primary model fails */
+	fallbackModels?: Model<any>[];
 	/** Resource loader for skills, prompts, themes, context files, system prompt */
 	resourceLoader: ResourceLoader;
 	/** SDK custom tools registered outside extensions */
@@ -215,6 +218,8 @@ export class AgentSession {
 	readonly settingsManager: SettingsManager;
 
 	private _scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	private _fallbackModels: Model<any>[];
+	private _fallbackIndex = -1;
 
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
@@ -279,6 +284,7 @@ export class AgentSession {
 		this.sessionManager = config.sessionManager;
 		this.settingsManager = config.settingsManager;
 		this._scopedModels = config.scopedModels ?? [];
+		this._fallbackModels = config.fallbackModels ?? [];
 		this._resourceLoader = config.resourceLoader;
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
@@ -504,6 +510,12 @@ export class AgentSession {
 			if (this._isRetryableError(msg)) {
 				const didRetry = await this._handleRetryableError(msg);
 				if (didRetry) return; // Retry was initiated, don't proceed to compaction
+			} else if (msg.stopReason === "error" && msg.errorMessage) {
+				const contextWindow = this.model?.contextWindow ?? 0;
+				if (!isContextOverflow(msg, contextWindow)) {
+					const didFallback = await this._handleFallback(msg, msg.errorMessage);
+					if (didFallback) return;
+				}
 			}
 
 			await this._checkCompaction(msg);
@@ -928,20 +940,40 @@ export class AgentSession {
 		}
 
 		// Validate API key
-		const apiKey = await this._modelRegistry.getApiKey(this.model);
+		let apiKey = await this._modelRegistry.getApiKey(this.model);
 		if (!apiKey) {
-			const isOAuth = this._modelRegistry.isUsingOAuth(this.model);
-			if (isOAuth) {
+			let fallbackSuccess = false;
+			while (!apiKey && this._fallbackIndex < this._fallbackModels.length - 1) {
+				this._fallbackIndex++;
+				const fallbackModel = this._fallbackModels[this._fallbackIndex];
+				apiKey = await this._modelRegistry.getApiKey(fallbackModel);
+				if (apiKey) {
+					this._emit({
+						type: "auto_fallback",
+						model: this.model,
+						fallbackModel,
+						reason: "Missing API key for primary model",
+					});
+					await this.setModel(fallbackModel);
+					fallbackSuccess = true;
+					break;
+				}
+			}
+
+			if (!fallbackSuccess && !apiKey) {
+				const isOAuth = this._modelRegistry.isUsingOAuth(this.model);
+				if (isOAuth) {
+					throw new Error(
+						`Authentication failed for "${this.model.provider}". ` +
+							`Credentials may have expired or network is unavailable. ` +
+							`Run '/login ${this.model.provider}' to re-authenticate.`,
+					);
+				}
 				throw new Error(
-					`Authentication failed for "${this.model.provider}". ` +
-						`Credentials may have expired or network is unavailable. ` +
-						`Run '/login ${this.model.provider}' to re-authenticate.`,
+					`No API key found for ${this.model.provider}.\n\n` +
+						`Use /login or set an API key environment variable. See ${join(getDocsPath(), "providers.md")}`,
 				);
 			}
-			throw new Error(
-				`No API key found for ${this.model.provider}.\n\n` +
-					`Use /login or set an API key environment variable. See ${join(getDocsPath(), "providers.md")}`,
-			);
 		}
 
 		// Check if we need to compact before sending (catches aborted responses)
@@ -2367,6 +2399,15 @@ export class AgentSession {
 		this._retryAttempt++;
 
 		if (this._retryAttempt > settings.maxRetries) {
+			// Try fallback before completely failing
+			if (this._fallbackModels.length > 0 && this._fallbackIndex < this._fallbackModels.length - 1) {
+				const didFallback = await this._handleFallback(message, message.errorMessage || "Max retries exceeded");
+				if (didFallback) {
+					this._resolveRetry(); // Resolve so waitForRetry() completes
+					return true;
+				}
+			}
+
 			// Max retries exceeded, emit final failure and reset
 			this._emit({
 				type: "auto_retry_end",
@@ -2420,6 +2461,48 @@ export class AgentSession {
 			this.agent.continue().catch(() => {
 				// Retry failed - will be caught by next agent_end
 			});
+		}, 0);
+
+		return true;
+	}
+
+	private async _handleFallback(message: AssistantMessage, reason: string): Promise<boolean> {
+		if (this._fallbackIndex >= this._fallbackModels.length - 1) {
+			return false; // Exhausted
+		}
+
+		this._fallbackIndex++;
+		const fallbackModel = this._fallbackModels[this._fallbackIndex];
+
+		// Ensure api key exists for fallback
+		const apiKey = await this._modelRegistry.getApiKey(fallbackModel);
+		if (!apiKey) {
+			// API key missing, try next fallback immediately recursively
+			return this._handleFallback(message, `${reason} (Skipped ${fallbackModel.id}: missing API key)`);
+		}
+
+		this._emit({
+			type: "auto_fallback",
+			model: this.model!,
+			fallbackModel: fallbackModel,
+			reason,
+		});
+
+		// Switch model
+		await this.setModel(fallbackModel);
+
+		// Remove error message from agent state (keep in session for history)
+		const messages = this.agent.state.messages;
+		if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
+			this.agent.replaceMessages(messages.slice(0, -1));
+		}
+
+		// We reset the retry attempt for the new model
+		this._retryAttempt = 0;
+
+		// Restart via continue()
+		setTimeout(() => {
+			this.agent.continue().catch(() => {});
 		}, 0);
 
 		return true;
