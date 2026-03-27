@@ -77,7 +77,7 @@ export interface RenderDiffOptions {
  * - Added lines: green, with inverse on changed tokens
  */
 export function renderDiff(diffText: string, _options: RenderDiffOptions = {}): string {
-	const lines = diffText.split("\n");
+	const lines = diffText.replace(/\r?\n$/, "").split("\n");
 	const result: string[] = [];
 
 	let i = 0;

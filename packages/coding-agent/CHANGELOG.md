@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Refactored interactive mode components to use a new `BorderedBox` for a cleaner, transparent UI with rounded borders in tool executions and user messages.
+
 ## [0.57.6] - 2026-03-26
 
 ### Added

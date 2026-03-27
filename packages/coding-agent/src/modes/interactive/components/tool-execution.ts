@@ -1,6 +1,5 @@
 import * as os from "node:os";
 import {
-	Box,
 	Container,
 	getCapabilities,
 	getImageDimensions,
@@ -19,6 +18,7 @@ import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "../../../core/
 import { convertToPng } from "../../../utils/image-convert.js";
 import { sanitizeBinaryOutput } from "../../../utils/shell.js";
 import { getLanguageFromPath, highlightCode, theme } from "../theme/theme.js";
+import { BorderedBox } from "./bordered-box.js";
 import { renderDiff } from "./diff.js";
 import { keyHint } from "./keybinding-hints.js";
 import { truncateToVisualLines } from "./visual-truncate.js";
@@ -79,8 +79,9 @@ type WriteHighlightCache = {
  * Component that renders a tool call with its result (updateable)
  */
 export class ToolExecutionComponent extends Container {
-	private contentBox: Box; // Used for custom tools and bash visual truncation
-	private contentText: Text; // For built-in tools (with its own padding/bg)
+	private contentBox: BorderedBox; // Used for custom tools and bash visual truncation
+	private contentText: Text; // For built-in tools
+	private contentTextContainer: BorderedBox; // Wrapper for contentText
 	private imageComponents: Image[] = [];
 	private imageSpacers: Spacer[] = [];
 	private toolName: string;
@@ -123,15 +124,17 @@ export class ToolExecutionComponent extends Container {
 		this.cwd = cwd;
 
 		// Always create both - contentBox for custom tools/bash, contentText for other built-ins
-		this.contentBox = new Box(2, 1, (text: string) => theme.bg("toolPendingBg", text));
-		this.contentText = new Text("", 2, 1, (text: string) => theme.bg("toolPendingBg", text));
+		this.contentBox = new BorderedBox(2, 0, (text: string) => theme.fg("dim", text));
+		this.contentText = new Text("", 0, 0);
+		this.contentTextContainer = new BorderedBox(2, 0, (text: string) => theme.fg("dim", text));
+		this.contentTextContainer.addChild(this.contentText);
 
 		// Use contentBox for bash (visual truncation) or custom tools with custom renderers
 		// Use contentText for built-in tools (including overrides without custom renderers)
 		if (toolName === "bash" || (toolDefinition && !this.shouldUseBuiltInRenderer())) {
 			this.addChild(this.contentBox);
 		} else {
-			this.addChild(this.contentText);
+			this.addChild(this.contentTextContainer);
 		}
 
 		this.updateDisplay();
@@ -368,16 +371,16 @@ export class ToolExecutionComponent extends Container {
 		if (this.hideComponent) {
 			return [];
 		}
-		return [...super.render(width), ""];
+		return super.render(width);
 	}
 
 	private updateDisplay(): void {
-		// Set background based on state
-		const bgFn = this.isPartial
-			? (text: string) => theme.bg("toolPendingBg", text)
+		// Set border based on state
+		const borderFn = this.isPartial
+			? (text: string) => theme.fg("dim", text)
 			: this.result?.isError
-				? (text: string) => theme.bg("toolErrorBg", text)
-				: (text: string) => theme.bg("toolSuccessBg", text);
+				? (text: string) => theme.fg("error", text)
+				: (text: string) => theme.fg("success", text);
 
 		const useBuiltInRenderer = this.shouldUseBuiltInRenderer();
 		let customRendererHasContent = false;
@@ -387,17 +390,17 @@ export class ToolExecutionComponent extends Container {
 		if (useBuiltInRenderer) {
 			if (this.toolName === "bash") {
 				// Bash uses Box with visual line truncation
-				this.contentBox.setBgFn(bgFn);
+				this.contentBox.setBorderColorFn(borderFn);
 				this.contentBox.clear();
 				this.renderBashContent();
 			} else {
 				// Other built-in tools: use Text directly with caching
-				this.contentText.setCustomBgFn(bgFn);
+				this.contentTextContainer.setBorderColorFn(borderFn);
 				this.contentText.setText(this.formatToolExecution());
 			}
 		} else if (this.toolDefinition) {
 			// Custom tools use Box for flexible component rendering
-			this.contentBox.setBgFn(bgFn);
+			this.contentBox.setBorderColorFn(borderFn);
 			this.contentBox.clear();
 
 			// Render call component
@@ -449,7 +452,7 @@ export class ToolExecutionComponent extends Container {
 			}
 		} else {
 			// Unknown tool with no registered definition - show generic fallback
-			this.contentText.setCustomBgFn(bgFn);
+			this.contentTextContainer.setBorderColorFn(borderFn);
 			this.contentText.setText(this.formatToolExecution());
 		}
 
@@ -633,7 +636,7 @@ export class ToolExecutionComponent extends Container {
 			text = `${theme.fg("accent", theme.bold("read"))} ${pathDisplay}`;
 
 			if (this.result) {
-				const output = this.getTextOutput();
+				const output = this.getTextOutput().replace(/\r?\n$/, "");
 				const rawPath = str(this.args?.file_path ?? this.args?.path);
 				const lang = rawPath ? getLanguageFromPath(rawPath) : undefined;
 				const lines = lang ? highlightCode(replaceTabs(output), lang) : output.split("\n");
@@ -698,7 +701,7 @@ export class ToolExecutionComponent extends Container {
 					if (cache && cache.lang === lang && cache.rawPath === rawPath && cache.rawContent === fileContent) {
 						lines = cache.highlightedLines;
 					} else {
-						const displayContent = normalizeDisplayText(fileContent);
+						const displayContent = normalizeDisplayText(fileContent.replace(/\r?\n$/, ""));
 						const normalized = replaceTabs(displayContent);
 						lines = highlightCode(normalized, lang);
 						this.writeHighlightCache = {
@@ -710,7 +713,7 @@ export class ToolExecutionComponent extends Container {
 						};
 					}
 				} else {
-					lines = normalizeDisplayText(fileContent).split("\n");
+					lines = normalizeDisplayText(fileContent.replace(/\r?\n$/, "")).split("\n");
 					this.writeHighlightCache = undefined;
 				}
 
