@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.57.7
+
+### Patch Changes
+
+- Refactored interactive mode components to use a new BorderedBox for a cleaner, transparent UI with rounded borders in tool executions and user messages.
+- Updated dependencies
+  - @apholdings/jensen-ai@0.57.7
+  - @apholdings/jensen-tui@0.57.7
+
 ## [Unreleased]
 
 ## [0.57.6] - 2026-03-26

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.57.7
+
+### Patch Changes
+
+- Refactored interactive mode components to use a new BorderedBox for a cleaner, transparent UI with rounded borders in tool executions and user messages.
+
 ## [Unreleased]
 
 ## [0.57.6] - 2026-03-26

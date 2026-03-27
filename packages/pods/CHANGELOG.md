@@ -1,5 +1,13 @@
 # @apholdings/jensen-pods
 
+## 0.57.7
+
+### Patch Changes
+
+- Refactored interactive mode components to use a new BorderedBox for a cleaner, transparent UI with rounded borders in tool executions and user messages.
+- Updated dependencies
+  - @apholdings/jensen-agent-core@0.57.7
+
 ## 0.57.4
 
 ### Patch Changes

@@ -1,19 +1,31 @@
 # Changelog
 
+## 0.57.7
+
+### Patch Changes
+
+- Refactored interactive mode components to use a new BorderedBox for a cleaner, transparent UI with rounded borders in tool executions and user messages.
+- Updated dependencies
+  - @apholdings/jensen-agent-core@0.57.7
+  - @apholdings/jensen-ai@0.57.7
+  - @apholdings/jensen-tui@0.57.7
+
 ## [Unreleased]
 
 ### Changed
+
 - Refactored interactive mode components to use a new `BorderedBox` for a cleaner, transparent UI with rounded borders in tool executions and user messages.
 
 ## [0.57.6] - 2026-03-26
 
 ### Added
+
 - Added `editorBackground` to `settings.json` to allow users to configure or disable the interactive mode editor and prompt backgrounds.
 
 ### Changed
+
 - The interactive mode editor and prompt backgrounds are now transparent by default.
 - Added `fallbackModels` option to `AgentSessionConfig` and `CreateAgentSessionOptions`. The agent will automatically fallback to configured models if the primary model fails validation or exhausts retry limits.
-
 
 ## 0.57.4
 
