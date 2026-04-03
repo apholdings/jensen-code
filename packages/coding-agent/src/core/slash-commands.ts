@@ -35,7 +35,11 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "compact", description: "Manually compact the session context" },
 	{ name: "resume", description: "Resume a different session" },
 	{ name: "reload", description: "Reload extensions, skills, prompts, and themes" },
-	{ name: "quit", description: "Quit pi" },
-	{ name: "exit", description: "Exit pi" },
+	{ name: "quit", description: "Quit Jensen" },
+	{ name: "exit", description: "Exit Jensen" },
 	{ name: "help", description: "Show startup help and loaded resources" },
+	{ name: "doctor", description: "Run diagnostics and show system health" },
+	{ name: "memory", description: "Inspect and manage active session memory" },
+	{ name: "brief", description: "Enable, disable, or inspect runtime-only brief-only mode" },
+	{ name: "ultraplan", description: "Run, show, revise, regenerate, or apply a persisted local-first planner plan" },
 ];
