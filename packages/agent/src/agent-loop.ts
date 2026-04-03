@@ -414,27 +414,55 @@ async function executeToolCallsParallel(
 		}
 	}
 
-	const runningCalls = runnableCalls.map((prepared) => ({
-		prepared,
-		execution: executePreparedToolCall(prepared, signal, emit),
-	}));
+	for (const batch of partitionPreparedToolCalls(runnableCalls)) {
+		const runningCalls = batch.calls.map((prepared) => ({
+			prepared,
+			execution: executePreparedToolCall(prepared, signal, emit),
+		}));
 
-	for (const running of runningCalls) {
-		const executed = await running.execution;
-		results.push(
-			await finalizeExecutedToolCall(
-				currentContext,
-				assistantMessage,
-				running.prepared,
-				executed,
-				config,
-				signal,
-				emit,
-			),
-		);
+		for (const running of runningCalls) {
+			const executed = await running.execution;
+			results.push(
+				await finalizeExecutedToolCall(
+					currentContext,
+					assistantMessage,
+					running.prepared,
+					executed,
+					config,
+					signal,
+					emit,
+				),
+			);
+		}
 	}
 
 	return results;
+}
+
+function partitionPreparedToolCalls(toolCalls: PreparedToolCall[]): PreparedToolCallBatch[] {
+	const batches: PreparedToolCallBatch[] = [];
+
+	for (const toolCall of toolCalls) {
+		const isConcurrencySafe = isPreparedToolCallConcurrencySafe(toolCall);
+		const previousBatch = batches[batches.length - 1];
+
+		if (isConcurrencySafe && previousBatch?.isConcurrencySafe) {
+			previousBatch.calls.push(toolCall);
+			continue;
+		}
+
+		batches.push({ calls: [toolCall], isConcurrencySafe });
+	}
+
+	return batches;
+}
+
+function isPreparedToolCallConcurrencySafe(toolCall: PreparedToolCall): boolean {
+	try {
+		return toolCall.tool.isConcurrencySafe?.(toolCall.args as never) ?? false;
+	} catch {
+		return false;
+	}
 }
 
 type PreparedToolCall = {
@@ -442,6 +470,11 @@ type PreparedToolCall = {
 	toolCall: AgentToolCall;
 	tool: AgentTool<any>;
 	args: unknown;
+};
+
+type PreparedToolCallBatch = {
+	calls: PreparedToolCall[];
+	isConcurrencySafe: boolean;
 };
 
 type ImmediateToolCallOutcome = {

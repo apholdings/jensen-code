@@ -273,6 +273,15 @@ export type AgentToolUpdateCallback<T = any> = (partialResult: AgentToolResult<T
 export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any> extends Tool<TParameters> {
 	// A human-readable label for the tool to be displayed in UI
 	label: string;
+	/**
+	 * Optional per-tool concurrency classification for parallel tool execution.
+	 *
+	 * - Return true only when this specific validated call is safe to run concurrently with other
+	 *   concurrency-safe tool calls from the same assistant message.
+	 * - Omit or return false to force this tool call to run in sequence.
+	 * - If this function throws, the tool call is treated as not concurrency-safe.
+	 */
+	isConcurrencySafe?: (params: Static<TParameters>) => boolean;
 	execute: (
 		toolCallId: string,
 		params: Static<TParameters>,

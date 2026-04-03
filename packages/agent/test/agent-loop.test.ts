@@ -80,6 +80,10 @@ function identityConverter(messages: AgentMessage[]): Message[] {
 	return messages.filter((m) => m.role === "user" || m.role === "assistant" || m.role === "toolResult") as Message[];
 }
 
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 describe("agentLoop with AgentMessage", () => {
 	it("should emit events with AgentMessage types", async () => {
 		const context: AgentContext = {
@@ -305,6 +309,183 @@ describe("agentLoop with AgentMessage", () => {
 		if (toolEnd?.type === "tool_execution_end") {
 			expect(toolEnd.isError).toBe(false);
 		}
+	});
+
+	it("should batch consecutive concurrency-safe tool calls concurrently while preserving result order", async () => {
+		const toolSchema = Type.Object({ value: Type.String(), delayMs: Type.Number() });
+		let activeExecutions = 0;
+		let maxConcurrentExecutions = 0;
+
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			isConcurrencySafe: () => true,
+			async execute(_toolCallId, params) {
+				activeExecutions++;
+				maxConcurrentExecutions = Math.max(maxConcurrentExecutions, activeExecutions);
+				await sleep(params.delayMs);
+				activeExecutions--;
+				return {
+					content: [{ type: "text", text: `echoed: ${params.value}` }],
+					details: { value: params.value },
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			toolExecution: "parallel",
+		};
+
+		let callIndex = 0;
+		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					const message = createAssistantMessage(
+						[
+							{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "first", delayMs: 25 } },
+							{ type: "toolCall", id: "tool-2", name: "echo", arguments: { value: "second", delayMs: 5 } },
+						],
+						"toolUse",
+					);
+					mockStream.push({ type: "done", reason: "toolUse", message });
+				} else {
+					mockStream.push({
+						type: "done",
+						reason: "stop",
+						message: createAssistantMessage([{ type: "text", text: "done" }]),
+					});
+				}
+				callIndex++;
+			});
+			return mockStream;
+		});
+
+		for await (const _event of stream) {
+			// consume
+		}
+
+		const messages = await stream.result();
+		const toolResults = messages.filter((message) => message.role === "toolResult");
+
+		expect(maxConcurrentExecutions).toBe(2);
+		expect(toolResults).toHaveLength(2);
+		expect(toolResults[0]?.toolCallId).toBe("tool-1");
+		expect(toolResults[1]?.toolCallId).toBe("tool-2");
+	});
+
+	it("should keep mixed safe and non-safe tool calls sequential in parallel mode", async () => {
+		const safeToolSchema = Type.Object({ value: Type.String(), delayMs: Type.Number() });
+		const defaultToolSchema = Type.Object({ value: Type.String(), delayMs: Type.Number() });
+		let activeExecutions = 0;
+		let maxConcurrentExecutions = 0;
+		const phases: string[] = [];
+
+		const safeTool: AgentTool<typeof safeToolSchema, { value: string }> = {
+			name: "safe_echo",
+			label: "Safe Echo",
+			description: "Concurrency-safe echo tool",
+			parameters: safeToolSchema,
+			isConcurrencySafe: () => true,
+			async execute(_toolCallId, params) {
+				phases.push(`start:${params.value}`);
+				activeExecutions++;
+				maxConcurrentExecutions = Math.max(maxConcurrentExecutions, activeExecutions);
+				await sleep(params.delayMs);
+				activeExecutions--;
+				phases.push(`end:${params.value}`);
+				return {
+					content: [{ type: "text", text: params.value }],
+					details: { value: params.value },
+				};
+			},
+		};
+
+		const defaultTool: AgentTool<typeof defaultToolSchema, { value: string }> = {
+			name: "default_echo",
+			label: "Default Echo",
+			description: "Default echo tool",
+			parameters: defaultToolSchema,
+			async execute(_toolCallId, params) {
+				phases.push(`start:${params.value}`);
+				activeExecutions++;
+				maxConcurrentExecutions = Math.max(maxConcurrentExecutions, activeExecutions);
+				await sleep(params.delayMs);
+				activeExecutions--;
+				phases.push(`end:${params.value}`);
+				return {
+					content: [{ type: "text", text: params.value }],
+					details: { value: params.value },
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [safeTool, defaultTool],
+		};
+
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			toolExecution: "parallel",
+		};
+
+		let callIndex = 0;
+		const stream = agentLoop([createUserMessage("mixed tools")], context, config, undefined, () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					const message = createAssistantMessage(
+						[
+							{ type: "toolCall", id: "tool-1", name: "safe_echo", arguments: { value: "safe-1", delayMs: 20 } },
+							{
+								type: "toolCall",
+								id: "tool-2",
+								name: "default_echo",
+								arguments: { value: "unsafe", delayMs: 1 },
+							},
+							{ type: "toolCall", id: "tool-3", name: "safe_echo", arguments: { value: "safe-2", delayMs: 20 } },
+						],
+						"toolUse",
+					);
+					mockStream.push({ type: "done", reason: "toolUse", message });
+				} else {
+					mockStream.push({
+						type: "done",
+						reason: "stop",
+						message: createAssistantMessage([{ type: "text", text: "done" }]),
+					});
+				}
+				callIndex++;
+			});
+			return mockStream;
+		});
+
+		for await (const _event of stream) {
+			// consume
+		}
+
+		expect(maxConcurrentExecutions).toBe(1);
+		expect(phases).toEqual([
+			"start:safe-1",
+			"end:safe-1",
+			"start:unsafe",
+			"end:unsafe",
+			"start:safe-2",
+			"end:safe-2",
+		]);
 	});
 
 	it("should inject queued messages after current tool calls finish", async () => {
