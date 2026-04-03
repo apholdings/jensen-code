@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initializeProjectScaffold } from "./init-project.js";
+import { DefaultResourceLoader } from "./resource-loader.js";
+import { SettingsManager } from "./settings-manager.js";
 
 const tempDirs: string[] = [];
 
@@ -43,6 +45,7 @@ describe("initializeProjectScaffold", () => {
 		expect(result.output).toContain("Existing files were preserved. Safe to rerun.");
 
 		expect(existsSync(join(cwd, "JENSEN.md"))).toBe(true);
+		expect(existsSync(join(cwd, ".jensen", "JENSEN_PROTOCOL.md"))).toBe(false);
 		expect(readFileSync(join(cwd, "JENSEN.md"), "utf-8")).toContain(".jensen/agents/");
 		expect(readFileSync(join(cwd, ".jensen", "settings.json"), "utf-8")).toContain('"./extensions/subagent"');
 		expect(readFileSync(join(cwd, ".jensen", "agents", "planner.md"), "utf-8")).toContain("name: planner");
@@ -68,6 +71,44 @@ describe("initializeProjectScaffold", () => {
 		expect(readFileSync(join(cwd, ".jensen", "agents", "worker.md"), "utf-8")).toBe("custom worker\n");
 		expect(readFileSync(join(cwd, ".jensen", "settings.json"), "utf-8")).toContain('"theme": "dark"');
 		expect(readFileSync(join(cwd, ".jensen", "settings.json"), "utf-8")).toContain('"./extensions/subagent"');
+	});
+
+	it("creates the Protocol marker only when requested and exposes it to the resource loader", async () => {
+		const cwd = createTempDir();
+		const agentDir = createTempDir();
+		const nestedWorkspaceDir = join(cwd, "services", "api");
+		mkdirSync(nestedWorkspaceDir, { recursive: true });
+
+		const result = initializeProjectScaffold(cwd, { includeProtocol: true });
+		const protocolContextPath = join(cwd, ".jensen", "JENSEN_PROTOCOL.md");
+
+		expect(result.createdFiles).toContain(".jensen/JENSEN_PROTOCOL.md");
+		expect(existsSync(protocolContextPath)).toBe(true);
+		expect(readFileSync(protocolContextPath, "utf-8")).toContain("Jensen-Protocol workspace boundary");
+		expect(readFileSync(protocolContextPath, "utf-8")).toContain("nearest ancestor `.jensen/JENSEN_PROTOCOL.md`");
+
+		const loader = new DefaultResourceLoader({
+			cwd: nestedWorkspaceDir,
+			agentDir,
+			settingsManager: SettingsManager.inMemory(),
+		});
+		await loader.reload();
+
+		expect(loader.getAgentsFiles().agentsFiles.map((file) => file.path)).toEqual([
+			join(cwd, "JENSEN.md"),
+			protocolContextPath,
+		]);
+	});
+
+	it("preserves an existing Protocol marker on rerun", () => {
+		const cwd = createTempDir();
+		mkdirSync(join(cwd, ".jensen"), { recursive: true });
+		writeFileSync(join(cwd, ".jensen", "JENSEN_PROTOCOL.md"), "# Existing protocol\n", "utf-8");
+
+		const result = initializeProjectScaffold(cwd, { includeProtocol: true });
+
+		expect(result.skippedFiles).toContain(".jensen/JENSEN_PROTOCOL.md");
+		expect(readFileSync(join(cwd, ".jensen", "JENSEN_PROTOCOL.md"), "utf-8")).toBe("# Existing protocol\n");
 	});
 
 	it("warns and preserves invalid existing settings.json", () => {

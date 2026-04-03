@@ -9,6 +9,8 @@ type AgentTemplateName = "planner" | "scout" | "worker" | "reviewer" | "security
 
 type InitProjectWarningCode = "context-file-exists" | "invalid-settings";
 
+const PROTOCOL_CONTEXT_FILE = "JENSEN_PROTOCOL.md";
+
 interface AgentTemplate {
 	name: AgentTemplateName;
 	description: string;
@@ -28,6 +30,10 @@ export interface InitProjectResult {
 	skippedFiles: string[];
 	warnings: InitProjectWarning[];
 	output: string;
+}
+
+export interface InitProjectScaffoldOptions {
+	includeProtocol?: boolean;
 }
 
 const AGENT_TEMPLATES: readonly AgentTemplate[] = [
@@ -196,6 +202,28 @@ function buildAgentMarkdown(template: AgentTemplate): string {
 	);
 }
 
+function buildProtocolWorkspaceMarker(projectName: string): string {
+	return [
+		`# ${projectName} Jensen-Protocol Workspace`,
+		"",
+		"This file marks this directory as a Jensen-Protocol workspace boundary.",
+		"",
+		"## Workspace Role",
+		"- Jensen-Protocol is the backend/service backbone for this workspace.",
+		"- The nearest ancestor `.jensen/JENSEN_PROTOCOL.md` is loaded as Protocol context for agents working here.",
+		"",
+		"## Record Here",
+		"Use this file for Protocol-specific workspace truth only:",
+		"- backend and service architecture notes with links to ADRs or canonical docs",
+		"- deployment, runtime, and operator workflow boundaries",
+		"- project-specific conventions for Protocol services, workers, and scheduled jobs",
+		"- links to the current source of truth for infrastructure and operations",
+		"",
+		"Keep this file minimal and current.",
+		"Do not duplicate global Jensen law, generic infrastructure templates, or speculative plans.",
+	].join("\n");
+}
+
 function buildSettingsJson(): string {
 	return `${JSON.stringify({ extensions: [SUBAGENT_EXTENSION_SETTING] }, null, 2)}\n`;
 }
@@ -354,7 +382,7 @@ function buildOutput(result: Omit<InitProjectResult, "output">): string {
 	return lines.join("\n");
 }
 
-export function initializeProjectScaffold(cwd: string): InitProjectResult {
+export function initializeProjectScaffold(cwd: string, options: InitProjectScaffoldOptions = {}): InitProjectResult {
 	const projectRoot = resolve(cwd);
 	const projectName = projectRoot.split(/[/\\]/u).filter(Boolean).pop() ?? "project";
 	const configDir = join(projectRoot, CONFIG_DIR_NAME);
@@ -362,6 +390,7 @@ export function initializeProjectScaffold(cwd: string): InitProjectResult {
 	const extensionsDir = join(configDir, "extensions", "subagent");
 	const settingsPath = join(configDir, "settings.json");
 	const rootOverlayPath = join(projectRoot, "JENSEN.md");
+	const protocolContextPath = join(configDir, PROTOCOL_CONTEXT_FILE);
 	const examplesDir = getExamplesPath();
 	const exampleSubagentDir = join(examplesDir, "extensions", "subagent");
 
@@ -388,6 +417,17 @@ export function initializeProjectScaffold(cwd: string): InitProjectResult {
 		writeFileIfMissing(
 			rootOverlayPath,
 			buildProjectOverlay(projectName),
+			projectRoot,
+			createdDirectories,
+			createdFiles,
+			skippedFiles,
+		);
+	}
+
+	if (options.includeProtocol) {
+		writeFileIfMissing(
+			protocolContextPath,
+			buildProtocolWorkspaceMarker(projectName),
 			projectRoot,
 			createdDirectories,
 			createdFiles,

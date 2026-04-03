@@ -1002,8 +1002,8 @@ export class InteractiveMode {
 		);
 	}
 
-	private async handleInitProjectCommand(): Promise<void> {
-		const result = initializeProjectScaffold(process.cwd());
+	private async handleInitProjectCommand(includeProtocol = false): Promise<void> {
+		const result = initializeProjectScaffold(process.cwd(), { includeProtocol });
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(result.output, 1, 0));
 		this.ui.requestRender();
@@ -3088,11 +3088,13 @@ export class InteractiveMode {
 			}
 			if (text === "/init-project" || text.startsWith("/init-project ")) {
 				this.editor.setText("");
-				if (text !== "/init-project") {
-					this.showWarning("Usage: /init-project");
+				const parts = text.trim().split(/\s+/);
+				const includeProtocol = parts[1] === "--protocol";
+				if (parts.length > 2 || (parts[1] !== undefined && !includeProtocol)) {
+					this.showWarning("Usage: /init-project [--protocol]");
 					return;
 				}
-				await this.handleInitProjectCommand();
+				await this.handleInitProjectCommand(includeProtocol);
 				return;
 			}
 			if (text === "/debug") {

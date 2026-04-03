@@ -123,10 +123,11 @@ export async function getPrintModeLocalCommandOutput(
 	}
 
 	if (command === "/init-project") {
-		if (parts.length > 1) {
-			return "Usage: /init-project";
+		const includeProtocol = parts[1] === "--protocol";
+		if (parts.length > 2 || (parts[1] !== undefined && !includeProtocol)) {
+			return "Usage: /init-project [--protocol]";
 		}
-		return initializeProjectScaffold(process.cwd()).output;
+		return initializeProjectScaffold(process.cwd(), { includeProtocol }).output;
 	}
 
 	if (command === "/ultraplan") {

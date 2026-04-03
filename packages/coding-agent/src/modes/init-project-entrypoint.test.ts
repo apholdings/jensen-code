@@ -87,8 +87,9 @@ describe("/init-project command entrypoint", () => {
 		const source = readSource("interactive/interactive-mode.ts");
 
 		expect(source).toContain('if (text === "/init-project" || text.startsWith("/init-project "))');
-		expect(source).toContain("await this.handleInitProjectCommand();");
-		expect(source).toContain('this.showWarning("Usage: /init-project");');
+		expect(source).toContain('const includeProtocol = parts[1] === "--protocol";');
+		expect(source).toContain("await this.handleInitProjectCommand(includeProtocol);");
+		expect(source).toContain('this.showWarning("Usage: /init-project [--protocol]");');
 	});
 
 	it("invokes /init-project through print mode and creates scaffold files", async () => {
@@ -102,6 +103,23 @@ describe("/init-project command entrypoint", () => {
 			expect(output).toContain("/init-project completed.");
 			expect(output).toContain(".jensen/settings.json");
 			expect(readFileSync(join(cwd, ".jensen", "settings.json"), "utf-8")).toContain('"./extensions/subagent"');
+		} finally {
+			process.chdir(previousCwd);
+		}
+	});
+
+	it("accepts /init-project --protocol through print mode and creates the Protocol marker", async () => {
+		const cwd = createTempDir();
+		const previousCwd = process.cwd();
+		process.chdir(cwd);
+
+		try {
+			const output = await getPrintModeLocalCommandOutput(createPrintModeSessionStub(), "/init-project --protocol");
+
+			expect(output).toContain(".jensen/JENSEN_PROTOCOL.md");
+			expect(readFileSync(join(cwd, ".jensen", "JENSEN_PROTOCOL.md"), "utf-8")).toContain(
+				"Jensen-Protocol workspace boundary",
+			);
 		} finally {
 			process.chdir(previousCwd);
 		}
