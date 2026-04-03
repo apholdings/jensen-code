@@ -16,6 +16,12 @@ import {
 	formatMemoryHistoryOutput,
 	formatRelativeAgeLabel,
 } from "../core/memory-compare-output.js";
+import {
+	parseSteerCommand,
+	runSteerCommand,
+	STEER_COMMAND_ACTIVE_WORK_REQUIRED,
+	STEER_COMMAND_USAGE,
+} from "../core/steer-command.js";
 import { formatUltraplanShowOutput } from "../core/ultraplan.js";
 
 /**
@@ -32,8 +38,8 @@ export interface PrintModeOptions {
 	initialImages?: ImageContent[];
 }
 
-export async function getPrintModeLocalCommandOutput(
-	session: Pick<
+interface PrintModeLocalCommandSession
+	extends Pick<
 		AgentSession,
 		| "briefOnly"
 		| "setBriefOnly"
@@ -45,7 +51,16 @@ export async function getPrintModeLocalCommandOutput(
 		| "runUltraplan"
 		| "runUltraplanRevise"
 		| "applyUltraplan"
-	>,
+	> {
+	isStreaming?: boolean;
+	state?: { messages: ReadonlyArray<{ role: string }> };
+	steer?: (message: string) => Promise<void>;
+	getSteeringMessages?: () => readonly string[];
+	agent?: { continue(): Promise<void> };
+}
+
+export async function getPrintModeLocalCommandOutput(
+	session: PrintModeLocalCommandSession,
 	text: string,
 ): Promise<string | undefined> {
 	const parts = text.trim().split(/\s+/);
@@ -53,6 +68,7 @@ export async function getPrintModeLocalCommandOutput(
 	const subcommand = parts[1]?.toLowerCase();
 	const briefOnlyAction = parseBriefOnlyCommand(text);
 	const btwNote = parseBtwCommand(text);
+	const steerMessage = parseSteerCommand(text);
 
 	if (command === "/brief") {
 		return briefOnlyAction ? runBriefOnlyCommand(session, briefOnlyAction) : BRIEF_ONLY_COMMAND_USAGE;
@@ -60,6 +76,30 @@ export async function getPrintModeLocalCommandOutput(
 
 	if (command === "/btw") {
 		return btwNote ? runBtwCommand(session, btwNote) : BTW_COMMAND_USAGE;
+	}
+
+	if (command === "/steer") {
+		if (!steerMessage) {
+			return STEER_COMMAND_USAGE;
+		}
+		if (!session.state || !session.steer || !session.getSteeringMessages || !session.agent) {
+			return STEER_COMMAND_ACTIVE_WORK_REQUIRED;
+		}
+		try {
+			return await runSteerCommand(
+				{
+					isStreaming: session.isStreaming ?? false,
+					state: session.state,
+					steer: (message) => session.steer!(message),
+					continueCurrentWork: () => session.agent!.continue(),
+					getSteeringMessages: () => session.getSteeringMessages!(),
+				},
+				steerMessage,
+			);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return message || STEER_COMMAND_ACTIVE_WORK_REQUIRED;
+		}
 	}
 
 	if (command === "/memory") {

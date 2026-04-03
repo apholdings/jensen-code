@@ -77,6 +77,12 @@ import {
 	formatSnapshotSelectorResolutionFailure,
 	formatSnapshotShortId,
 } from "../../core/snapshot-selector-formatter.js";
+import {
+	parseSteerCommand,
+	runSteerCommand,
+	STEER_COMMAND_ACTIVE_WORK_REQUIRED,
+	STEER_COMMAND_USAGE,
+} from "../../core/steer-command.js";
 import type { TruncationResult } from "../../core/tools/truncate.js";
 import { formatUltraplanShowOutput } from "../../core/ultraplan.js";
 import { getChangelogPath, getNewEntries, parseChangelog } from "../../utils/changelog.js";
@@ -480,7 +486,8 @@ export class InteractiveMode {
 			["/new", "/clear", "/resume", "/session", "/name"],
 			["/tree", "/fork", "/compact", "/reload", "/init-project"],
 			["/copy", "/export", "/share", "/login", "/logout"],
-			["/memory", "/brief", "/btw", "/ultraplan", "/help"],
+			["/memory", "/brief", "/btw", "/steer", "/help"],
+			["/ultraplan"],
 		]
 			.map((line) => line.map((cmd) => theme.fg("accent", cmd)).join(theme.fg("dim", ", ")))
 			.join("\n");
@@ -608,6 +615,34 @@ export class InteractiveMode {
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(runBtwCommand(this.session, note), 1, 0));
 		this.ui.requestRender();
+	}
+
+	private async handleSteerCommand(text: string): Promise<void> {
+		const message = parseSteerCommand(text);
+		if (!message) {
+			this.showWarning(STEER_COMMAND_USAGE);
+			return;
+		}
+
+		try {
+			const output = await runSteerCommand(
+				{
+					isStreaming: this.session.isStreaming,
+					state: this.session.state,
+					steer: (steerMessage) => this.session.steer(steerMessage),
+					continueCurrentWork: () => this.session.agent.continue(),
+					getSteeringMessages: () => this.session.getSteeringMessages(),
+				},
+				message,
+			);
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(output, 1, 0));
+			this.updatePendingMessagesDisplay();
+			this.ui.requestRender();
+		} catch (error) {
+			const warningMessage = error instanceof Error ? error.message : STEER_COMMAND_ACTIVE_WORK_REQUIRED;
+			this.showWarning(warningMessage || STEER_COMMAND_ACTIVE_WORK_REQUIRED);
+		}
 	}
 
 	private handleMemoryCommand(text: string): void {
@@ -3096,6 +3131,12 @@ export class InteractiveMode {
 			if (text === "/btw" || text.startsWith("/btw ")) {
 				this.handleBtwCommand(text);
 				this.editor.setText("");
+				return;
+			}
+
+			if (text === "/steer" || text.startsWith("/steer ")) {
+				this.editor.setText("");
+				await this.handleSteerCommand(text);
 				return;
 			}
 

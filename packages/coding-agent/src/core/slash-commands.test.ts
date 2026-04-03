@@ -16,4 +16,11 @@ describe("built-in slash commands", () => {
 			description: "Queue runtime-only by-the-way guidance for the next turn",
 		});
 	});
+
+	it("registers /steer in the built-in slash command list", () => {
+		expect(BUILTIN_SLASH_COMMANDS).toContainEqual({
+			name: "steer",
+			description: "Apply steering to the active workstream or resume from the latest assistant turn",
+		});
+	});
 });
