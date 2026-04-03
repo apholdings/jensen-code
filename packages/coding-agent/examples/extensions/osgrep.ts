@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -265,29 +265,51 @@ function renderTraceCall(args: { symbol: string }, theme: any) {
 	return new Text(text, 0, 0);
 }
 
+function getExpandedContent(result: AgentToolResult<OsgrepDetails>): string {
+	const content = getTextContent(result);
+	const fullOutputPath = result.details?.fullOutputPath;
+
+	if (!fullOutputPath) return content;
+
+	try {
+		return readFileSync(fullOutputPath, "utf8");
+	} catch {
+		return content;
+	}
+}
+
 function renderToolResult(
 	result: AgentToolResult<OsgrepDetails> & { isError?: boolean },
 	expanded: boolean,
 	theme: any,
 ) {
 	const details = result.details;
-	const content = getTextContent(result);
+	const collapsedContent = getTextContent(result) || "(no output)";
+	const collapsedLines = collapsedContent.split("\n");
+	const preview = collapsedLines.slice(0, 12).join("\n") || "(no output)";
+	const needsMore = !expanded && collapsedLines.length > 12;
+
+	// Determine displayed content and its line count
+	let displayedContent: string;
+	let displayedLineCount: number;
+
+	if (expanded) {
+		// Expanded: read from fullOutputPath when present
+		displayedContent = getExpandedContent(result) || "(no output)";
+		displayedLineCount = countOutputLines(displayedContent);
+	} else {
+		// Collapsed: show preview, count lines from preview
+		displayedContent = preview;
+		displayedLineCount = countOutputLines(preview);
+	}
 
 	let header = theme.fg("toolTitle", theme.bold(details?.tool ?? "osgrep"));
-	if (details) header += theme.fg("muted", ` · ${details.outputLines} lines`);
+	header += theme.fg("muted", ` · ${displayedLineCount} lines`);
 	if (details?.durationMs !== undefined) header += theme.fg("muted", ` · ${details.durationMs}ms`);
 	if (details?.truncation?.truncated) header += theme.fg("warning", " · truncated");
 	if (details?.error || result.isError) header += theme.fg("error", " · error");
 
-	if (expanded) {
-		return new Text(`${header}\n${content || "(no output)"}`, 0, 0);
-	}
-
-	const lines = (content || "(no output)").split("\n");
-	const preview = lines.slice(0, 12).join("\n");
-	const needsMore = lines.length > 12;
-
-	let text = `${header}\n${preview}`;
+	let text = `${header}\n${displayedContent}`;
 	if (needsMore) text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
 
 	return new Text(text, 0, 0);
