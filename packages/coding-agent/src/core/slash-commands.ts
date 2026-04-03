@@ -35,6 +35,7 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "compact", description: "Manually compact the session context" },
 	{ name: "resume", description: "Resume a different session" },
 	{ name: "reload", description: "Reload extensions, skills, prompts, and themes" },
+	{ name: "init-project", description: "Scaffold a minimal project-local Jensen harness" },
 	{ name: "quit", description: "Quit Jensen" },
 	{ name: "exit", description: "Exit Jensen" },
 	{ name: "help", description: "Show startup help and loaded resources" },

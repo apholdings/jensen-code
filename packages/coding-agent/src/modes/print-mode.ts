@@ -8,6 +8,14 @@
 
 import type { AssistantMessage, ImageContent } from "@apholdings/jensen-ai";
 import type { AgentSession } from "../core/agent-session.js";
+import { BRIEF_ONLY_COMMAND_USAGE, parseBriefOnlyCommand, runBriefOnlyCommand } from "../core/brief-only-command.js";
+import { initializeProjectScaffold } from "../core/init-project.js";
+import {
+	formatMemoryDiffOutput,
+	formatMemoryHistoryOutput,
+	formatRelativeAgeLabel,
+} from "../core/memory-compare-output.js";
+import { formatUltraplanShowOutput } from "../core/ultraplan.js";
 
 /**
  * Options for print mode.
@@ -21,6 +29,86 @@ export interface PrintModeOptions {
 	initialMessage?: string;
 	/** Images to attach to the initial message */
 	initialImages?: ImageContent[];
+}
+
+export async function getPrintModeLocalCommandOutput(
+	session: Pick<
+		AgentSession,
+		| "briefOnly"
+		| "setBriefOnly"
+		| "getMemoryHistory"
+		| "resolveMemorySnapshotSelector"
+		| "getLatestUltraplanPlan"
+		| "runUltraplan"
+		| "runUltraplanRevise"
+		| "applyUltraplan"
+	>,
+	text: string,
+): Promise<string | undefined> {
+	const parts = text.trim().split(/\s+/);
+	const command = parts[0]?.toLowerCase();
+	const subcommand = parts[1]?.toLowerCase();
+	const briefOnlyAction = parseBriefOnlyCommand(text);
+
+	if (command === "/brief") {
+		return briefOnlyAction ? runBriefOnlyCommand(session, briefOnlyAction) : BRIEF_ONLY_COMMAND_USAGE;
+	}
+
+	if (command === "/memory") {
+		const snapshots = session.getMemoryHistory();
+		if (subcommand === "history") {
+			return formatMemoryHistoryOutput(snapshots, {
+				getRelativeAgeLabel: formatRelativeAgeLabel,
+			}).join("\n");
+		}
+
+		if (subcommand === "diff") {
+			return formatMemoryDiffOutput(
+				snapshots,
+				{
+					getRelativeAgeLabel: formatRelativeAgeLabel,
+					resolveSnapshotSelector: (input) => session.resolveMemorySnapshotSelector(input),
+				},
+				{ baseline: parts[2], target: parts[3] },
+			).join("\n");
+		}
+	}
+
+	if (command === "/init-project") {
+		if (parts.length > 1) {
+			return "Usage: /init-project";
+		}
+		return initializeProjectScaffold(process.cwd()).output;
+	}
+
+	if (command === "/ultraplan") {
+		if (subcommand === "show") {
+			return formatUltraplanShowOutput(session.getLatestUltraplanPlan());
+		}
+
+		if (subcommand === "apply") {
+			return session.applyUltraplan().displayText;
+		}
+
+		if (subcommand === "revise" || subcommand === "regenerate") {
+			const instruction = text.slice(`/ultraplan ${subcommand}`.length).trim();
+			if (!instruction) {
+				return "Usage: /ultraplan <objective> | /ultraplan show | /ultraplan apply | /ultraplan revise <instruction> | /ultraplan regenerate <instruction>";
+			}
+			const result = await session.runUltraplanRevise(instruction);
+			return result.displayText;
+		}
+
+		const objective = text.slice("/ultraplan".length).trim();
+		if (!objective) {
+			return "Usage: /ultraplan <objective> | /ultraplan show | /ultraplan apply | /ultraplan revise <instruction> | /ultraplan regenerate <instruction>";
+		}
+
+		const result = await session.runUltraplan(objective);
+		return result.displayText;
+	}
+
+	return undefined;
 }
 
 /**
@@ -80,14 +168,25 @@ export async function runPrintMode(session: AgentSession, options: PrintModeOpti
 		}
 	});
 
+	const handleTextOrLocalCommand = async (text: string, images?: ImageContent[]): Promise<void> => {
+		if (mode === "text") {
+			const localOutput = await getPrintModeLocalCommandOutput(session, text);
+			if (localOutput !== undefined) {
+				console.log(localOutput);
+				return;
+			}
+		}
+		await session.prompt(text, { images });
+	};
+
 	// Send initial message with attachments
 	if (initialMessage) {
-		await session.prompt(initialMessage, { images: initialImages });
+		await handleTextOrLocalCommand(initialMessage, initialImages);
 	}
 
 	// Send remaining messages
 	for (const message of messages) {
-		await session.prompt(message);
+		await handleTextOrLocalCommand(message);
 	}
 
 	// In text mode, output final response

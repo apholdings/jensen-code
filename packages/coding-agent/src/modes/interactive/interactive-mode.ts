@@ -25,6 +25,7 @@ import {
 	type Component,
 	Container,
 	fuzzyFilter,
+	getEditorKeybindings,
 	Loader,
 	Markdown,
 	matchesKey,
@@ -47,6 +48,7 @@ import {
 	VERSION,
 } from "../../config.js";
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.js";
+import { BRIEF_ONLY_COMMAND_USAGE, parseBriefOnlyCommand, runBriefOnlyCommand } from "../../core/brief-only-command.js";
 import type { CompactionResult } from "../../core/compaction/index.js";
 import { describeContextFiles } from "../../core/context-files.js";
 import type {
@@ -57,13 +59,25 @@ import type {
 	ExtensionWidgetOptions,
 } from "../../core/extensions/index.js";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.js";
+import { initializeProjectScaffold } from "../../core/init-project.js";
 import { type AppAction, KeybindingsManager } from "../../core/keybindings.js";
+import type { MemoryHistorySnapshot } from "../../core/memory.js";
+import { computeMemorySnapshotDiff } from "../../core/memory-diff.js";
+import { MEMORY_STALE_AFTER_DAYS, reviewMemoryItems } from "../../core/memory-review.js";
 import { createCompactionSummaryMessage } from "../../core/messages.js";
 import { resolveModelScope } from "../../core/model-resolver.js";
 import type { ResourceDiagnostic } from "../../core/resource-loader.js";
 import { type SessionContext, SessionManager } from "../../core/session-manager.js";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.js";
+import {
+	formatAdjacentDiffHeader,
+	formatExplicitDiffHeader,
+	formatSnapshotSelectorHistoryGuidance,
+	formatSnapshotSelectorResolutionFailure,
+	formatSnapshotShortId,
+} from "../../core/snapshot-selector-formatter.js";
 import type { TruncationResult } from "../../core/tools/truncate.js";
+import { formatUltraplanShowOutput } from "../../core/ultraplan.js";
 import { getChangelogPath, getNewEntries, parseChangelog } from "../../utils/changelog.js";
 import { copyToClipboard } from "../../utils/clipboard.js";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.js";
@@ -85,6 +99,7 @@ import { FooterComponent } from "./components/footer.js";
 import { Header } from "./components/header.js";
 import { appKey, appKeyHint, editorKey, keyHint, rawKeyHint } from "./components/keybinding-hints.js";
 import { LoginDialogComponent } from "./components/login-dialog.js";
+import { MemoryEditorComponent } from "./components/memory-editor.js";
 import { ModelSelectorComponent } from "./components/model-selector.js";
 import { OAuthSelectorComponent } from "./components/oauth-selector.js";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.js";
@@ -96,6 +111,7 @@ import { TopBar } from "./components/top-bar.js";
 import { TreeSelectorComponent } from "./components/tree-selector.js";
 import { UserMessageComponent } from "./components/user-message.js";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.js";
+import { WorkingContextPanel } from "./components/working-context-panel.js";
 import {
 	getAvailableThemes,
 	getAvailableThemesWithPaths,
@@ -156,6 +172,7 @@ export class InteractiveMode {
 	private chatContainer: Container;
 	private pendingMessagesContainer: Container;
 	private statusContainer: Container;
+	private workingContextPanel: WorkingContextPanel;
 	private defaultEditor: CustomEditor;
 	private editor: EditorComponent;
 	private autocompleteProvider: CombinedAutocompleteProvider | undefined;
@@ -297,6 +314,7 @@ export class InteractiveMode {
 		this.chatContainer = new Container();
 		this.pendingMessagesContainer = new Container();
 		this.statusContainer = new Container();
+		this.workingContextPanel = new WorkingContextPanel();
 		this.widgetContainerAbove = new Container();
 		this.widgetContainerBelow = new Container();
 		this.keybindings = KeybindingsManager.create();
@@ -459,8 +477,9 @@ export class InteractiveMode {
 		const commands = [
 			["/settings", "/model", "/scoped-models", "/hotkeys"],
 			["/new", "/clear", "/resume", "/session", "/name"],
-			["/tree", "/fork", "/compact", "/reload"],
+			["/tree", "/fork", "/compact", "/reload", "/init-project"],
 			["/copy", "/export", "/share", "/login", "/logout"],
+			["/memory", "/brief", "/ultraplan", "/help"],
 		]
 			.map((line) => line.map((cmd) => theme.fg("accent", cmd)).join(theme.fg("dim", ", ")))
 			.join("\n");
@@ -536,6 +555,518 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	private formatMemoryBlock(title: string, lines: string[]): string {
+		const body = lines.length > 0 ? lines.join("\n") : theme.fg("dim", "(none)");
+		return `${theme.bold(title)}\n\n${body}`;
+	}
+
+	/**
+	 * Format a date as a relative age label (e.g., "2 hours ago", "3 days ago").
+	 */
+	private getRelativeAgeLabel(date: Date): string {
+		const now = Date.now();
+		const diffMs = now - date.getTime();
+		const diffSecs = Math.floor(diffMs / 1000);
+		const diffMins = Math.floor(diffSecs / 60);
+		const diffHours = Math.floor(diffMins / 60);
+		const diffDays = Math.floor(diffHours / 24);
+
+		if (diffSecs < 60) return "just now";
+		if (diffMins < 60) return `${diffMins}m ago`;
+		if (diffHours < 24) return `${diffHours}h ago`;
+		if (diffDays < 30) return `${diffDays}d ago`;
+		const diffMonths = Math.floor(diffDays / 30);
+		if (diffMonths < 12) return `${diffMonths}mo ago`;
+		const diffYears = Math.floor(diffMonths / 12);
+		return `${diffYears}y ago`;
+	}
+
+	private updateWorkingContextPanel(): void {
+		this.workingContextPanel.update(this.session.getWorkingContext());
+	}
+
+	private handleBriefCommand(text: string): void {
+		const action = parseBriefOnlyCommand(text);
+		if (!action) {
+			this.showWarning(BRIEF_ONLY_COMMAND_USAGE);
+			return;
+		}
+
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(runBriefOnlyCommand(this.session, action), 1, 0));
+		this.ui.requestRender();
+	}
+
+	private handleMemoryCommand(text: string): void {
+		const parts = text.trim().split(/\s+/);
+		const subcommand = parts[1]?.toLowerCase();
+		const memoryItems = this.session.getMemoryItems();
+
+		// `/memory` (no args) or `/memory show`: open the interactive editor UI
+		if (!subcommand || subcommand === "show") {
+			this.showMemoryEditor();
+			return;
+		}
+
+		// `/memory list`: textual list (preserves existing operator workflow)
+		if (subcommand === "list") {
+			const reviewed = reviewMemoryItems([...memoryItems]);
+			const lines = reviewed.map((entry) => {
+				const prefix = entry.reviewRecommended ? theme.fg("warning", "⚠") : theme.fg("success", "✓");
+				const reviewHint = entry.reviewRecommended ? ` ${theme.fg("warning", "(review recommended)")}` : "";
+				return `${prefix} ${entry.item.key}: ${entry.item.value} ${theme.fg("dim", `· ${entry.label}`)}${reviewHint}`;
+			});
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(this.formatMemoryBlock("Session Memory", lines), 1, 0));
+			this.ui.requestRender();
+			return;
+		}
+
+		if (subcommand === "review") {
+			const reviewed = reviewMemoryItems([...memoryItems]);
+			const flagged = reviewed.filter((entry) => entry.reviewRecommended);
+			const lines = reviewed.flatMap((entry) => {
+				const status = entry.reviewRecommended ? theme.fg("warning", "review") : theme.fg("dim", "ok");
+				const output = [`- ${entry.item.key} ${theme.fg("dim", `(${entry.label})`)} · ${status}`];
+				if (entry.note) {
+					output.push(`  ${theme.fg("warning", entry.note)}`);
+				}
+				return output;
+			});
+			lines.push("");
+			lines.push(
+				theme.fg(
+					"dim",
+					flagged.length > 0
+						? `Freshness is heuristic. ${flagged.length} item(s) are older than ${MEMORY_STALE_AFTER_DAYS} days; verify before relying on them.`
+						: `Freshness is heuristic. No items currently exceed the ${MEMORY_STALE_AFTER_DAYS}-day review threshold.`,
+				),
+			);
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(this.formatMemoryBlock("Memory Review", lines), 1, 0));
+			this.ui.requestRender();
+			return;
+		}
+
+		if (subcommand === "history") {
+			const snapshots = this.session.getMemoryHistory();
+			if (snapshots.length === 0) {
+				this.chatContainer.addChild(new Spacer(1));
+				this.chatContainer.addChild(
+					new Text(
+						this.formatMemoryBlock("Memory History", [
+							theme.fg("dim", "No memory snapshots found in current branch."),
+						]),
+						1,
+						0,
+					),
+				);
+				this.ui.requestRender();
+				return;
+			}
+
+			const lines: string[] = [];
+			lines.push(
+				theme.fg(
+					"dim",
+					`Branch history · ${snapshots.length} snapshot${snapshots.length === 1 ? "" : "s"} · oldest first`,
+				),
+			);
+			lines.push(
+				theme.fg("dim", "Each snapshot is a complete memory state at that point (not individual changes)."),
+			);
+			lines.push("");
+			for (const guidanceLine of formatSnapshotSelectorHistoryGuidance()) {
+				lines.push(theme.fg("dim", guidanceLine));
+			}
+			lines.push("");
+
+			// Show newest first for better UX (current state most relevant)
+			for (let i = snapshots.length - 1; i >= 0; i--) {
+				const snapshot = snapshots[i]!;
+				const date = new Date(snapshot.recordedAt);
+				const ageLabel = this.getRelativeAgeLabel(date);
+				const currentMarker = snapshot.isCurrent ? ` ${theme.fg("accent", "[current]")}` : "";
+				const itemCount = snapshot.items.length;
+				const itemLabel = itemCount === 1 ? "item" : "items";
+				// Show short ID for copy/paste use in /memory diff <baselineId> <targetId>
+				const shortId = theme.fg("muted", formatSnapshotShortId(snapshot.entryId));
+
+				lines.push(
+					`${theme.bold(theme.fg("text", ageLabel))}${currentMarker} · ${itemCount} ${itemLabel} · ${theme.fg("dim", date.toLocaleString())} · ${shortId}`,
+				);
+
+				// Show item summary for each snapshot (key + first 30 chars of value)
+				if (snapshot.items.length > 0) {
+					for (const item of snapshot.items.slice(0, 5)) {
+						const valuePreview = item.value.length > 30 ? `${item.value.slice(0, 30)}…` : item.value;
+						lines.push(`  ${theme.fg("muted", `${item.key}:`)} ${valuePreview}`);
+					}
+					if (snapshot.items.length > 5) {
+						lines.push(`  ${theme.fg("dim", `… and ${snapshot.items.length - 5} more`)}`);
+					}
+				} else {
+					lines.push(`  ${theme.fg("dim", "(empty)")}`);
+				}
+				lines.push("");
+			}
+
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(this.formatMemoryBlock("Memory History", lines), 1, 0));
+			this.ui.requestRender();
+			return;
+		}
+
+		// `/memory diff` and `/memory history diff`: diff current vs previous snapshot, or explicit IDs
+		if (subcommand === "diff" || subcommand === "history_diff") {
+			const snapshots = this.session.getMemoryHistory();
+			const explicitBaselineId = parts[2];
+			const explicitTargetId = parts[3];
+
+			if (snapshots.length === 0) {
+				this.chatContainer.addChild(new Spacer(1));
+				this.chatContainer.addChild(
+					new Text(
+						this.formatMemoryBlock("Memory Diff", [
+							theme.fg("dim", "No memory snapshots found. Nothing to diff against."),
+						]),
+						1,
+						0,
+					),
+				);
+				this.ui.requestRender();
+				return;
+			}
+
+			// Determine which two snapshots to compare
+			let baselineSnapshot: MemoryHistorySnapshot | undefined;
+			let targetSnapshot: MemoryHistorySnapshot | undefined;
+			let isExplicitIds = false;
+
+			if (explicitBaselineId && explicitTargetId) {
+				// Explicit ID comparison: /memory diff <baselineId> <targetId>
+				// Uses strict resolution: exact full ID, exact short ID, or strict unique prefix.
+				// Supports brackets copied from /memory history output: [abcd1234]
+				isExplicitIds = true;
+
+				const baselineResult = this.session.resolveMemorySnapshotSelector(explicitBaselineId);
+				const targetResult = this.session.resolveMemorySnapshotSelector(explicitTargetId);
+
+				if (baselineResult.error !== undefined || targetResult.error !== undefined) {
+					const errorLines = formatSnapshotSelectorResolutionFailure([
+						{ label: "Baseline", resolution: baselineResult },
+						{ label: "Target", resolution: targetResult },
+					]);
+					this.chatContainer.addChild(new Spacer(1));
+					this.chatContainer.addChild(new Text(this.formatMemoryBlock("Memory Diff", errorLines), 1, 0));
+					this.ui.requestRender();
+					return;
+				}
+
+				baselineSnapshot = baselineResult.snapshot;
+				targetSnapshot = targetResult.snapshot;
+			} else {
+				// Adjacent diff default: current vs previous
+				targetSnapshot = snapshots[snapshots.length - 1];
+				baselineSnapshot = snapshots.length >= 2 ? snapshots[snapshots.length - 2] : undefined;
+
+				if (!baselineSnapshot) {
+					this.chatContainer.addChild(new Spacer(1));
+					this.chatContainer.addChild(
+						new Text(
+							this.formatMemoryBlock("Memory Diff", [
+								`${theme.fg("accent", "Initial snapshot")} — ${targetSnapshot!.items.length} item(s)`,
+								"",
+								theme.fg("dim", `Recorded: ${new Date(targetSnapshot!.recordedAt).toLocaleString()}`),
+								theme.fg("dim", "(snapshot comparison · not an event log)"),
+							]),
+							1,
+							0,
+						),
+					);
+					this.ui.requestRender();
+					return;
+				}
+			}
+
+			// Compute diff using the shared path
+			// Non-null asserted: both branches above return early if either snapshot is undefined
+			const diff = computeMemorySnapshotDiff(baselineSnapshot!, targetSnapshot!);
+
+			const lines: string[] = [];
+
+			if (isExplicitIds) {
+				lines.push(
+					...formatExplicitDiffHeader({
+						baselineSnapshot: baselineSnapshot!,
+						targetSnapshot: targetSnapshot!,
+						getRelativeAgeLabel: (date) => this.getRelativeAgeLabel(date),
+					}),
+				);
+			} else {
+				lines.push(
+					...formatAdjacentDiffHeader({
+						baselineSnapshot: baselineSnapshot!,
+						targetSnapshot: targetSnapshot!,
+						getRelativeAgeLabel: (date) => this.getRelativeAgeLabel(date),
+					}),
+				);
+			}
+
+			// Handle same-snapshot comparison honestly
+			if (baselineSnapshot!.entryId === targetSnapshot!.entryId) {
+				lines.push(theme.fg("dim", "Baseline and target are the same snapshot — no changes to show."));
+				this.chatContainer.addChild(new Spacer(1));
+				this.chatContainer.addChild(new Text(this.formatMemoryBlock("Memory Diff", lines), 1, 0));
+				this.ui.requestRender();
+				return;
+			}
+
+			if (diff.added.length > 0) {
+				lines.push(theme.bold(theme.fg("success", `+ Added (${diff.added.length})`)));
+				for (const item of diff.added) {
+					const preview = item.value.length > 50 ? `${item.value.slice(0, 50)}…` : item.value;
+					lines.push(`  ${theme.fg("success", "+")} ${theme.fg("accent", item.key)}: ${preview}`);
+				}
+				lines.push("");
+			}
+
+			if (diff.removed.length > 0) {
+				lines.push(theme.bold(theme.fg("error", `- Removed (${diff.removed.length})`)));
+				for (const item of diff.removed) {
+					const preview = item.value.length > 50 ? `${item.value.slice(0, 50)}…` : item.value;
+					lines.push(`  ${theme.fg("error", "-")} ${theme.fg("accent", item.key)}: ${preview}`);
+				}
+				lines.push("");
+			}
+
+			if (diff.changed.length > 0) {
+				lines.push(theme.bold(theme.fg("warning", `~ Changed (${diff.changed.length})`)));
+				for (const item of diff.changed) {
+					const prevPreview =
+						item.previousValue.length > 40 ? `${item.previousValue.slice(0, 40)}…` : item.previousValue;
+					const currPreview =
+						item.currentValue.length > 40 ? `${item.currentValue.slice(0, 40)}…` : item.currentValue;
+					lines.push(`  ${theme.fg("warning", "~")} ${theme.fg("accent", item.key)}:`);
+					lines.push(`    ${theme.fg("dim", prevPreview)}`);
+					lines.push(`    ${theme.fg("text", currPreview)}`);
+				}
+				lines.push("");
+			}
+
+			if (diff.added.length === 0 && diff.removed.length === 0 && diff.changed.length === 0) {
+				lines.push(theme.fg("dim", "No changes between snapshots."));
+			}
+
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(this.formatMemoryBlock("Memory Diff", lines), 1, 0));
+			this.ui.requestRender();
+			return;
+		}
+
+		if (subcommand === "set") {
+			const key = parts[2];
+			const value = text.trim().split(/\s+/, 4)[3];
+			if (!key || !value) {
+				this.showWarning("Usage: /memory set <key> <value>");
+				return;
+			}
+			const items = this.session.setMemoryItem(key, value);
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(
+				new Text(
+					this.formatMemoryBlock("Memory Updated", [
+						`${theme.fg("success", "✓")} Stored ${key}`,
+						`${theme.fg("dim", "Active items:")} ${String(items.length)}`,
+					]),
+					1,
+					0,
+				),
+			);
+			this.ui.requestRender();
+			return;
+		}
+
+		if (subcommand === "get") {
+			const key = parts[2];
+			if (!key) {
+				this.showWarning("Usage: /memory get <key>");
+				return;
+			}
+			const item = this.session.getMemoryItem(key);
+			if (!item) {
+				this.showWarning(`No memory item found for key: ${key}`);
+				return;
+			}
+			const review = reviewMemoryItems([item])[0];
+			const lines = [
+				`${theme.fg("accent", "Key:")} ${item.key}`,
+				`${theme.fg("accent", "Value:")} ${item.value}`,
+				`${theme.fg("accent", "Recorded:")} ${review?.label ?? "unknown age"}`,
+			];
+			if (review?.note) {
+				lines.push(theme.fg("warning", review.note));
+			}
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(this.formatMemoryBlock("Memory Item", lines), 1, 0));
+			this.ui.requestRender();
+			return;
+		}
+
+		if (subcommand === "clear") {
+			const key = parts[2];
+			if (key) {
+				const before = this.session.getMemoryItems().length;
+				const afterItems = this.session.deleteMemoryItem(key);
+				if (afterItems.length === before) {
+					this.showWarning(`No memory item found for key: ${key}`);
+					return;
+				}
+				this.chatContainer.addChild(new Spacer(1));
+				this.chatContainer.addChild(
+					new Text(
+						this.formatMemoryBlock("Memory Updated", [
+							`${theme.fg("success", "✓")} Removed ${key}`,
+							`${theme.fg("dim", "Remaining items:")} ${String(afterItems.length)}`,
+						]),
+						1,
+						0,
+					),
+				);
+				this.ui.requestRender();
+				return;
+			}
+			this.session.clearMemory();
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(
+				new Text(
+					this.formatMemoryBlock("Memory Cleared", [`${theme.fg("success", "✓")} Session memory is now empty`]),
+					1,
+					0,
+				),
+			);
+			this.ui.requestRender();
+			return;
+		}
+
+		this.showWarning(
+			"Usage: /memory [list|show|get <key>|set <key> <value>|clear [key]|review|history|diff [baselineId targetId]]",
+		);
+	}
+
+	private async handleInitProjectCommand(): Promise<void> {
+		const result = initializeProjectScaffold(process.cwd());
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(result.output, 1, 0));
+		this.ui.requestRender();
+	}
+
+	private async handleUltraplanCommand(text: string): Promise<void> {
+		const args = text.slice("/ultraplan".length).trim();
+		if (!args) {
+			this.showWarning(
+				"Usage: /ultraplan <objective> | /ultraplan show | /ultraplan apply | /ultraplan revise <instruction> | /ultraplan regenerate <instruction>",
+			);
+			return;
+		}
+
+		if (args === "show") {
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(formatUltraplanShowOutput(this.session.getLatestUltraplanPlan()), 1, 0));
+			this.ui.requestRender();
+			return;
+		}
+
+		if (args === "apply") {
+			try {
+				const result = this.session.applyUltraplan();
+				this.chatContainer.addChild(new Spacer(1));
+				this.chatContainer.addChild(new Text(result.displayText, 1, 0));
+				this.ui.requestRender();
+			} catch (error) {
+				this.showError(error instanceof Error ? error.message : String(error));
+			}
+			return;
+		}
+
+		if (args.startsWith("revise ") || args === "revise") {
+			const instruction = args.slice("revise".length).trim();
+			if (!instruction) {
+				this.showWarning(
+					"Usage: /ultraplan <objective> | /ultraplan show | /ultraplan apply | /ultraplan revise <instruction> | /ultraplan regenerate <instruction>",
+				);
+				return;
+			}
+			try {
+				const result = await this.session.runUltraplanRevise(instruction);
+				this.chatContainer.addChild(new Spacer(1));
+				this.chatContainer.addChild(new Text(result.displayText, 1, 0));
+				this.ui.requestRender();
+			} catch (error) {
+				this.showError(error instanceof Error ? error.message : String(error));
+			}
+			return;
+		}
+
+		if (args.startsWith("regenerate ") || args === "regenerate") {
+			const instruction = args.slice("regenerate".length).trim();
+			if (!instruction) {
+				this.showWarning(
+					"Usage: /ultraplan <objective> | /ultraplan show | /ultraplan apply | /ultraplan revise <instruction> | /ultraplan regenerate <instruction>",
+				);
+				return;
+			}
+			try {
+				const result = await this.session.runUltraplanRevise(instruction);
+				this.chatContainer.addChild(new Spacer(1));
+				this.chatContainer.addChild(new Text(result.displayText, 1, 0));
+				this.ui.requestRender();
+			} catch (error) {
+				this.showError(error instanceof Error ? error.message : String(error));
+			}
+			return;
+		}
+
+		try {
+			const result = await this.session.runUltraplan(args);
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(result.displayText, 1, 0));
+			this.ui.requestRender();
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
+		}
+	}
+
+	private showMemoryEditor(): void {
+		this.showSelector((done) => {
+			const callbacks = {
+				getMemoryItems: () => this.session.getMemoryItems(),
+				getMemoryHistory: () => this.session.getMemoryHistory(),
+				setMemoryItem: (key: string, value: string) => this.session.setMemoryItem(key, value),
+				deleteMemoryItem: (key: string) => this.session.deleteMemoryItem(key),
+				clearMemory: () => this.session.clearMemory(),
+				requestRender: () => this.ui.requestRender(),
+			};
+
+			const editor = new MemoryEditorComponent(callbacks, () => this.ui.requestRender());
+
+			// Proxy component that intercepts Escape to call done()
+			const kb = getEditorKeybindings();
+			const proxy = new (class extends Container {
+				handleInput(keyData: string): void {
+					if (kb.matches(keyData, "selectCancel")) {
+						done();
+						return;
+					}
+					editor.handleInput(keyData);
+				}
+			})();
+			proxy.addChild(editor);
+
+			return { component: proxy, focus: proxy };
+		});
+	}
+
 	private resetInteractiveSessionUI(renderInitialMessages = false): void {
 		// Invalidate all stale async callbacks
 		this.uiEpoch++;
@@ -590,6 +1121,7 @@ export class InteractiveMode {
 		this.isBashMode = false;
 
 		// Ensure clean widget state
+		this.updateWorkingContextPanel();
 		this.renderWidgets(false);
 		this.updatePromptChrome();
 
@@ -671,6 +1203,8 @@ export class InteractiveMode {
 				addIfMissing(this.ui, this.chatContainer);
 				addIfMissing(this.ui, this.pendingMessagesContainer);
 				addIfMissing(this.ui, this.statusContainer);
+				this.updateWorkingContextPanel();
+				addIfMissing(this.ui, this.workingContextPanel);
 				this.renderWidgets(); // Initialize with default spacer
 
 				// The prompt area consists of an optional widget strip, the editor, and a bottom widget strip.
@@ -2504,6 +3038,15 @@ export class InteractiveMode {
 				await this.handleReloadCommand();
 				return;
 			}
+			if (text === "/init-project" || text.startsWith("/init-project ")) {
+				this.editor.setText("");
+				if (text !== "/init-project") {
+					this.showWarning("Usage: /init-project");
+					return;
+				}
+				await this.handleInitProjectCommand();
+				return;
+			}
 			if (text === "/debug") {
 				this.handleDebugCommand();
 				this.editor.setText("");
@@ -2528,6 +3071,25 @@ export class InteractiveMode {
 			if (text === "/help") {
 				this.handleHelpCommand();
 				this.editor.setText("");
+				return;
+			}
+
+			if (text === "/brief" || text.startsWith("/brief ")) {
+				this.handleBriefCommand(text);
+				this.editor.setText("");
+				return;
+			}
+
+			// Handle /memory commands
+			if (text === "/memory" || text.startsWith("/memory ")) {
+				this.handleMemoryCommand(text);
+				this.editor.setText("");
+				return;
+			}
+
+			if (text === "/ultraplan" || text.startsWith("/ultraplan ")) {
+				this.editor.setText("");
+				await this.handleUltraplanCommand(text);
 				return;
 			}
 
@@ -2603,6 +3165,11 @@ export class InteractiveMode {
 		this.footer.invalidate();
 
 		switch (event.type) {
+			case "todo_update":
+			case "memory_update":
+				this.updateWorkingContextPanel();
+				this.ui.requestRender();
+				break;
 			case "agent_start":
 				// Restore main escape handler if retry handler is still active
 				// (retry success event fires later, but we need main handler now)
@@ -2672,6 +3239,7 @@ export class InteractiveMode {
 						undefined,
 						this.hideThinkingBlock,
 						this.getMarkdownThemeWithSettings(),
+						this.session.briefOnly,
 					);
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
@@ -2763,6 +3331,7 @@ export class InteractiveMode {
 				break;
 
 			case "tool_execution_start": {
+				this.updateWorkingContextPanel();
 				if (!this.pendingTools.has(event.toolCallId)) {
 					const component = new ToolExecutionComponent(
 						event.toolName,
@@ -2799,6 +3368,7 @@ export class InteractiveMode {
 			}
 
 			case "tool_execution_end": {
+				this.updateWorkingContextPanel();
 				const component = this.pendingTools.get(event.toolCallId);
 				if (component) {
 					component.updateResult({ ...event.result, isError: event.isError });
@@ -3073,12 +3643,17 @@ export class InteractiveMode {
 					message,
 					this.hideThinkingBlock,
 					this.getMarkdownThemeWithSettings(),
+					this.session.briefOnly,
 				);
 				this.chatContainer.addChild(assistantComponent);
 				break;
 			}
 			case "toolResult": {
 				// Tool results are rendered inline with tool calls, handled separately
+				break;
+			}
+			case "memoryContext": {
+				// Model-facing only; intentionally hidden from chat transcript UI
 				break;
 			}
 			default: {
@@ -4341,12 +4916,15 @@ export class InteractiveMode {
 		}
 		this.clearStatusOwner({ requestRender: false });
 
-		// Clear UI state
+		// Switch session via AgentSession (emits extension session events)
+		const switched = await this.session.switchSession(sessionPath);
+		if (!switched) {
+			return;
+		}
+
+		// Clear local queued UI state only after resume succeeds
 		this.pendingMessagesContainer.clear();
 		this.compactionQueuedMessages = [];
-		// Switch session via AgentSession (emits extension session events)
-		await this.session.switchSession(sessionPath);
-
 		this.resetInteractiveSessionUI(true);
 		this.showStatus("Resumed session");
 	}
@@ -4716,6 +5294,8 @@ export class InteractiveMode {
 	private handleSessionCommand(): void {
 		const stats = this.session.getSessionStats();
 		const sessionName = this.sessionManager.getSessionName();
+		const workingContext = this.session.getWorkingContext();
+		const recentDelegated = this.session.getRecentDelegatedTasks(3);
 
 		let info = `${theme.bold("Session Info")}\n\n`;
 		if (sessionName) {
@@ -4729,7 +5309,41 @@ export class InteractiveMode {
 		info += `${theme.fg("dim", "Tool Calls:")} ${stats.toolCalls}\n`;
 		info += `${theme.fg("dim", "Tool Results:")} ${stats.toolResults}\n`;
 		info += `${theme.fg("dim", "Total:")} ${stats.totalMessages}\n\n`;
-		info += `${theme.bold("Tokens")}\n`;
+		info += `${theme.bold("Working Context")}\n`;
+
+		// Memory section
+		const staleText =
+			workingContext.memory.staleCount > 0
+				? ` ${theme.fg("warning", `(${workingContext.memory.staleCount} stale)`)}`
+				: "";
+		info += `${theme.fg("dim", "Memory:")} ${workingContext.memory.itemCount} active item${workingContext.memory.itemCount === 1 ? "" : "s"}${staleText}\n`;
+		info += `${theme.fg("dim", "  Keys:")} ${workingContext.memory.keyPreview.join(", ") || "(none)"}\n`;
+		info += `${theme.fg("dim", "  Scope:")} ${workingContext.memory.scope}\n`;
+		info += `${theme.fg("dim", "  Provenance:")} persisted in session snapshots\n`;
+
+		// Todo section
+		info += `${theme.fg("dim", "Plan:")} ${workingContext.todo.completed}/${workingContext.todo.total} completed\n`;
+		info += `${theme.fg("dim", "  Active:")} ${workingContext.todo.inProgress ?? "(none)"}\n`;
+		info += `${theme.fg("dim", "  Scope:")} ${workingContext.todo.scope}\n`;
+		info += `${theme.fg("dim", "  Provenance:")} persisted in session entries\n`;
+
+		// Delegated work section
+		info += `${theme.fg("dim", "Delegated:")} ${workingContext.delegatedWork.activeCount} active, ${workingContext.delegatedWork.completedCount} done, ${workingContext.delegatedWork.failedCount} failed\n`;
+		info += `${theme.fg("dim", "  Scope:")} ${workingContext.delegatedWork.scope}\n`;
+		info += `${theme.fg("dim", "  Provenance:")} ${workingContext.delegatedWork.note}\n`;
+
+		if (recentDelegated.length > 0) {
+			for (const task of recentDelegated) {
+				const statusColor =
+					task.status === "completed"
+						? theme.fg("success", task.status)
+						: task.status === "active"
+							? theme.fg("warning", task.status)
+							: theme.fg("error", task.status);
+				info += `${theme.fg("dim", "  -")} ${task.agent} · ${statusColor} · ${task.task}\n`;
+			}
+		}
+		info += `\n${theme.bold("Tokens")}\n`;
 		info += `${theme.fg("dim", "Input:")} ${stats.tokens.input.toLocaleString()}\n`;
 		info += `${theme.fg("dim", "Output:")} ${stats.tokens.output.toLocaleString()}\n`;
 		if (stats.tokens.cacheRead > 0) {
