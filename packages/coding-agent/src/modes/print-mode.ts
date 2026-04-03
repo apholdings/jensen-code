@@ -9,6 +9,7 @@
 import type { AssistantMessage, ImageContent } from "@apholdings/jensen-ai";
 import type { AgentSession } from "../core/agent-session.js";
 import { BRIEF_ONLY_COMMAND_USAGE, parseBriefOnlyCommand, runBriefOnlyCommand } from "../core/brief-only-command.js";
+import { BTW_COMMAND_USAGE, parseBtwCommand, runBtwCommand } from "../core/btw-command.js";
 import { initializeProjectScaffold } from "../core/init-project.js";
 import {
 	formatMemoryDiffOutput,
@@ -36,6 +37,8 @@ export async function getPrintModeLocalCommandOutput(
 		AgentSession,
 		| "briefOnly"
 		| "setBriefOnly"
+		| "queueByTheWay"
+		| "getPendingByTheWayNotes"
 		| "getMemoryHistory"
 		| "resolveMemorySnapshotSelector"
 		| "getLatestUltraplanPlan"
@@ -49,9 +52,14 @@ export async function getPrintModeLocalCommandOutput(
 	const command = parts[0]?.toLowerCase();
 	const subcommand = parts[1]?.toLowerCase();
 	const briefOnlyAction = parseBriefOnlyCommand(text);
+	const btwNote = parseBtwCommand(text);
 
 	if (command === "/brief") {
 		return briefOnlyAction ? runBriefOnlyCommand(session, briefOnlyAction) : BRIEF_ONLY_COMMAND_USAGE;
+	}
+
+	if (command === "/btw") {
+		return btwNote ? runBtwCommand(session, btwNote) : BTW_COMMAND_USAGE;
 	}
 
 	if (command === "/memory") {

@@ -9,4 +9,11 @@ describe("built-in slash commands", () => {
 		expect(quitCommand?.description).toBe("Quit Jensen");
 		expect(exitCommand?.description).toBe("Exit Jensen");
 	});
+
+	it("registers /btw in the built-in slash command list", () => {
+		expect(BUILTIN_SLASH_COMMANDS).toContainEqual({
+			name: "btw",
+			description: "Queue runtime-only by-the-way guidance for the next turn",
+		});
+	});
 });

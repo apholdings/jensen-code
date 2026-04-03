@@ -30,6 +30,7 @@ import { theme } from "../modes/interactive/theme/theme.js";
 import { stripFrontmatter } from "../utils/frontmatter.js";
 import { sleep } from "../utils/sleep.js";
 import { type BashResult, executeBash as executeBashCommand, executeBashWithOperations } from "./bash-executor.js";
+import { createBtwNextTurnMessage, getBtwNoteFromMessage } from "./btw-command.js";
 import {
 	type CompactionResult,
 	calculateContextTokens,
@@ -41,11 +42,21 @@ import {
 	shouldCompact,
 } from "./compaction/index.js";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
+import {
+	buildDelegatedWorkSummary,
+	type DelegatedTask,
+	type DelegatedWorkSummary,
+	extractDelegatedTasks,
+	getRecentDelegatedTasks,
+	mergeDelegatedTask,
+	reconcileDelegatedResult,
+} from "./delegated-work.js";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.js";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.js";
 import {
 	type ContextUsage,
 	type ExtensionCommandContextActions,
+	type ExtensionContext,
 	type ExtensionErrorListener,
 	ExtensionRunner,
 	type ExtensionUIContext,
@@ -68,17 +79,50 @@ import {
 	type TurnStartEvent,
 	wrapRegisteredTools,
 } from "./extensions/index.js";
+import {
+	clearMemoryItems,
+	deleteMemoryItem,
+	getMemoryItem,
+	type MemoryHistorySnapshot,
+	type MemoryItem,
+	upsertMemoryItems,
+} from "./memory.js";
+import {
+	buildStructuredMemoryCompareData,
+	buildStructuredMemoryHistoryData,
+	type StructuredMemoryCompareData,
+	type StructuredMemoryHistoryData,
+} from "./memory-snapshot-contract.js";
 import type { BashExecutionMessage, CustomMessage } from "./messages.js";
 import type { ModelRegistry } from "./model-registry.js";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.js";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.js";
-import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.js";
+import type {
+	BranchSummaryEntry,
+	CompactionEntry,
+	MemorySnapshotResolution,
+	SessionManager,
+} from "./session-manager.js";
 import { getLatestCompactionEntry } from "./session-manager.js";
 import type { SettingsManager } from "./settings-manager.js";
 import { BUILTIN_SLASH_COMMANDS, type SlashCommandInfo, type SlashCommandLocation } from "./slash-commands.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import type { BashOperations } from "./tools/bash.js";
 import { createAllTools } from "./tools/index.js";
+import { createMemoryWriteTool } from "./tools/memory-write.js";
+import { createTodoWriteTool, type TodoItem } from "./tools/todo-write.js";
+import {
+	buildUltraplanPlannerTask,
+	buildUltraplanRevisionTask,
+	formatUltraplanArtifact,
+	parseUltraplanArtifactData,
+	parseUltraplanArtifactFromText,
+	SESSION_ULTRAPLAN_CUSTOM_TYPE,
+	selectUltraplanApplySteps,
+	type UltraplanArtifact,
+	type UltraplanRunResult,
+} from "./ultraplan.js";
+import { buildWorkingContext, type WorkingContext } from "./working-context.js";
 
 // ============================================================================
 // Skill Block Parsing
@@ -120,7 +164,9 @@ export type AgentSessionEvent =
 	  }
 	| { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
 	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
-	| { type: "auto_fallback"; model: Model<any>; fallbackModel: Model<any>; reason: string };
+	| { type: "auto_fallback"; model: Model<any>; fallbackModel: Model<any>; reason: string }
+	| { type: "todo_update"; todos: Array<{ content: string; activeForm: string; status: string }> }
+	| { type: "memory_update"; items: MemoryItem[] };
 
 /** Listener function for agent session events */
 export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
@@ -148,6 +194,8 @@ export interface AgentSessionConfig {
 	initialActiveToolNames?: string[];
 	/** Override base tools (useful for custom runtimes). */
 	baseToolsOverride?: Record<string, AgentTool>;
+	/** Enable brief-only output contract for this session. Default: false */
+	briefOnly?: boolean;
 	/** Mutable ref used by Agent to access the current ExtensionRunner */
 	extensionRunnerRef?: { current?: ExtensionRunner };
 }
@@ -208,6 +256,44 @@ const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "hi
 /** Thinking levels including xhigh (for supported models) */
 const THINKING_LEVELS_WITH_XHIGH: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
 
+interface UltraplanSubagentTool {
+	execute(
+		toolCallId: string,
+		params: { agent: string; task: string; agentScope?: "user" | "project" | "both" },
+		signal: AbortSignal | undefined,
+		onUpdate: undefined,
+		ctx: ExtensionContext,
+	): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }>;
+}
+
+const NO_OP_EXTENSION_UI_CONTEXT: ExtensionUIContext = {
+	select: async () => undefined,
+	confirm: async () => false,
+	input: async () => undefined,
+	notify: () => {},
+	onTerminalInput: () => () => {},
+	setStatus: () => {},
+	setWorkingMessage: () => {},
+	setWidget: (() => {}) as ExtensionUIContext["setWidget"],
+	setFooter: () => {},
+	setHeader: () => {},
+	setTitle: () => {},
+	custom: async () => undefined as never,
+	pasteToEditor: () => {},
+	setEditorText: () => {},
+	getEditorText: () => "",
+	editor: async () => undefined,
+	setEditorComponent: () => {},
+	get theme() {
+		return theme;
+	},
+	getAllThemes: () => [],
+	getTheme: () => undefined,
+	setTheme: () => ({ success: false, error: "UI unavailable" }),
+	getToolsExpanded: () => false,
+	setToolsExpanded: () => {},
+};
+
 // ============================================================================
 // AgentSession Class
 // ============================================================================
@@ -251,6 +337,11 @@ export class AgentSession {
 	private _bashAbortController: AbortController | undefined = undefined;
 	private _pendingBashMessages: BashExecutionMessage[] = [];
 
+	// Todo state
+	private _todos: TodoItem[] = [];
+	private _memoryItems: MemoryItem[] = [];
+	private _delegatedTasks: DelegatedTask[] = [];
+
 	// Extension system
 	private _extensionRunner: ExtensionRunner | undefined = undefined;
 	private _turnIndex = 0;
@@ -278,6 +369,7 @@ export class AgentSession {
 
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
+	private _briefOnly = false;
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
@@ -291,12 +383,17 @@ export class AgentSession {
 		this._modelRegistry = config.modelRegistry;
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
+		this._briefOnly = config.briefOnly ?? false;
 		this._baseToolsOverride = config.baseToolsOverride;
 
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 		this._installAgentToolHooks();
+
+		const restoredContext = this.sessionManager.buildSessionContext();
+		this._todos = restoredContext.todos as TodoItem[];
+		this._memoryItems = restoredContext.memoryItems;
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
@@ -453,6 +550,7 @@ export class AgentSession {
 
 		// Emit to extensions first
 		await this._emitExtensionEvent(event);
+		this._updateDelegatedWorkState(event);
 
 		// Notify all listeners
 		this._emit(event);
@@ -625,6 +723,49 @@ export class AgentSession {
 		}
 	}
 
+	private _updateDelegatedWorkState(event: AgentEvent): void {
+		if (event.type === "tool_execution_start") {
+			const tasks = extractDelegatedTasks({
+				type: "tool_call",
+				toolCallId: event.toolCallId,
+				toolName: event.toolName,
+				input: typeof event.args === "object" && event.args !== null ? event.args : {},
+			});
+			for (const task of tasks) {
+				this._delegatedTasks = mergeDelegatedTask(this._delegatedTasks, task);
+			}
+			return;
+		}
+
+		if (
+			(event.type !== "tool_execution_update" && event.type !== "tool_execution_end") ||
+			event.toolName !== "subagent"
+		) {
+			return;
+		}
+
+		const matchingTasks = this._delegatedTasks.filter((task) => task.toolCallId === event.toolCallId);
+		if (matchingTasks.length === 0) {
+			return;
+		}
+
+		const resultPayload = event.type === "tool_execution_end" ? event.result : event.partialResult;
+		const toolResult = {
+			role: "toolResult",
+			toolCallId: event.toolCallId,
+			toolName: event.toolName,
+			content:
+				resultPayload && typeof resultPayload === "object" && Array.isArray(resultPayload.content)
+					? resultPayload.content
+					: [],
+			details: resultPayload && typeof resultPayload === "object" ? resultPayload.details : undefined,
+			isError: event.type === "tool_execution_end" ? event.isError : false,
+			timestamp: Date.now(),
+		} as const;
+
+		this._delegatedTasks = reconcileDelegatedResult(this._delegatedTasks, toolResult);
+	}
+
 	/**
 	 * Subscribe to agent events.
 	 * Session persistence is handled internally (saves messages on message_end).
@@ -706,6 +847,18 @@ export class AgentSession {
 		return this._retryAttempt;
 	}
 
+	/** Whether the brief-only output contract is enabled for this session runtime. */
+	get briefOnly(): boolean {
+		return this._briefOnly;
+	}
+
+	/** Pending /btw guidance notes that will be injected on the next turn only. */
+	getPendingByTheWayNotes(): readonly string[] {
+		return this._pendingNextTurnMessages
+			.map((message) => getBtwNoteFromMessage(message))
+			.filter((note): note is string => note !== undefined);
+	}
+
 	/**
 	 * Get the names of currently active tools.
 	 * Returns the names of tools currently set on the agent.
@@ -746,6 +899,395 @@ export class AgentSession {
 		// Rebuild base system prompt with new tool set
 		this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
 		this.agent.setSystemPrompt(this._baseSystemPrompt);
+	}
+
+	/**
+	 * Get the current todo list.
+	 * Returns the session's todo state for UI rendering.
+	 */
+	getTodos(): ReadonlyArray<{ content: string; activeForm: string; status: string }> {
+		return this._todos;
+	}
+
+	getDelegatedTasks(): readonly DelegatedTask[] {
+		return this._delegatedTasks;
+	}
+
+	getDelegatedWorkSummary(): DelegatedWorkSummary {
+		return buildDelegatedWorkSummary(this._delegatedTasks);
+	}
+
+	getRecentDelegatedTasks(limit = 3): readonly DelegatedTask[] {
+		return getRecentDelegatedTasks(this._delegatedTasks, { limit });
+	}
+
+	/**
+	 * Internal: Set todos and emit update event.
+	 * Called by the todo_write tool to update session state.
+	 */
+	private _setTodos(todos: TodoItem[]): void {
+		this._todos = todos;
+		this.sessionManager.appendSessionTodos(todos);
+		this._emit({ type: "todo_update", todos: this._todos });
+	}
+
+	getMemoryItems(): readonly MemoryItem[] {
+		return this._memoryItems;
+	}
+
+	private _setMemoryItems(items: MemoryItem[]): void {
+		this._memoryItems = items;
+		this.sessionManager.appendSessionMemory(items);
+		this._emit({ type: "memory_update", items: this._memoryItems });
+	}
+
+	setMemoryItem(key: string, value: string): MemoryItem[] {
+		const next = upsertMemoryItems(this._memoryItems, key, value, new Date().toISOString());
+		this._setMemoryItems(next);
+		return next;
+	}
+
+	clearMemory(): MemoryItem[] {
+		const next = clearMemoryItems();
+		this._setMemoryItems(next);
+		return next;
+	}
+
+	deleteMemoryItem(key: string): MemoryItem[] {
+		const next = deleteMemoryItem(this._memoryItems, key);
+		this._setMemoryItems(next);
+		return next;
+	}
+
+	getMemoryItem(key: string): MemoryItem | undefined {
+		return getMemoryItem(this._memoryItems, key);
+	}
+
+	/**
+	 * Get memory history as a timeline of snapshots.
+	 * Delegates to SessionManager.getMemoryHistory() which walks the current branch.
+	 *
+	 * History is derived from persisted session entries with customType === "session_memory".
+	 * Because persistence is snapshot-based, each snapshot contains the complete memory
+	 * state at that point, not individual add/update/delete events.
+	 */
+	getMemoryHistory(): readonly MemoryHistorySnapshot[] {
+		return this.sessionManager.getMemoryHistory();
+	}
+
+	/**
+	 * Get the structured memory history payload used by RPC history consumers.
+	 *
+	 * This stays current-branch-only and snapshot-based because it delegates to the
+	 * same persisted snapshot backend as getMemoryHistory().
+	 */
+	getStructuredMemoryHistory(): StructuredMemoryHistoryData {
+		return buildStructuredMemoryHistoryData(this);
+	}
+
+	/**
+	 * Compare memory snapshots using the shared structured contract used by RPC.
+	 *
+	 * - Omit selectors for adjacent latest-vs-previous comparison.
+	 * - Provide both baseline and target selectors for explicit comparison.
+	 * - Throws if only one selector is provided, matching the RPC command contract.
+	 */
+	compareMemorySnapshots(options?: { baseline?: string; target?: string }): StructuredMemoryCompareData {
+		const hasBaseline = options?.baseline !== undefined;
+		const hasTarget = options?.target !== undefined;
+		if (hasBaseline !== hasTarget) {
+			throw new Error("Provide both baseline and target selectors, or neither for adjacent comparison.");
+		}
+		return buildStructuredMemoryCompareData(
+			this,
+			hasBaseline ? { baseline: options!.baseline!, target: options!.target! } : undefined,
+		);
+	}
+
+	/**
+	 * Resolve a memory snapshot by entry ID within the current branch history.
+	 * Delegates to SessionManager.findMemorySnapshotById().
+	 *
+	 * @param id - The entry ID of the snapshot to find
+	 * @returns The snapshot with that ID, or undefined if not found in current branch
+	 */
+	findMemorySnapshotById(id: string): MemoryHistorySnapshot | undefined {
+		return this.sessionManager.findMemorySnapshotById(id);
+	}
+
+	/**
+	 * Strictly resolve a snapshot selector string against current-branch history.
+	 * Delegates to SessionManager.resolveMemorySnapshotSelector().
+	 *
+	 * Resolution order:
+	 * 1. Exact full entryId match (always wins)
+	 * 2. Exact short-ID match (first 8 chars of an entryId)
+	 * 3. Strict unique prefix match — prefix must resolve to exactly one snapshot
+	 *
+	 * Supports optional surrounding brackets copied from /memory history output: [abcd1234]
+	 *
+	 * @param input - Raw selector string (may include surrounding brackets)
+	 * @returns Resolution result with snapshot or error details
+	 */
+	resolveMemorySnapshotSelector(input: string): MemorySnapshotResolution {
+		return this.sessionManager.resolveMemorySnapshotSelector(input);
+	}
+
+	/**
+	 * Get the integrated working context surface.
+	 *
+	 * Returns a real-time snapshot of three state sources:
+	 * - memory: persisted session memory (current-branch snapshot-based)
+	 * - todo: persisted todo/plan state (current-branch snapshot-based)
+	 * - delegatedWork: live current-process delegated subagent state (NOT persisted)
+	 *
+	 * This reuses the same structured payload exposed via RPC `get_working_context`
+	 * and displayed in the interactive working-context panel.
+	 *
+	 * Honesty contract:
+	 * - `memory.isPersisted: true` and `todo.isPersisted: true` — snapshot-backed session state
+	 * - `delegatedWork.isPersisted: false` — live runtime state only, resets on session switch/resume
+	 *
+	 * @returns The current working context snapshot
+	 */
+	getWorkingContext(): WorkingContext {
+		return buildWorkingContext({
+			memoryItems: this.getMemoryItems(),
+			todos: this.getTodos(),
+			delegatedWorkSummary: this.getDelegatedWorkSummary(),
+		});
+	}
+
+	getLatestUltraplanPlan(): UltraplanArtifact | undefined {
+		const branch = this.sessionManager.getBranch();
+		for (let i = branch.length - 1; i >= 0; i--) {
+			const entry = branch[i];
+			if (entry.type === "custom" && entry.customType === SESSION_ULTRAPLAN_CUSTOM_TYPE) {
+				return parseUltraplanArtifactData(entry.data);
+			}
+		}
+		return undefined;
+	}
+
+	private _createUltraplanExecutionContext(): ExtensionContext {
+		return (
+			this._extensionRunner?.createContext() ?? {
+				ui: NO_OP_EXTENSION_UI_CONTEXT,
+				hasUI: false,
+				cwd: this._cwd,
+				sessionManager: this.sessionManager,
+				modelRegistry: this._modelRegistry,
+				model: this.model,
+				isIdle: () => !this.isStreaming,
+				abort: () => {
+					void this.abort();
+				},
+				hasPendingMessages: () => this.pendingMessageCount > 0,
+				shutdown: () => {
+					this._extensionShutdownHandler?.();
+				},
+				getContextUsage: () => this.getContextUsage(),
+				compact: (options?: {
+					customInstructions?: string;
+					onComplete?: (result: CompactionResult) => void;
+					onError?: (error: Error) => void;
+				}) => {
+					void (async () => {
+						try {
+							const result = await this.compact(options?.customInstructions);
+							options?.onComplete?.(result);
+						} catch (error) {
+							const err = error instanceof Error ? error : new Error(String(error));
+							options?.onError?.(err);
+						}
+					})();
+				},
+				getSystemPrompt: () => this.systemPrompt,
+			}
+		);
+	}
+
+	async runUltraplan(objective: string): Promise<UltraplanRunResult> {
+		const trimmedObjective = objective.trim();
+		if (trimmedObjective.length === 0) {
+			throw new Error("Ultraplan requires a non-empty objective.");
+		}
+
+		const subagentTool = [
+			...(this._extensionRunner?.getAllRegisteredTools().map((tool) => tool.definition) ?? []),
+			...this._customTools,
+		].find((tool) => tool.name === "subagent") as UltraplanSubagentTool | undefined;
+		if (!subagentTool) {
+			throw new Error("Ultraplan requires the local subagent tool to be available.");
+		}
+
+		const result = await subagentTool.execute(
+			`ultraplan_${Date.now()}`,
+			{
+				agent: "planner",
+				task: buildUltraplanPlannerTask({
+					objective: trimmedObjective,
+					memoryItems: this.getMemoryItems(),
+					todos: this.getTodos(),
+				}),
+				agentScope: "user",
+			},
+			undefined,
+			undefined,
+			this._createUltraplanExecutionContext(),
+		);
+		if (result.isError) {
+			const errorText = result.content.find((entry) => entry.type === "text")?.text ?? "Ultraplan failed.";
+			throw new Error(errorText);
+		}
+
+		const plannerOutput = result.content.find((entry) => entry.type === "text")?.text?.trim();
+		if (!plannerOutput) {
+			throw new Error("Planner returned no Ultraplan output.");
+		}
+
+		const artifact = parseUltraplanArtifactFromText(plannerOutput);
+		this.sessionManager.appendCustomEntry(SESSION_ULTRAPLAN_CUSTOM_TYPE, artifact);
+
+		return {
+			artifact,
+			displayText: `${formatUltraplanArtifact(artifact)}\n\nPersisted as session-owned Ultraplan state on the current branch.`,
+			rawPlannerOutput: plannerOutput,
+		};
+	}
+
+	/**
+	 * Revise the latest persisted Ultraplan plan based on a revision instruction.
+	 *
+	 * Reads the existing plan artifact and passes it to the planner along with
+	 * the revision instruction. The revised result is persisted as a new latest
+	 * artifact. Apply remains separate and manual.
+	 *
+	 * @param instruction - Revision instruction to guide the planner
+	 * @returns Revised plan artifact and display text
+	 * @throws Error if no persisted Ultraplan plan exists or planner tool unavailable
+	 */
+	async runUltraplanRevise(instruction: string): Promise<UltraplanRunResult> {
+		const trimmedInstruction = instruction.trim();
+		if (trimmedInstruction.length === 0) {
+			throw new Error("Ultraplan revision requires a non-empty instruction.");
+		}
+
+		const existingArtifact = this.getLatestUltraplanPlan();
+		if (!existingArtifact) {
+			throw new Error("No persisted Ultraplan plan found. Run /ultraplan <objective> first.");
+		}
+
+		const subagentTool = [
+			...(this._extensionRunner?.getAllRegisteredTools().map((tool) => tool.definition) ?? []),
+			...this._customTools,
+		].find((tool) => tool.name === "subagent") as UltraplanSubagentTool | undefined;
+		if (!subagentTool) {
+			throw new Error("Ultraplan requires the local subagent tool to be available.");
+		}
+
+		const result = await subagentTool.execute(
+			`ultraplan_revise_${Date.now()}`,
+			{
+				agent: "planner",
+				task: buildUltraplanRevisionTask({
+					instruction: trimmedInstruction,
+					existingArtifact,
+					memoryItems: this.getMemoryItems(),
+					todos: this.getTodos(),
+				}),
+				agentScope: "user",
+			},
+			undefined,
+			undefined,
+			this._createUltraplanExecutionContext(),
+		);
+		if (result.isError) {
+			const errorText = result.content.find((entry) => entry.type === "text")?.text ?? "Ultraplan revision failed.";
+			throw new Error(errorText);
+		}
+
+		const plannerOutput = result.content.find((entry) => entry.type === "text")?.text?.trim();
+		if (!plannerOutput) {
+			throw new Error("Planner returned no Ultraplan output.");
+		}
+
+		const artifact = parseUltraplanArtifactFromText(plannerOutput);
+		this.sessionManager.appendCustomEntry(SESSION_ULTRAPLAN_CUSTOM_TYPE, artifact);
+
+		return {
+			artifact,
+			displayText:
+				`${formatUltraplanArtifact(artifact)}\n\n` +
+				"Persisted as a new latest session-owned Ultraplan state on the current branch. " +
+				"Prior plan artifacts remain preserved separately. Apply remains manual; no execution has started.",
+			rawPlannerOutput: plannerOutput,
+		};
+	}
+
+	/**
+	 * Apply the latest persisted Ultraplan plan to session-owned todo state.
+	 *
+	 * This materializes plan output into persisted todo state only.
+	 * The original Ultraplan artifact remains intact and no execution starts.
+	 *
+	 * @returns Result with applied todos and clear applied-not-executed messaging
+	 * @throws Error if no persisted Ultraplan plan exists
+	 */
+	applyUltraplan(): {
+		applied: TodoItem[];
+		displayText: string;
+	} {
+		const artifact = this.getLatestUltraplanPlan();
+		if (!artifact) {
+			throw new Error("No persisted Ultraplan plan found. Run /ultraplan <objective> first.");
+		}
+
+		const selection = selectUltraplanApplySteps(artifact);
+		if (selection.steps.length === 0) {
+			return {
+				applied: [],
+				displayText:
+					"Ultraplan plan found, but it contains no applicable actionable steps.\n\n" +
+					"The plan artifact is preserved separately. Apply did not start execution.",
+			};
+		}
+
+		const existingTodoContents = new Set(this._todos.map((todo) => todo.content));
+		const newTodos: TodoItem[] = selection.steps
+			.filter((step) => !existingTodoContents.has(step))
+			.map((step) => ({
+				content: step,
+				activeForm: step,
+				status: "pending" as const,
+			}));
+
+		if (newTodos.length === 0) {
+			return {
+				applied: [],
+				displayText:
+					"Ultraplan plan is already represented in session todo state.\n\n" +
+					"The plan artifact remains preserved separately. Apply did not start execution.",
+			};
+		}
+
+		const mergedTodos = [...this._todos, ...newTodos];
+		this._setTodos(mergedTodos);
+
+		const sourceLabel =
+			selection.source === "actionable_next_steps"
+				? "actionable next steps"
+				: selection.source === "first_phase_steps"
+					? "first phase steps"
+					: "plan steps";
+
+		return {
+			applied: newTodos,
+			displayText:
+				`Applied ${newTodos.length} Ultraplan step(s) from the latest persisted plan into session todo state.\n` +
+				`Source: ${sourceLabel}. Todo total: ${mergedTodos.length}.\n\n` +
+				"The Ultraplan artifact remains preserved separately as plan state. Apply did not start execution.",
+		};
 	}
 
 	/** Whether compaction or branch summarization is currently running */
@@ -797,6 +1339,25 @@ export class AgentSession {
 		this._scopedModels = scopedModels;
 	}
 
+	/** Enable or disable the brief-only output contract for this session runtime. */
+	setBriefOnly(enabled: boolean): void {
+		if (this._briefOnly === enabled) {
+			return;
+		}
+
+		this._briefOnly = enabled;
+		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
+		this.agent.setSystemPrompt(this._baseSystemPrompt);
+	}
+
+	queueByTheWay(note: string): void {
+		this._pendingNextTurnMessages.push({
+			role: "custom",
+			...createBtwNextTurnMessage(note),
+			timestamp: Date.now(),
+		});
+	}
+
 	/** File-based prompt templates */
 	get promptTemplates(): ReadonlyArray<PromptTemplate> {
 		return this._resourceLoader.getPrompts().prompts;
@@ -826,6 +1387,70 @@ export class AgentSession {
 		return Array.from(unique);
 	}
 
+	private _augmentCompactionSummary(summary: string): string {
+		const memorySection =
+			this._memoryItems.length > 0
+				? `\n\n## Active Session Memory\n${this._memoryItems.map((item) => `- ${item.key}: ${item.value}`).join("\n")}`
+				: "";
+		const todoSection =
+			this._todos.length > 0
+				? `\n\n## Active Todo State\n${this._todos.map((todo) => `- [${todo.status}] ${todo.status === "in_progress" ? todo.activeForm : todo.content}`).join("\n")}`
+				: "";
+		return `${summary}${memorySection}${todoSection}`;
+	}
+
+	private async _finalizeCompaction(options: {
+		summary: string;
+		firstKeptEntryId: string;
+		tokensBefore: number;
+		details: unknown;
+		fromExtension: boolean;
+	}): Promise<{ result: CompactionResult; savedCompactionEntry: CompactionEntry | undefined }> {
+		const { summary, firstKeptEntryId, tokensBefore, details, fromExtension } = options;
+		const persistedSummary = this._augmentCompactionSummary(summary);
+
+		this.sessionManager.appendCompaction(persistedSummary, firstKeptEntryId, tokensBefore, details, fromExtension);
+		const newEntries = this.sessionManager.getEntries();
+		const sessionContext = this.sessionManager.buildSessionContext();
+		this.agent.replaceMessages(sessionContext.messages);
+
+		const savedCompactionEntry = newEntries.find((e) => e.type === "compaction" && e.summary === persistedSummary) as
+			| CompactionEntry
+			| undefined;
+
+		if (this._extensionRunner && savedCompactionEntry) {
+			await this._extensionRunner.emit({
+				type: "session_compact",
+				compactionEntry: savedCompactionEntry,
+				fromExtension,
+			});
+		}
+
+		return {
+			result: {
+				summary: persistedSummary,
+				firstKeptEntryId,
+				tokensBefore,
+				details,
+			},
+			savedCompactionEntry,
+		};
+	}
+
+	private _getBriefOnlyPromptGuidelines(): string[] {
+		if (!this._briefOnly) {
+			return [];
+		}
+
+		return [
+			"Brief-only mode is enabled for this session.",
+			"Suppress ordinary assistant prose.",
+			"Do not emit assistant narration, summaries, or conversational filler unless it is necessary for honest error reporting or operational transparency.",
+			"Do not hide tool activity, approvals, warnings, errors, or other security-relevant execution details.",
+			"User-visible brief updates may be delivered separately by the runtime; avoid duplicating them in assistant prose.",
+		];
+	}
+
 	private _rebuildSystemPrompt(toolNames: string[]): string {
 		const validToolNames = toolNames.filter((name) => this._toolRegistry.has(name));
 		const toolSnippets: Record<string, string> = {};
@@ -841,6 +1466,7 @@ export class AgentSession {
 				promptGuidelines.push(...toolGuidelines);
 			}
 		}
+		promptGuidelines.push(...this._getBriefOnlyPromptGuidelines());
 
 		const loaderSystemPrompt = this._resourceLoader.getSystemPrompt();
 		const loaderAppendSystemPrompt = this._resourceLoader.getAppendSystemPrompt();
@@ -1350,8 +1976,13 @@ export class AgentSession {
 		this._steeringMessages = [];
 		this._followUpMessages = [];
 		this._pendingNextTurnMessages = [];
+		this._todos = [];
+		this._memoryItems = [];
+		this._delegatedTasks = [];
 
 		this.sessionManager.appendThinkingLevelChange(this.thinkingLevel);
+		this._emit({ type: "todo_update", todos: this._todos });
+		this._emit({ type: "memory_update", items: this._memoryItems });
 
 		// Run setup callback if provided (e.g., to append initial messages)
 		if (options?.setup) {
@@ -1716,30 +2347,15 @@ export class AgentSession {
 				throw new Error("Compaction cancelled");
 			}
 
-			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension);
-			const newEntries = this.sessionManager.getEntries();
-			const sessionContext = this.sessionManager.buildSessionContext();
-			this.agent.replaceMessages(sessionContext.messages);
-
-			// Get the saved compaction entry for the extension event
-			const savedCompactionEntry = newEntries.find((e) => e.type === "compaction" && e.summary === summary) as
-				| CompactionEntry
-				| undefined;
-
-			if (this._extensionRunner && savedCompactionEntry) {
-				await this._extensionRunner.emit({
-					type: "session_compact",
-					compactionEntry: savedCompactionEntry,
-					fromExtension,
-				});
-			}
-
-			return {
+			const { result } = await this._finalizeCompaction({
 				summary,
 				firstKeptEntryId,
 				tokensBefore,
 				details,
-			};
+				fromExtension,
+			});
+
+			return result;
 		} finally {
 			this._compactionAbortController = undefined;
 			this._reconnectToAgent();
@@ -1934,30 +2550,13 @@ export class AgentSession {
 				return;
 			}
 
-			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension);
-			const newEntries = this.sessionManager.getEntries();
-			const sessionContext = this.sessionManager.buildSessionContext();
-			this.agent.replaceMessages(sessionContext.messages);
-
-			// Get the saved compaction entry for the extension event
-			const savedCompactionEntry = newEntries.find((e) => e.type === "compaction" && e.summary === summary) as
-				| CompactionEntry
-				| undefined;
-
-			if (this._extensionRunner && savedCompactionEntry) {
-				await this._extensionRunner.emit({
-					type: "session_compact",
-					compactionEntry: savedCompactionEntry,
-					fromExtension,
-				});
-			}
-
-			const result: CompactionResult = {
+			const { result } = await this._finalizeCompaction({
 				summary,
 				firstKeptEntryId,
 				tokensBefore,
 				details,
-			};
+				fromExtension,
+			});
 			this._emit({ type: "auto_compaction_end", result, aborted: false, willRetry });
 
 			if (willRetry) {
@@ -2295,6 +2894,19 @@ export class AgentSession {
 
 		this._baseToolRegistry = new Map(Object.entries(baseTools).map(([name, tool]) => [name, tool as AgentTool]));
 
+		// Create todo_write tool with session callbacks
+		const todoWriteTool = createTodoWriteTool(
+			() => this._todos,
+			(todos) => this._setTodos(todos),
+		);
+		this._baseToolRegistry.set("todo_write", todoWriteTool as unknown as AgentTool);
+
+		const memoryWriteTool = createMemoryWriteTool({
+			set: (key, value) => this.setMemoryItem(key, value),
+			clear: () => this.clearMemory(),
+		});
+		this._baseToolRegistry.set("memory_write", memoryWriteTool as unknown as AgentTool);
+
 		const extensionsResult = this._resourceLoader.getExtensions();
 		if (options.flagValues) {
 			for (const [name, value] of options.flagValues) {
@@ -2324,7 +2936,7 @@ export class AgentSession {
 
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
-			: ["read", "bash", "edit", "write"];
+			: ["read", "bash", "edit", "write", "todo_write", "memory_write"];
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		this._refreshToolRegistry({
 			activeToolNames: baseActiveToolNames,
@@ -2688,6 +3300,11 @@ export class AgentSession {
 
 		// Reload messages
 		const sessionContext = this.sessionManager.buildSessionContext();
+		this._todos = sessionContext.todos as TodoItem[];
+		this._memoryItems = sessionContext.memoryItems;
+		this._delegatedTasks = [];
+		this._emit({ type: "todo_update", todos: this._todos });
+		this._emit({ type: "memory_update", items: this._memoryItems });
 
 		// Emit session_switch event to extensions
 		if (this._extensionRunner) {

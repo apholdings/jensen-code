@@ -46,9 +46,15 @@ function makeUltraplanRunResult(): UltraplanRunResult {
 }
 
 function createPrintModeSessionStub() {
+	const btwNotes: string[] = [];
+
 	return {
 		briefOnly: false,
 		setBriefOnly: () => {},
+		queueByTheWay: (note: string) => {
+			btwNotes.push(note);
+		},
+		getPendingByTheWayNotes: () => btwNotes,
 		getMemoryHistory: () => [],
 		resolveMemorySnapshotSelector: () => ({
 			snapshot: undefined,

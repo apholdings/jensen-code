@@ -42,5 +42,6 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "doctor", description: "Run diagnostics and show system health" },
 	{ name: "memory", description: "Inspect and manage active session memory" },
 	{ name: "brief", description: "Enable, disable, or inspect runtime-only brief-only mode" },
+	{ name: "btw", description: "Queue runtime-only by-the-way guidance for the next turn" },
 	{ name: "ultraplan", description: "Run, show, revise, regenerate, or apply a persisted local-first planner plan" },
 ];

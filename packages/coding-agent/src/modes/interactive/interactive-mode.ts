@@ -49,6 +49,7 @@ import {
 } from "../../config.js";
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.js";
 import { BRIEF_ONLY_COMMAND_USAGE, parseBriefOnlyCommand, runBriefOnlyCommand } from "../../core/brief-only-command.js";
+import { BTW_COMMAND_USAGE, parseBtwCommand, runBtwCommand } from "../../core/btw-command.js";
 import type { CompactionResult } from "../../core/compaction/index.js";
 import { describeContextFiles } from "../../core/context-files.js";
 import type {
@@ -479,7 +480,7 @@ export class InteractiveMode {
 			["/new", "/clear", "/resume", "/session", "/name"],
 			["/tree", "/fork", "/compact", "/reload", "/init-project"],
 			["/copy", "/export", "/share", "/login", "/logout"],
-			["/memory", "/brief", "/ultraplan", "/help"],
+			["/memory", "/brief", "/btw", "/ultraplan", "/help"],
 		]
 			.map((line) => line.map((cmd) => theme.fg("accent", cmd)).join(theme.fg("dim", ", ")))
 			.join("\n");
@@ -594,6 +595,18 @@ export class InteractiveMode {
 
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(runBriefOnlyCommand(this.session, action), 1, 0));
+		this.ui.requestRender();
+	}
+
+	private handleBtwCommand(text: string): void {
+		const note = parseBtwCommand(text);
+		if (!note) {
+			this.showWarning(BTW_COMMAND_USAGE);
+			return;
+		}
+
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(runBtwCommand(this.session, note), 1, 0));
 		this.ui.requestRender();
 	}
 
@@ -3076,6 +3089,12 @@ export class InteractiveMode {
 
 			if (text === "/brief" || text.startsWith("/brief ")) {
 				this.handleBriefCommand(text);
+				this.editor.setText("");
+				return;
+			}
+
+			if (text === "/btw" || text.startsWith("/btw ")) {
+				this.handleBtwCommand(text);
 				this.editor.setText("");
 				return;
 			}
