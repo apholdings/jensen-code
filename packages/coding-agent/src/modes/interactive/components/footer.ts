@@ -1,8 +1,17 @@
 import * as os from "node:os";
+import { type Api, calculateCost, getModel, getProviders, type KnownProvider, type Model } from "@apholdings/jensen-ai";
 import { type Component, truncateToWidth, visibleWidth } from "@apholdings/jensen-tui";
 import type { AgentSession } from "../../../core/agent-session.js";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.js";
 import { theme } from "../theme/theme.js";
+
+const KNOWN_PROVIDERS = new Set<string>(getProviders());
+
+type CostSummary = {
+	total: number;
+	hasUsage: boolean;
+	hasUnknown: boolean;
+};
 
 /**
  * Sanitize text for display in a single-line status.
@@ -19,6 +28,52 @@ function formatTokenCount(value: number): string {
 	if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
 	if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
 	return String(value);
+}
+
+function formatCost(value: number): string {
+	if (value >= 100) return `$${value.toFixed(2)}`;
+	if (value >= 1) return `$${value.toFixed(3)}`;
+	if (value >= 0.01) return `$${value.toFixed(4)}`;
+	return `$${value.toFixed(6)}`;
+}
+
+function resolvePricingModel(
+	provider: string,
+	modelId: string,
+	currentModel: Model<Api> | null | undefined,
+): Model<Api> | undefined {
+	if (currentModel && currentModel.provider === provider && currentModel.id === modelId) {
+		return currentModel;
+	}
+
+	if (!KNOWN_PROVIDERS.has(provider)) {
+		return undefined;
+	}
+
+	return getModel(provider as KnownProvider, modelId as never) as Model<Api> | undefined;
+}
+
+function buildUsageSnapshot(messageUsage: {
+	input?: number;
+	output?: number;
+	cacheRead?: number;
+	cacheWrite?: number;
+	totalTokens?: number;
+}) {
+	return {
+		input: typeof messageUsage.input === "number" ? messageUsage.input : 0,
+		output: typeof messageUsage.output === "number" ? messageUsage.output : 0,
+		cacheRead: typeof messageUsage.cacheRead === "number" ? messageUsage.cacheRead : 0,
+		cacheWrite: typeof messageUsage.cacheWrite === "number" ? messageUsage.cacheWrite : 0,
+		totalTokens: typeof messageUsage.totalTokens === "number" ? messageUsage.totalTokens : 0,
+		cost: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			total: 0,
+		},
+	};
 }
 
 export class FooterComponent implements Component {
@@ -71,6 +126,36 @@ export class FooterComponent implements Component {
 		if (percent > 90) return "error";
 		if (percent > 70) return "warning";
 		return "success";
+	}
+
+	private getCostSummary(): CostSummary {
+		const currentModel = this.session.state.model;
+		let total = 0;
+		let hasUsage = false;
+		let hasUnknown = false;
+
+		for (const message of this.session.state.messages) {
+			if (message.role !== "assistant") continue;
+			hasUsage = true;
+
+			const pricingModel = resolvePricingModel(message.provider, message.model, currentModel);
+			if (!pricingModel) {
+				hasUnknown = true;
+				continue;
+			}
+
+			const cost = calculateCost(pricingModel, buildUsageSnapshot(message.usage));
+			total += cost.total;
+		}
+
+		return { total, hasUsage, hasUnknown };
+	}
+
+	private getCostDisplay(): string {
+		const summary = this.getCostSummary();
+		if (!summary.hasUsage) return "--";
+		if (summary.hasUnknown && summary.total <= 0) return "?";
+		return `${formatCost(summary.total)}${summary.hasUnknown ? "+" : ""}`;
 	}
 
 	private compactPath(input: string, maxWidth = 44): string {
@@ -154,6 +239,7 @@ export class FooterComponent implements Component {
 		const right = [
 			theme.fg("accent", "tok ") + theme.fg("text", this.getContextTokens()),
 			theme.fg("accent", "ctx ") + theme.fg(this.getContextPercentColor(), this.getContextPercentDisplay()),
+			theme.fg("accent", "cost ") + theme.fg("text", this.getCostDisplay()),
 		].join(separator);
 
 		const rightWidth = visibleWidth(right);
