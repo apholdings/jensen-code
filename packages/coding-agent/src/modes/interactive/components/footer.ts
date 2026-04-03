@@ -13,6 +13,42 @@ type CostSummary = {
 	hasUnknown: boolean;
 };
 
+function summarizeAssistantCosts(
+	messages: AgentSession["state"]["messages"],
+	currentModel: Model<Api> | null | undefined,
+): CostSummary {
+	let total = 0;
+	let hasUsage = false;
+	let hasUnknown = false;
+
+	for (const message of messages) {
+		if (message.role !== "assistant") continue;
+		hasUsage = true;
+
+		const pricingModel = resolvePricingModel(message.provider, message.model, currentModel);
+		if (!pricingModel) {
+			hasUnknown = true;
+			continue;
+		}
+
+		const cost = calculateCost(pricingModel, buildUsageSnapshot(message.usage));
+		total += cost.total;
+	}
+
+	return { total, hasUsage, hasUnknown };
+}
+
+function findCurrentTurnStartIndex(messages: AgentSession["state"]["messages"]): number | null {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i];
+		if (message.role === "user" || message.role === "bashExecution") {
+			return i;
+		}
+	}
+
+	return null;
+}
+
 /**
  * Sanitize text for display in a single-line status.
  * Removes newlines, tabs, carriage returns, and other control characters.
@@ -128,34 +164,38 @@ export class FooterComponent implements Component {
 		return "success";
 	}
 
-	private getCostSummary(): CostSummary {
-		const currentModel = this.session.state.model;
-		let total = 0;
-		let hasUsage = false;
-		let hasUnknown = false;
-
-		for (const message of this.session.state.messages) {
-			if (message.role !== "assistant") continue;
-			hasUsage = true;
-
-			const pricingModel = resolvePricingModel(message.provider, message.model, currentModel);
-			if (!pricingModel) {
-				hasUnknown = true;
-				continue;
-			}
-
-			const cost = calculateCost(pricingModel, buildUsageSnapshot(message.usage));
-			total += cost.total;
-		}
-
-		return { total, hasUsage, hasUnknown };
+	private getSessionCostSummary(): CostSummary {
+		return summarizeAssistantCosts(this.session.state.messages, this.session.state.model);
 	}
 
-	private getCostDisplay(): string {
-		const summary = this.getCostSummary();
+	private getCurrentTurnCostSummary(): CostSummary | null {
+		const turnStartIndex = findCurrentTurnStartIndex(this.session.state.messages);
+		if (turnStartIndex == null) {
+			return null;
+		}
+
+		return summarizeAssistantCosts(this.session.state.messages.slice(turnStartIndex), this.session.state.model);
+	}
+
+	private formatCostSummary(summary: CostSummary): string {
 		if (!summary.hasUsage) return "--";
 		if (summary.hasUnknown && summary.total <= 0) return "?";
 		return `${formatCost(summary.total)}${summary.hasUnknown ? "+" : ""}`;
+	}
+
+	private getCostDisplay(): string {
+		const sessionSummary = this.getSessionCostSummary();
+		const currentTurnSummary = this.getCurrentTurnCostSummary();
+
+		if (!sessionSummary.hasUsage) {
+			return "session --";
+		}
+
+		if (!currentTurnSummary || !currentTurnSummary.hasUsage) {
+			return `session ${this.formatCostSummary(sessionSummary)}`;
+		}
+
+		return `turn ${this.formatCostSummary(currentTurnSummary)} · session ${this.formatCostSummary(sessionSummary)}`;
 	}
 
 	private compactPath(input: string, maxWidth = 44): string {

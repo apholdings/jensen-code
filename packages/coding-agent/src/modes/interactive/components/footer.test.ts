@@ -35,7 +35,7 @@ function createFooterData(): ReadonlyFooterDataProvider {
 }
 
 describe("FooterComponent cost display", () => {
-	it("shows exact catalog-derived cost for priced OpenRouter usage", () => {
+	it("labels priced assistant-only usage as a session total when no turn boundary exists locally", () => {
 		const component = new FooterComponent(
 			createSession({
 				messages: [
@@ -57,10 +57,55 @@ describe("FooterComponent cost display", () => {
 		);
 
 		const line = stripAnsi(component.render(160)[0] ?? "");
-		expect(line).toContain("cost $0.006000");
+		expect(line).toContain("cost session $0.006000");
 	});
 
-	it("marks the total as partial when some assistant usage cannot be priced from local metadata", () => {
+	it("shows turn and session totals when a local user-turn boundary exists", () => {
+		const component = new FooterComponent(
+			createSession({
+				messages: [
+					{
+						role: "user",
+						content: [{ type: "text", text: "first turn" }],
+					},
+					{
+						role: "assistant",
+						provider: "openrouter",
+						model: "ai21/jamba-large-1.7",
+						usage: {
+							input: 1000,
+							output: 500,
+							cacheRead: 0,
+							cacheWrite: 0,
+							totalTokens: 1500,
+						},
+					},
+					{
+						role: "user",
+						content: [{ type: "text", text: "second turn" }],
+					},
+					{
+						role: "assistant",
+						provider: "openrouter",
+						model: "ai21/jamba-large-1.7",
+						usage: {
+							input: 500,
+							output: 250,
+							cacheRead: 0,
+							cacheWrite: 0,
+							totalTokens: 750,
+						},
+					},
+				],
+			}),
+			createFooterData(),
+		);
+
+		const line = stripAnsi(component.render(160)[0] ?? "");
+		expect(line).toContain("cost turn $0.003000 · session $0.009000");
+	});
+
+	it("marks the session total as partial when some assistant usage cannot be priced from local metadata", () => {
 		const component = new FooterComponent(
 			createSession({
 				messages: [
@@ -94,7 +139,7 @@ describe("FooterComponent cost display", () => {
 		);
 
 		const line = stripAnsi(component.render(160)[0] ?? "");
-		expect(line).toContain("cost $0.006000+");
+		expect(line).toContain("cost session $0.006000+");
 	});
 
 	it("shows unknown only when there is assistant usage but no resolvable pricing metadata", () => {
@@ -119,12 +164,12 @@ describe("FooterComponent cost display", () => {
 		);
 
 		const line = stripAnsi(component.render(160)[0] ?? "");
-		expect(line).toContain("cost ?");
+		expect(line).toContain("cost session ?");
 	});
 
 	it("shows no cost yet before any assistant usage exists", () => {
 		const component = new FooterComponent(createSession({ messages: [] }), createFooterData());
 		const line = stripAnsi(component.render(160)[0] ?? "");
-		expect(line).toContain("cost --");
+		expect(line).toContain("cost session --");
 	});
 });
