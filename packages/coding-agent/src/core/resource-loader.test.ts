@@ -83,6 +83,39 @@ describe("DefaultResourceLoader context files", () => {
 		expect(loader.getContextDiagnostics().diagnostics).toEqual([]);
 	});
 
+	it("loads Jensen-Protocol workspace context from the nearest marked workspace", async () => {
+		const rootDir = createTempDir();
+		tempDirs.push(rootDir);
+
+		const agentDir = join(rootDir, "agent");
+		const repoDir = join(rootDir, "repo");
+		const nestedWorkspaceDir = join(repoDir, "apps", "nested");
+		const appDir = join(nestedWorkspaceDir, "service");
+
+		mkdirSync(agentDir, { recursive: true });
+		mkdirSync(appDir, { recursive: true });
+
+		writeFile(join(agentDir, "JENSEN.md"), "global");
+		writeFile(join(repoDir, "JENSEN.md"), "repo");
+		writeFile(join(repoDir, ".jensen", "JENSEN_PROTOCOL.md"), "repo protocol");
+		writeFile(join(nestedWorkspaceDir, ".jensen", "JENSEN_PROTOCOL.md"), "nested protocol");
+
+		const loader = createLoader(appDir, agentDir);
+		await loader.reload();
+
+		expect(loader.getAgentsFiles().agentsFiles.map((file) => file.path)).toEqual([
+			join(agentDir, "JENSEN.md"),
+			join(repoDir, "JENSEN.md"),
+			join(nestedWorkspaceDir, ".jensen", "JENSEN_PROTOCOL.md"),
+		]);
+		expect(loader.getAgentsFiles().agentsFiles.map((file) => file.content)).toEqual([
+			"global",
+			"repo",
+			"nested protocol",
+		]);
+		expect(loader.getContextDiagnostics().diagnostics).toEqual([]);
+	});
+
 	it("falls back to AGENTS.md and reports a deprecation warning", async () => {
 		const rootDir = createTempDir();
 		tempDirs.push(rootDir);

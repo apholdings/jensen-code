@@ -56,6 +56,42 @@ function resolvePromptInput(input: string | undefined, description: string): str
 	return input;
 }
 
+const PROTOCOL_CONTEXT_FILE = "JENSEN_PROTOCOL.md";
+
+function findNearestProtocolContextFile(cwd: string): string | undefined {
+	let currentDir = cwd;
+	const root = resolve("/");
+
+	while (true) {
+		const protocolContextPath = join(currentDir, CONFIG_DIR_NAME, PROTOCOL_CONTEXT_FILE);
+		if (existsSync(protocolContextPath)) {
+			return protocolContextPath;
+		}
+
+		if (currentDir === root) {
+			return undefined;
+		}
+
+		const parentDir = resolve(currentDir, "..");
+		if (parentDir === currentDir) {
+			return undefined;
+		}
+		currentDir = parentDir;
+	}
+}
+
+function loadContextFileFromPath(path: string): { path: string; content: string } | null {
+	try {
+		return {
+			path,
+			content: readFileSync(path, "utf-8"),
+		};
+	} catch (error) {
+		console.error(chalk.yellow(`Warning: Could not read ${path}: ${error}`));
+		return null;
+	}
+}
+
 function loadContextFileFromDir(dir: string): {
 	file: { path: string; content: string } | null;
 	diagnostics: ResourceDiagnostic[];
@@ -65,25 +101,20 @@ function loadContextFileFromDir(dir: string): {
 		return { file: null, diagnostics: [] };
 	}
 
-	try {
-		const file = {
-			path: locatedFile.path,
-			content: readFileSync(locatedFile.path, "utf-8"),
-		};
-		const diagnostics = isLegacyAgentsContextFile(locatedFile.filename)
-			? [
-					{
-						type: "warning" as const,
-						message: getLegacyAgentsDeprecationWarning(locatedFile.path),
-						path: locatedFile.path,
-					},
-				]
-			: [];
-		return { file, diagnostics };
-	} catch (error) {
-		console.error(chalk.yellow(`Warning: Could not read ${locatedFile.path}: ${error}`));
+	const file = loadContextFileFromPath(locatedFile.path);
+	if (!file) {
 		return { file: null, diagnostics: [] };
 	}
+	const diagnostics = isLegacyAgentsContextFile(locatedFile.filename)
+		? [
+				{
+					type: "warning" as const,
+					message: getLegacyAgentsDeprecationWarning(locatedFile.path),
+					path: locatedFile.path,
+				},
+			]
+		: [];
+	return { file, diagnostics };
 }
 
 function loadProjectContextFiles(options: { cwd?: string; agentDir?: string } = {}): {
@@ -127,6 +158,14 @@ function loadProjectContextFiles(options: { cwd?: string; agentDir?: string } = 
 
 	contextFiles.push(...ancestorContextFiles);
 	diagnostics.push(...ancestorDiagnostics);
+
+	const protocolContextPath = findNearestProtocolContextFile(resolvedCwd);
+	if (protocolContextPath && !seenPaths.has(protocolContextPath)) {
+		const protocolContext = loadContextFileFromPath(protocolContextPath);
+		if (protocolContext) {
+			contextFiles.push(protocolContext);
+		}
+	}
 
 	return { contextFiles, diagnostics };
 }
