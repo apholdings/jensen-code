@@ -15,6 +15,7 @@ import type { Extension, ExtensionFactory, ExtensionRuntime, LoadExtensionsResul
 import { DefaultPackageManager, type PathMetadata } from "./package-manager.js";
 import type { PromptTemplate } from "./prompt-templates.js";
 import { loadPromptTemplates } from "./prompt-templates.js";
+import { findNearestProtocolContextFile } from "./protocol-status.js";
 import { SettingsManager } from "./settings-manager.js";
 import type { Skill } from "./skills.js";
 import { loadSkills } from "./skills.js";
@@ -54,30 +55,6 @@ function resolvePromptInput(input: string | undefined, description: string): str
 	}
 
 	return input;
-}
-
-const PROTOCOL_CONTEXT_FILE = "JENSEN_PROTOCOL.md";
-
-function findNearestProtocolContextFile(cwd: string): string | undefined {
-	let currentDir = cwd;
-	const root = resolve("/");
-
-	while (true) {
-		const protocolContextPath = join(currentDir, CONFIG_DIR_NAME, PROTOCOL_CONTEXT_FILE);
-		if (existsSync(protocolContextPath)) {
-			return protocolContextPath;
-		}
-
-		if (currentDir === root) {
-			return undefined;
-		}
-
-		const parentDir = resolve(currentDir, "..");
-		if (parentDir === currentDir) {
-			return undefined;
-		}
-		currentDir = parentDir;
-	}
 }
 
 function loadContextFileFromPath(path: string): { path: string; content: string } | null {

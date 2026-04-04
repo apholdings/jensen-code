@@ -23,4 +23,11 @@ describe("built-in slash commands", () => {
 			description: "Apply steering to the active workstream or resume from the latest assistant turn",
 		});
 	});
+
+	it("registers /protocol-status in the built-in slash command list", () => {
+		expect(BUILTIN_SLASH_COMMANDS).toContainEqual({
+			name: "protocol-status",
+			description: "Show Jensen-Protocol workspace marker and context status",
+		});
+	});
 });

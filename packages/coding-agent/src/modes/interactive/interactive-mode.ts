@@ -67,6 +67,7 @@ import { computeMemorySnapshotDiff } from "../../core/memory-diff.js";
 import { MEMORY_STALE_AFTER_DAYS, reviewMemoryItems } from "../../core/memory-review.js";
 import { createCompactionSummaryMessage } from "../../core/messages.js";
 import { resolveModelScope } from "../../core/model-resolver.js";
+import { formatProtocolStatusOutput, getProtocolWorkspaceStatus } from "../../core/protocol-status.js";
 import type { ResourceDiagnostic } from "../../core/resource-loader.js";
 import { type SessionContext, SessionManager } from "../../core/session-manager.js";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.js";
@@ -485,7 +486,7 @@ export class InteractiveMode {
 			["/settings", "/model", "/scoped-models", "/hotkeys"],
 			["/new", "/clear", "/resume", "/session", "/name"],
 			["/tree", "/fork", "/compact", "/reload", "/init-project"],
-			["/copy", "/export", "/share", "/login", "/logout"],
+			["/protocol-status", "/copy", "/export", "/share", "/login", "/logout"],
 			["/memory", "/brief", "/btw", "/steer", "/help"],
 			["/ultraplan"],
 		]
@@ -1006,6 +1007,18 @@ export class InteractiveMode {
 		const result = initializeProjectScaffold(process.cwd(), { includeProtocol });
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(result.output, 1, 0));
+		this.ui.requestRender();
+	}
+
+	private handleProtocolStatusCommand(): void {
+		const output = formatProtocolStatusOutput(
+			getProtocolWorkspaceStatus({
+				cwd: process.cwd(),
+				resourceLoader: this.session.resourceLoader,
+			}),
+		);
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(output, 1, 0));
 		this.ui.requestRender();
 	}
 
@@ -3095,6 +3108,11 @@ export class InteractiveMode {
 					return;
 				}
 				await this.handleInitProjectCommand(includeProtocol);
+				return;
+			}
+			if (text === "/protocol-status") {
+				this.handleProtocolStatusCommand();
+				this.editor.setText("");
 				return;
 			}
 			if (text === "/debug") {

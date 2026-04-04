@@ -17,6 +17,11 @@ import {
 	formatRelativeAgeLabel,
 } from "../core/memory-compare-output.js";
 import {
+	formatProtocolStatusOutput,
+	getProtocolWorkspaceStatus,
+	type ProtocolStatusResourceLoader,
+} from "../core/protocol-status.js";
+import {
 	parseSteerCommand,
 	runSteerCommand,
 	STEER_COMMAND_ACTIVE_WORK_REQUIRED,
@@ -52,6 +57,7 @@ interface PrintModeLocalCommandSession
 		| "runUltraplanRevise"
 		| "applyUltraplan"
 	> {
+	resourceLoader?: ProtocolStatusResourceLoader;
 	isStreaming?: boolean;
 	state?: { messages: ReadonlyArray<{ role: string }> };
 	steer?: (message: string) => Promise<void>;
@@ -128,6 +134,15 @@ export async function getPrintModeLocalCommandOutput(
 			return "Usage: /init-project [--protocol]";
 		}
 		return initializeProjectScaffold(process.cwd(), { includeProtocol }).output;
+	}
+
+	if (command === "/protocol-status") {
+		return formatProtocolStatusOutput(
+			getProtocolWorkspaceStatus({
+				cwd: process.cwd(),
+				resourceLoader: session.resourceLoader,
+			}),
+		);
 	}
 
 	if (command === "/ultraplan") {
