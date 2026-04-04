@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.js";
+import type { ToolName } from "./tools/index.js";
 
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
@@ -41,6 +42,10 @@ export interface ThinkingBudgetsSettings {
 
 export interface MarkdownSettings {
 	codeBlockIndent?: string; // default: "  "
+}
+
+export interface ToolsSettings {
+	defaultActiveToolNames?: string[]; // Default active built-in tool names
 }
 
 export interface EditorBackgroundSettings {
@@ -100,6 +105,7 @@ export interface Settings {
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
 	markdown?: MarkdownSettings;
 	editorBackground?: EditorBackgroundSettings; // Optional override for editor/prompt background
+	tools?: ToolsSettings; // Tool-related settings
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -998,4 +1004,36 @@ export class SettingsManager {
 		this.markModified("editorBackground", "color");
 		this.save();
 	}
+
+	/**
+	 * Get the configured default active tool names from settings.
+	 * Returns undefined if no tools are configured, which signals the caller
+	 * to use its own fallback (e.g., the legacy hardcoded defaults).
+	 */
+	getDefaultActiveToolNames(): ToolName[] | undefined {
+		const configured = this.settings.tools?.defaultActiveToolNames;
+		if (!configured || !Array.isArray(configured) || configured.length === 0) {
+			return undefined;
+		}
+		// Filter to valid tool names - unknown names are silently ignored
+		const validTools: ToolName[] = configured.filter(
+			(name): name is ToolName => typeof name === "string" && name in allToolNames,
+		);
+		return validTools.length > 0 ? validTools : undefined;
+	}
 }
+
+// Import allToolNames for validation
+// This is a module-level constant that maps valid tool names
+const allToolNames: Record<string, boolean> = {
+	read: true,
+	bash: true,
+	edit: true,
+	write: true,
+	todo_write: true,
+	memory_write: true,
+	grep: true,
+	find: true,
+	ls: true,
+	web_search: true,
+};
