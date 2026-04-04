@@ -100,6 +100,13 @@ interface AgentSession {
   thinkingLevel: ThinkingLevel;
   messages: AgentMessage[];
   isStreaming: boolean;
+
+  // Structured memory snapshot consumer
+  getStructuredMemoryHistory(): StructuredMemoryHistoryData;
+  compareMemorySnapshots(options?: { baseline?: string; target?: string }): StructuredMemoryCompareData;
+
+  // Current-state working context consumer
+  getWorkingContext(): WorkingContext;
   
   // Session management
   newSession(options?: { parentSession?: string }): Promise<boolean>;  // Returns false if cancelled by hook
@@ -589,6 +596,145 @@ const { session } = await createAgentSession({ resourceLoader: loader });
 ```
 
 > See [examples/sdk/08-prompt-templates.ts](../examples/sdk/08-prompt-templates.ts)
+
+### Structured Memory Snapshot Consumer
+
+`AgentSession` now exposes the same structured memory history/compare payload shape used by RPC mode, without requiring a subprocess.
+
+```typescript
+import {
+  createAgentSession,
+  SessionManager,
+  type StructuredMemoryCompareData,
+  type StructuredMemoryHistoryData,
+} from "@apholdings/jensen-code";
+
+const { session } = await createAgentSession({
+  sessionManager: SessionManager.inMemory(),
+});
+
+const history: StructuredMemoryHistoryData = session.getStructuredMemoryHistory();
+const latestVsPrevious: StructuredMemoryCompareData = session.compareMemorySnapshots();
+
+if (history.snapshots.length >= 2) {
+  const baseline = `[${history.snapshots[0]!.shortId}]`;
+  const target = history.snapshots[history.snapshots.length - 1]!.entryId;
+  const explicit = session.compareMemorySnapshots({ baseline, target });
+
+  switch (explicit.status) {
+    case "ok":
+      console.log(explicit.diff.changed);
+      break;
+    case "selector_resolution_failed":
+      console.log(explicit.issues);
+      break;
+    case "initial_snapshot":
+    case "empty_history":
+      console.log(explicit.status);
+      break;
+  }
+}
+```
+
+Canonical runnable example:
+- [`examples/sdk/12-memory-snapshots.ts`](../examples/sdk/12-memory-snapshots.ts)
+
+That example shows a real same-process automation flow for:
+- inspecting current-branch history
+- comparing latest vs previous snapshot
+- comparing explicit selectors
+- handling `empty_history`, `initial_snapshot`, `ok`, and `selector_resolution_failed`
+- staying honest that the backend is snapshot-based, not event-sourced
+
+Semantics are intentionally identical to RPC:
+- `branchScope: "current"` and `historyModel: "snapshot"`
+- history comes from persisted `session_memory` snapshots on the current branch only
+- explicit compare reuses the same strict selector contract: full ID, displayed short ID, bracketed short ID, or strict unique prefix
+- same-snapshot compares return `status: "ok"` with `sameSnapshot: true`
+- single-snapshot adjacent compare returns `status: "initial_snapshot"`
+- partial explicit input throws: provide both `baseline` and `target`, or neither
+
+Use the raw helpers when you need the structured payload without an `AgentSession` instance:
+- `buildStructuredMemoryHistoryData(context)`
+- `buildStructuredMemoryCompareData(context, selectors?)`
+
+### Working Context SDK Surface
+
+`AgentSession.getWorkingContext()` exposes the integrated working-context surface as a real-time snapshot. This is the same structured payload used by RPC `get_working_context` and the interactive working-context panel.
+
+```typescript
+import {
+  createAgentSession,
+  SessionManager,
+  type WorkingContext,
+} from "@apholdings/jensen-code";
+
+const { session } = await createAgentSession({
+  sessionManager: SessionManager.inMemory(),
+});
+
+// Get current working context
+const context: WorkingContext = session.getWorkingContext();
+
+console.log(`Memory: ${context.memory.itemCount} items (persisted: ${context.memory.isPersisted})`);
+console.log(`Todo: ${context.todo.completed}/${context.todo.total} completed (persisted: ${context.todo.isPersisted})`);
+console.log(`Delegated: ${context.delegatedWork.activeCount} active (persisted: ${context.delegatedWork.isPersisted})`);
+```
+
+**Three integrated state sources:**
+
+| Source | Persistence | Scope |
+|--------|-------------|-------|
+| `memory` | Persisted (snapshot-based) | Current branch session state |
+| `todo` | Persisted (snapshot-based) | Current branch session state |
+| `delegatedWork` | NOT persisted | Live current-process runtime state |
+
+**Provenance honesty contract:**
+
+```typescript
+// Memory and todo are persisted snapshots
+context.memory.isPersisted;        // true
+context.memory.scope;               // "current_branch_session_state"
+context.todo.isPersisted;          // true
+context.todo.scope;                // "current_branch_session_state"
+
+// Delegated work is live runtime state only
+context.delegatedWork.isPersisted;  // false
+context.delegatedWork.scope;        // "current_process_runtime_state"
+context.delegatedWork.note;         // "live current-process state only; not persisted and resets on session switch/resume"
+```
+
+**Typical automation flow:**
+
+```typescript
+// 1. Check current state
+const context = session.getWorkingContext();
+
+// 2. Inspect memory (persisted, survives session switch)
+if (context.memory.itemCount > 0) {
+  console.log("Active memory items:", context.memory.keyPreview);
+}
+
+// 3. Inspect plan (persisted, survives session switch)
+if (context.todo.inProgress) {
+  console.log("Current task:", context.todo.inProgress);
+}
+
+// 4. Inspect delegated work (live only, resets on session switch)
+if (context.delegatedWork.activeCount > 0) {
+  console.log("Running agents:", context.delegatedWork.activeAgents);
+}
+
+// 5. Mutate state
+session.setMemoryItem("project.phase", "implementation");
+session.clearMemory();
+
+// 6. Re-check
+const updated = session.getWorkingContext();
+```
+
+Canonical runnable example:
+- [`examples/sdk/13-working-context.ts`](../examples/sdk/13-working-context.ts)
 
 ### Session Management
 

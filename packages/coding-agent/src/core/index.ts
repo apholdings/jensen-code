@@ -13,8 +13,19 @@ export {
 } from "./agent-session.js";
 export { type BashExecutorOptions, type BashResult, executeBash, executeBashWithOperations } from "./bash-executor.js";
 export type { CompactionResult } from "./compaction/index.js";
+export {
+	applyDelegatedResult,
+	buildDelegatedWorkSummary,
+	type DelegatedMode,
+	type DelegatedStatus,
+	type DelegatedTask,
+	type DelegatedWorkSummary,
+	extractDelegatedTask,
+	getRecentDelegatedTasks,
+	mergeDelegatedTask,
+	syncDelegatedWork,
+} from "./delegated-work.js";
 export { createEventBus, type EventBus, type EventBusController } from "./event-bus.js";
-
 // Extensions system
 export {
 	type AgentEndEvent,
@@ -58,3 +69,28 @@ export {
 	type TurnEndEvent,
 	type TurnStartEvent,
 } from "./extensions/index.js";
+export {
+	buildStructuredMemoryCompareData,
+	buildStructuredMemoryHistoryData,
+	type MemorySnapshotContractContext,
+	type StructuredMemoryCompareData,
+	type StructuredMemoryCompareEmptyHistoryData,
+	type StructuredMemoryCompareInitialSnapshotData,
+	type StructuredMemoryCompareOkData,
+	type StructuredMemoryCompareSelectorResolutionFailedData,
+	type StructuredMemoryHistoryData,
+	type StructuredMemorySnapshot,
+	type StructuredResolvedSnapshotSelector,
+	type StructuredSnapshotSelectorCandidate,
+	type StructuredSnapshotSelectorIssue,
+} from "./memory-snapshot-contract.js";
+export {
+	buildWorkingContext,
+	buildWorkingContextDelegatedWorkSummary,
+	buildWorkingContextMemorySummary,
+	buildWorkingContextTodoSummary,
+	type WorkingContext,
+	type WorkingContextDelegatedWorkSummary,
+	type WorkingContextMemorySummary,
+	type WorkingContextTodoSummary,
+} from "./working-context.js";

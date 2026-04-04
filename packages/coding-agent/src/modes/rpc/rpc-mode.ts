@@ -20,6 +20,7 @@ import type {
 } from "../../core/extensions/index.js";
 import { type Theme, theme } from "../interactive/theme/theme.js";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.js";
+import { buildRpcMemoryCompareData, buildRpcMemoryHistoryData } from "./rpc-memory.js";
 import type {
 	RpcCommand,
 	RpcExtensionUIRequest,
@@ -574,6 +575,43 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 				}
 
 				return success(id, "get_commands", { commands });
+			}
+
+			// =================================================================
+			// Memory Snapshots (structured output)
+			// =================================================================
+
+			case "get_memory_history": {
+				return success(id, "get_memory_history", buildRpcMemoryHistoryData(session));
+			}
+
+			case "compare_memory_snapshots": {
+				const hasBaseline = command.baseline !== undefined;
+				const hasTarget = command.target !== undefined;
+				if (hasBaseline !== hasTarget) {
+					return error(
+						id,
+						"compare_memory_snapshots",
+						"Provide both baseline and target selectors, or neither for adjacent comparison.",
+					);
+				}
+
+				return success(
+					id,
+					"compare_memory_snapshots",
+					buildRpcMemoryCompareData(
+						session,
+						hasBaseline ? { baseline: command.baseline!, target: command.target! } : undefined,
+					),
+				);
+			}
+
+			// =================================================================
+			// Working Context
+			// =================================================================
+
+			case "get_working_context": {
+				return success(id, "get_working_context", session.getWorkingContext());
 			}
 
 			default: {

@@ -17,12 +17,23 @@ import { readdir, readFile, stat } from "fs/promises";
 import { join, resolve } from "path";
 import { getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.js";
 import {
+	createMemoryContextMessage,
+	type MemoryHistorySnapshot,
+	type MemoryItem,
+	parseMemoryItems,
+	parseTodoSnapshot,
+	SESSION_MEMORY_CUSTOM_TYPE,
+	SESSION_TODOS_CUSTOM_TYPE,
+	type TodoSnapshotItem,
+} from "./memory.js";
+import {
 	type BashExecutionMessage,
 	type CustomMessage,
 	createBranchSummaryMessage,
 	createCompactionSummaryMessage,
 	createCustomMessage,
 } from "./messages.js";
+import { resolveSnapshotSelector, type SnapshotResolution } from "./snapshot-selector-resolver.js";
 
 export const CURRENT_SESSION_VERSION = 3;
 
@@ -39,6 +50,8 @@ export interface NewSessionOptions {
 	id?: string;
 	parentSession?: string;
 }
+
+export type MemorySnapshotResolution = SnapshotResolution;
 
 export interface SessionEntryBase {
 	type: string;
@@ -160,6 +173,8 @@ export interface SessionContext {
 	messages: AgentMessage[];
 	thinkingLevel: string;
 	model: { provider: string; modelId: string } | null;
+	memoryItems: MemoryItem[];
+	todos: TodoSnapshotItem[];
 }
 
 export interface SessionInfo {
@@ -322,7 +337,7 @@ export function buildSessionContext(
 	let leaf: SessionEntry | undefined;
 	if (leafId === null) {
 		// Explicitly null - return no messages (navigated to before first entry)
-		return { messages: [], thinkingLevel: "off", model: null };
+		return { messages: [], thinkingLevel: "off", model: null, memoryItems: [], todos: [] };
 	}
 	if (leafId) {
 		leaf = byId.get(leafId);
@@ -333,7 +348,7 @@ export function buildSessionContext(
 	}
 
 	if (!leaf) {
-		return { messages: [], thinkingLevel: "off", model: null };
+		return { messages: [], thinkingLevel: "off", model: null, memoryItems: [], todos: [] };
 	}
 
 	// Walk from leaf to root, collecting path
@@ -348,6 +363,8 @@ export function buildSessionContext(
 	let thinkingLevel = "off";
 	let model: { provider: string; modelId: string } | null = null;
 	let compaction: CompactionEntry | null = null;
+	let memoryItems: MemoryItem[] = [];
+	let todos: TodoSnapshotItem[] = [];
 
 	for (const entry of path) {
 		if (entry.type === "thinking_level_change") {
@@ -358,6 +375,10 @@ export function buildSessionContext(
 			model = { provider: entry.message.provider, modelId: entry.message.model };
 		} else if (entry.type === "compaction") {
 			compaction = entry;
+		} else if (entry.type === "custom" && entry.customType === SESSION_MEMORY_CUSTOM_TYPE) {
+			memoryItems = parseMemoryItems(entry.data);
+		} else if (entry.type === "custom" && entry.customType === SESSION_TODOS_CUSTOM_TYPE) {
+			todos = parseTodoSnapshot(entry.data);
 		}
 	}
 
@@ -367,6 +388,10 @@ export function buildSessionContext(
 	// 2. Emit kept messages (from firstKeptEntryId up to compaction)
 	// 3. Emit messages after compaction
 	const messages: AgentMessage[] = [];
+	const memoryMessage = memoryItems.length > 0 ? createMemoryContextMessage(memoryItems) : undefined;
+	if (memoryMessage) {
+		messages.push(memoryMessage);
+	}
 
 	const appendMessage = (entry: SessionEntry) => {
 		if (entry.type === "message") {
@@ -411,7 +436,7 @@ export function buildSessionContext(
 		}
 	}
 
-	return { messages, thinkingLevel, model };
+	return { messages, thinkingLevel, model, memoryItems, todos };
 }
 
 /**
@@ -432,8 +457,10 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
 	if (!existsSync(filePath)) return [];
 
 	const content = readFileSync(filePath, "utf8");
+	if (!content.trim()) return [];
+
 	const entries: FileEntry[] = [];
-	const lines = content.trim().split("\n");
+	const lines = content.split("\n");
 
 	for (const line of lines) {
 		if (!line.trim()) continue;
@@ -441,7 +468,7 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
 			const entry = JSON.parse(line) as FileEntry;
 			entries.push(entry);
 		} catch {
-			// Skip malformed lines
+			return [];
 		}
 	}
 
@@ -894,6 +921,109 @@ export class SessionManager {
 		};
 		this._appendEntry(entry);
 		return entry.id;
+	}
+
+	appendSessionMemory(items: MemoryItem[]): string {
+		return this.appendCustomEntry(SESSION_MEMORY_CUSTOM_TYPE, items);
+	}
+
+	appendSessionTodos(todos: TodoSnapshotItem[]): string {
+		return this.appendCustomEntry(SESSION_TODOS_CUSTOM_TYPE, todos);
+	}
+
+	getLatestSessionMemory(): MemoryItem[] {
+		const entries = this.getBranch();
+		for (let i = entries.length - 1; i >= 0; i--) {
+			const entry = entries[i];
+			if (entry.type === "custom" && entry.customType === SESSION_MEMORY_CUSTOM_TYPE) {
+				return parseMemoryItems(entry.data);
+			}
+		}
+		return [];
+	}
+
+	/**
+	 * Get memory history as a timeline of snapshots.
+	 *
+	 * Walks the current branch (from root to current leaf) and extracts all
+	 * session_memory custom entries. Each entry represents a complete snapshot
+	 * of memory at that point in time.
+	 *
+	 * History is derived from persisted session entries, not an event log.
+	 * Because persistence is snapshot-based, each snapshot contains the full
+	 * memory state, not individual add/update/delete events.
+	 *
+	 * @returns Snapshots in chronological order (oldest first), with the latest
+	 *          snapshot on the current branch marked as isCurrent: true.
+	 */
+	getMemoryHistory(): MemoryHistorySnapshot[] {
+		const branch = this.getBranch();
+		const snapshots: Array<{
+			entryId: string;
+			parentId: string | null;
+			timestamp: string;
+			items: MemoryItem[];
+			isCurrent?: boolean;
+		}> = [];
+
+		for (const entry of branch) {
+			if (entry.type === "custom" && entry.customType === SESSION_MEMORY_CUSTOM_TYPE) {
+				snapshots.push({
+					entryId: entry.id,
+					parentId: entry.parentId,
+					timestamp: entry.timestamp,
+					items: parseMemoryItems(entry.data),
+				});
+			}
+		}
+
+		if (snapshots.length === 0) {
+			return [];
+		}
+
+		// Mark the last snapshot as current
+		snapshots[snapshots.length - 1]!.isCurrent = true;
+
+		return snapshots.map((s, idx) => ({
+			entryId: s.entryId,
+			parentId: s.parentId,
+			recordedAt: s.timestamp,
+			items: s.items,
+			isCurrent: idx === snapshots.length - 1,
+		}));
+	}
+
+	/**
+	 * Resolve a memory snapshot by its entry ID within the current branch history.
+	 *
+	 * @param id - The entry ID of the snapshot to find
+	 * @returns The snapshot with that ID, or undefined if not found in current branch
+	 */
+	findMemorySnapshotById(id: string): MemoryHistorySnapshot | undefined {
+		const snapshots = this.getMemoryHistory();
+		return snapshots.find((s) => s.entryId === id);
+	}
+
+	/**
+	 * Strictly resolve a snapshot selector against current-branch history.
+	 *
+	 * The reusable resolution contract itself lives in
+	 * `snapshot-selector-resolver.ts`; current-branch-only semantics come from
+	 * resolving against `getMemoryHistory()` here.
+	 */
+	resolveMemorySnapshotSelector(input: string): MemorySnapshotResolution {
+		return resolveSnapshotSelector(input, this.getMemoryHistory());
+	}
+
+	getLatestSessionTodos(): TodoSnapshotItem[] {
+		const entries = this.getBranch();
+		for (let i = entries.length - 1; i >= 0; i--) {
+			const entry = entries[i];
+			if (entry.type === "custom" && entry.customType === SESSION_TODOS_CUSTOM_TYPE) {
+				return parseTodoSnapshot(entry.data);
+			}
+		}
+		return [];
 	}
 
 	/** Append a session info entry (e.g., display name). Returns entry id. */

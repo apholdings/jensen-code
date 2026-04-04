@@ -10,6 +10,47 @@ import type { ImageContent, Model } from "@apholdings/jensen-ai";
 import type { SessionStats } from "../../core/agent-session.js";
 import type { BashResult } from "../../core/bash-executor.js";
 import type { CompactionResult } from "../../core/compaction/index.js";
+import type {
+	StructuredMemoryCompareData,
+	StructuredMemoryCompareEmptyHistoryData,
+	StructuredMemoryCompareInitialSnapshotData,
+	StructuredMemoryCompareOkData,
+	StructuredMemoryCompareSelectorResolutionFailedData,
+	StructuredMemoryHistoryData,
+	StructuredMemorySnapshot,
+	StructuredResolvedSnapshotSelector,
+	StructuredSnapshotSelectorCandidate,
+	StructuredSnapshotSelectorIssue,
+} from "../../core/memory-snapshot-contract.js";
+import type { WorkingContext } from "../../core/working-context.js";
+
+export type { MemoryItem } from "../../core/memory.js";
+
+// ============================================================================
+// Working Context RPC payload
+// ============================================================================
+
+/** Re-export working context for RPC consumers */
+export type RpcWorkingContext = WorkingContext;
+
+// ============================================================================
+// Protocol status RPC payload
+// ============================================================================
+
+// ============================================================================
+// Memory snapshot RPC payloads
+// ============================================================================
+
+export type RpcMemorySnapshot = StructuredMemorySnapshot;
+export type RpcResolvedSnapshotSelector = StructuredResolvedSnapshotSelector;
+export type RpcSnapshotSelectorCandidate = StructuredSnapshotSelectorCandidate;
+export type RpcSnapshotSelectorIssue = StructuredSnapshotSelectorIssue;
+export type RpcMemoryHistoryData = StructuredMemoryHistoryData;
+export type RpcMemoryCompareEmptyHistoryData = StructuredMemoryCompareEmptyHistoryData;
+export type RpcMemoryCompareInitialSnapshotData = StructuredMemoryCompareInitialSnapshotData;
+export type RpcMemoryCompareSelectorResolutionFailedData = StructuredMemoryCompareSelectorResolutionFailedData;
+export type RpcMemoryCompareOkData = StructuredMemoryCompareOkData;
+export type RpcMemoryCompareData = StructuredMemoryCompareData;
 
 // ============================================================================
 // RPC Commands (stdin)
@@ -64,7 +105,14 @@ export type RpcCommand =
 	| { id?: string; type: "get_messages" }
 
 	// Commands (available for invocation via prompt)
-	| { id?: string; type: "get_commands" };
+	| { id?: string; type: "get_commands" }
+
+	// Memory snapshots
+	| { id?: string; type: "get_memory_history" }
+	| { id?: string; type: "compare_memory_snapshots"; baseline?: string; target?: string }
+
+	// Working Context
+	| { id?: string; type: "get_working_context" };
 
 // ============================================================================
 // RPC Slash Command (for get_commands response)
@@ -200,6 +248,13 @@ export type RpcResponse =
 			success: true;
 			data: { commands: RpcSlashCommand[] };
 	  }
+
+	// Memory snapshots
+	| { id?: string; type: "response"; command: "get_memory_history"; success: true; data: RpcMemoryHistoryData }
+	| { id?: string; type: "response"; command: "compare_memory_snapshots"; success: true; data: RpcMemoryCompareData }
+
+	// Working Context
+	| { id?: string; type: "response"; command: "get_working_context"; success: true; data: RpcWorkingContext }
 
 	// Error response (any command can fail)
 	| { id?: string; type: "response"; command: string; success: false; error: string };

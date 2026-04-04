@@ -66,6 +66,12 @@ export interface CompactionSummaryMessage {
 	timestamp: number;
 }
 
+export interface MemoryContextMessage {
+	role: "memoryContext";
+	content: string;
+	timestamp: number;
+}
+
 // Extend CustomAgentMessages via declaration merging
 declare module "@apholdings/jensen-agent-core" {
 	interface CustomAgentMessages {
@@ -73,6 +79,7 @@ declare module "@apholdings/jensen-agent-core" {
 		custom: CustomMessage;
 		branchSummary: BranchSummaryMessage;
 		compactionSummary: CompactionSummaryMessage;
+		memoryContext: MemoryContextMessage;
 	}
 }
 
@@ -115,6 +122,14 @@ export function createCompactionSummaryMessage(
 		role: "compactionSummary",
 		summary: summary,
 		tokensBefore,
+		timestamp: new Date(timestamp).getTime(),
+	};
+}
+
+export function createMemoryContextMessage(content: string, timestamp: string): MemoryContextMessage {
+	return {
+		role: "memoryContext",
+		content,
 		timestamp: new Date(timestamp).getTime(),
 	};
 }
@@ -179,6 +194,12 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						content: [
 							{ type: "text" as const, text: COMPACTION_SUMMARY_PREFIX + m.summary + COMPACTION_SUMMARY_SUFFIX },
 						],
+						timestamp: m.timestamp,
+					};
+				case "memoryContext":
+					return {
+						role: "user",
+						content: [{ type: "text" as const, text: m.content }],
 						timestamp: m.timestamp,
 					};
 				case "user":

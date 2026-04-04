@@ -4,17 +4,7 @@
 
 import { APP_NAME, getDocsPath, getExamplesPath, getReadmePath } from "../config.js";
 import { formatSkillsForPrompt, type Skill } from "./skills.js";
-
-/** Tool descriptions for system prompt */
-const toolDescriptions: Record<string, string> = {
-	read: "Read file contents",
-	bash: "Execute bash commands (ls, grep, find, etc.)",
-	edit: "Make surgical edits to files (find exact text and replace)",
-	write: "Create or overwrite files",
-	grep: "Search file contents for patterns (respects .gitignore)",
-	find: "Find files by glob pattern (respects .gitignore)",
-	ls: "List directory contents",
-};
+import { getToolDescription } from "./tools/tools-prompt-data.js";
 
 export interface BuildSystemPromptOptions {
 	/** Custom system prompt (replaces default). */
@@ -92,14 +82,14 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 	const examplesPath = getExamplesPath();
 
 	// Build tools list based on selected tools.
-	// Built-ins use toolDescriptions. Custom tools can provide one-line snippets.
+	// Built-ins use getToolDescription. Custom tools can provide one-line snippets.
 	const tools = selectedTools || ["read", "bash", "edit", "write"];
-	const visibleTools = tools.filter((name) => name in toolDescriptions || toolSnippets?.[name]);
+	const visibleTools = tools.filter((name) => getToolDescription(name) || toolSnippets?.[name]);
 	const toolsList =
 		visibleTools.length > 0
 			? visibleTools
 					.map((name) => {
-						const snippet = toolSnippets?.[name] ?? toolDescriptions[name] ?? name;
+						const snippet = toolSnippets?.[name] ?? getToolDescription(name) ?? name;
 						return `- ${name}: ${snippet}`;
 					})
 					.join("\n")

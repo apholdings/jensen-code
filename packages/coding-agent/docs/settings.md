@@ -130,6 +130,22 @@ When a provider requests a retry delay longer than `maxDelayMs` (e.g., Google's 
 | `shellPath` | string | - | Custom shell path (e.g., for Cygwin on Windows) |
 | `shellCommandPrefix` | string | - | Prefix for every bash command (e.g., `"shopt -s expand_aliases"`) |
 
+### Tools
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `tools.defaultActiveToolNames` | string[] | - | Default built-in tool names to activate for new sessions. Unknown names are ignored. If the configured list is empty or every name is invalid, Pi falls back to the legacy default tool set. |
+
+```json
+{
+  "tools": {
+    "defaultActiveToolNames": ["read", "bash", "edit", "write"]
+  }
+}
+```
+
+Explicit tool configuration passed in code still overrides this setting. This setting only controls the default built-in tool set chosen when no explicit tool list is provided.
+
 ### Model Cycling
 
 | Setting | Type | Default | Description |

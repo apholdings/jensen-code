@@ -5,7 +5,8 @@ import { join } from "node:path";
 import type { AgentTool } from "@apholdings/jensen-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
-import { getShellConfig, getShellEnv, killProcessTree } from "../../utils/shell.js";
+import stripAnsi from "strip-ansi";
+import { getShellConfig, getShellEnv, killProcessTree, sanitizeBinaryOutput } from "../../utils/shell.js";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateTail } from "./truncate.js";
 
 /**
@@ -26,6 +27,7 @@ export type BashToolInput = Static<typeof bashSchema>;
 export interface BashToolDetails {
 	truncation?: TruncationResult;
 	fullOutputPath?: string;
+	cancelled?: boolean;
 }
 
 /**
@@ -196,13 +198,16 @@ export function createBashTool(cwd: string, options?: BashToolOptions): AgentToo
 				let totalBytes = 0;
 
 				// Keep a rolling buffer of the last chunk for tail truncation
-				const chunks: Buffer[] = [];
+				const chunks: string[] = [];
 				let chunksBytes = 0;
 				// Keep more than we need so we have enough for truncation
 				const maxChunksBytes = DEFAULT_MAX_BYTES * 2;
+				const decoder = new TextDecoder();
 
 				const handleData = (data: Buffer) => {
 					totalBytes += data.length;
+
+					const text = sanitizeBinaryOutput(stripAnsi(decoder.decode(data, { stream: true }))).replace(/\r/g, "");
 
 					// Start writing to temp file once we exceed the threshold
 					if (totalBytes > DEFAULT_MAX_BYTES && !tempFilePath) {
@@ -216,12 +221,12 @@ export function createBashTool(cwd: string, options?: BashToolOptions): AgentToo
 
 					// Write to temp file if we have one
 					if (tempFileStream) {
-						tempFileStream.write(data);
+						tempFileStream.write(text);
 					}
 
 					// Keep rolling buffer of recent data
-					chunks.push(data);
-					chunksBytes += data.length;
+					chunks.push(text);
+					chunksBytes += text.length;
 
 					// Trim old chunks if buffer is too large
 					while (chunksBytes > maxChunksBytes && chunks.length > 1) {
@@ -231,8 +236,7 @@ export function createBashTool(cwd: string, options?: BashToolOptions): AgentToo
 
 					// Stream partial output to callback (truncated rolling buffer)
 					if (onUpdate) {
-						const fullBuffer = Buffer.concat(chunks);
-						const fullText = fullBuffer.toString("utf-8");
+						const fullText = chunks.join("");
 						const truncation = truncateTail(fullText);
 						onUpdate({
 							content: [{ type: "text", text: truncation.content || "" }],
@@ -257,8 +261,7 @@ export function createBashTool(cwd: string, options?: BashToolOptions): AgentToo
 						}
 
 						// Combine all buffered chunks
-						const fullBuffer = Buffer.concat(chunks);
-						const fullOutput = fullBuffer.toString("utf-8");
+						const fullOutput = chunks.join("");
 
 						// Apply tail truncation
 						const truncation = truncateTail(fullOutput);
@@ -302,13 +305,20 @@ export function createBashTool(cwd: string, options?: BashToolOptions): AgentToo
 						}
 
 						// Combine all buffered chunks for error output
-						const fullBuffer = Buffer.concat(chunks);
-						let output = fullBuffer.toString("utf-8");
+						let output = chunks.join("");
 
 						if (err.message === "aborted") {
 							if (output) output += "\n\n";
 							output += "Command aborted";
-							reject(new Error(output));
+							const truncation = truncateTail(output);
+							resolve({
+								content: [{ type: "text", text: truncation.content || "Command aborted" }],
+								details: {
+									truncation: truncation.truncated ? truncation : undefined,
+									fullOutputPath: tempFilePath,
+									cancelled: true,
+								},
+							});
 						} else if (err.message.startsWith("timeout:")) {
 							const timeoutSecs = err.message.split(":")[1];
 							if (output) output += "\n\n";

@@ -11,7 +11,15 @@ import type { SessionStats } from "../../core/agent-session.js";
 import type { BashResult } from "../../core/bash-executor.js";
 import type { CompactionResult } from "../../core/compaction/index.js";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.js";
-import type { RpcCommand, RpcResponse, RpcSessionState, RpcSlashCommand } from "./rpc-types.js";
+import type {
+	RpcCommand,
+	RpcMemoryCompareData,
+	RpcMemoryHistoryData,
+	RpcResponse,
+	RpcSessionState,
+	RpcSlashCommand,
+	RpcWorkingContext,
+} from "./rpc-types.js";
 
 // ============================================================================
 // Types
@@ -378,6 +386,48 @@ export class RpcClient {
 	async getCommands(): Promise<RpcSlashCommand[]> {
 		const response = await this.send({ type: "get_commands" });
 		return this.getData<{ commands: RpcSlashCommand[] }>(response).commands;
+	}
+
+	// =========================================================================
+	// Memory Snapshots
+	// =========================================================================
+
+	/**
+	 * Get current-branch memory history as real persisted snapshots.
+	 */
+	async getMemoryHistory(): Promise<RpcMemoryHistoryData> {
+		const response = await this.send({ type: "get_memory_history" });
+		return this.getData<RpcMemoryHistoryData>(response);
+	}
+
+	/**
+	 * Compare current-branch memory snapshots.
+	 *
+	 * - Omit selectors for adjacent latest-vs-previous comparison
+	 * - Provide both baseline and target selectors for explicit comparison
+	 */
+	async compareMemorySnapshots(options?: { baseline?: string; target?: string }): Promise<RpcMemoryCompareData> {
+		const response = await this.send({
+			type: "compare_memory_snapshots",
+			baseline: options?.baseline,
+			target: options?.target,
+		});
+		return this.getData<RpcMemoryCompareData>(response);
+	}
+
+	// =========================================================================
+	// Working Context
+	// =========================================================================
+
+	/**
+	 * Get the current working context.
+	 *
+	 * Returns memory (persisted in session snapshots), todos (persisted in session entries),
+	 * and delegated work (ephemeral current-process state).
+	 */
+	async getWorkingContext(): Promise<RpcWorkingContext> {
+		const response = await this.send({ type: "get_working_context" });
+		return this.getData<RpcWorkingContext>(response);
 	}
 
 	// =========================================================================

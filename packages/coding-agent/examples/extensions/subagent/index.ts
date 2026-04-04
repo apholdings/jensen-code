@@ -491,7 +491,7 @@ async function runSingleAgent(
 		agent: agentName,
 		agentSource: agent.source,
 		task,
-		exitCode: 0,
+		exitCode: -1,
 		messages: [],
 		stderr: "",
 		usage: createEmptyUsageStats(),
@@ -1020,24 +1020,40 @@ export function createSubagentTool(options?: {
 			};
 
 			if (details.mode === "chain") {
+				const running = details.results.filter((single) => single.exitCode === -1 && !single.failureStage).length;
 				const successCount = details.results.filter(
 					(single) => single.exitCode === 0 && !single.failureStage,
 				).length;
-				const icon = successCount === details.results.length ? theme.fg("success", "✓") : theme.fg("error", "✗");
-				let text = `${icon} ${theme.fg("toolTitle", theme.bold("chain "))}${theme.fg("accent", `${successCount}/${details.results.length} steps`)}`;
+				const failCount = details.results.filter((single) => single.exitCode > 0 || single.failureStage).length;
+				const isRunning = running > 0;
+				const icon = isRunning
+					? theme.fg("warning", "⏳")
+					: failCount > 0
+						? theme.fg("warning", "◐")
+						: theme.fg("success", "✓");
+				const status = isRunning
+					? `${successCount + failCount}/${details.results.length} done, ${running} running`
+					: `${successCount}/${details.results.length} steps`;
+				let text = `${icon} ${theme.fg("toolTitle", theme.bold("chain "))}${theme.fg("accent", status)}`;
 				for (const single of details.results) {
 					const stepIcon =
-						single.exitCode === 0 && !single.failureStage ? theme.fg("success", "✓") : theme.fg("error", "✗");
+						single.exitCode === -1 && !single.failureStage
+							? theme.fg("warning", "⏳")
+							: single.exitCode === 0 && !single.failureStage
+								? theme.fg("success", "✓")
+								: theme.fg("error", "✗");
 					text += `\n\n${theme.fg("muted", `─── Step ${single.step}: `)}${theme.fg("accent", single.agent)} ${stepIcon}`;
 					if (single.diagnosticMessage) {
 						text += `\n${theme.fg("error", single.diagnosticMessage)}`;
 						continue;
 					}
 					const displayItems = getDisplayItems(single.messages);
-					text += `\n${displayItems.length > 0 ? renderDisplayItems(displayItems, 5) : theme.fg("muted", "(no assistant output)")}`;
+					text += `\n${displayItems.length > 0 ? renderDisplayItems(displayItems, 5) : theme.fg("muted", isRunning ? "(running...)" : "(no assistant output)")}`;
 				}
-				const usageText = formatUsageStats(aggregateUsage(details.results));
-				if (usageText) text += `\n\n${theme.fg("dim", `Total: ${usageText}`)}`;
+				if (!isRunning) {
+					const usageText = formatUsageStats(aggregateUsage(details.results));
+					if (usageText) text += `\n\n${theme.fg("dim", `Total: ${usageText}`)}`;
+				}
 				if (!expanded) text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
 				return new Text(text, 0, 0);
 			}

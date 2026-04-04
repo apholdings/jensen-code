@@ -209,6 +209,207 @@ Response:
 
 Messages are `AgentMessage` objects (see [Message Types](#message-types)).
 
+### Memory Snapshots
+
+#### get_memory_history
+
+Get the persisted session-memory snapshot history for the current branch.
+
+```json
+{"type": "get_memory_history"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "get_memory_history",
+  "success": true,
+  "data": {
+    "branchScope": "current",
+    "historyModel": "snapshot",
+    "snapshots": [
+      {
+        "entryId": "baseline01-1111",
+        "shortId": "baseline",
+        "parentId": null,
+        "recordedAt": "2026-04-01T10:00:00.000Z",
+        "items": [{"key": "alpha", "value": "first", "timestamp": "2026-04-01T10:00:00.000Z"}],
+        "itemCount": 1,
+        "isCurrent": false
+      }
+    ]
+  }
+}
+```
+
+Semantics:
+- History is derived from persisted `session_memory` snapshots already stored in the session JSONL.
+- `branchScope: "current"` means sibling branches are excluded.
+- `historyModel: "snapshot"` means each entry is a complete memory state, not an event log.
+- `shortId` uses the same 8-character copy-friendly basis shown in `/memory history`.
+
+#### compare_memory_snapshots
+
+Compare current-branch memory snapshots.
+
+Adjacent default (latest vs previous):
+```json
+{"type": "compare_memory_snapshots"}
+```
+
+Explicit selector compare:
+```json
+{"type": "compare_memory_snapshots", "baseline": "[baseline]", "target": "target00"}
+```
+
+You must provide both `baseline` and `target` together for explicit compare. If only one is provided, the command fails with a normal RPC error response.
+
+Structured success responses return one of these statuses:
+- `"empty_history"` — no snapshots exist on the current branch
+- `"initial_snapshot"` — adjacent compare found only one snapshot, so the target is compared against an empty predecessor
+- `"selector_resolution_failed"` — explicit selectors did not resolve cleanly
+- `"ok"` — compare succeeded
+
+Example explicit compare success:
+```json
+{
+  "type": "response",
+  "command": "compare_memory_snapshots",
+  "success": true,
+  "data": {
+    "branchScope": "current",
+    "historyModel": "snapshot",
+    "status": "ok",
+    "compareMode": "explicit",
+    "baseline": {
+      "entryId": "baseline01-1111",
+      "shortId": "baseline",
+      "parentId": null,
+      "recordedAt": "2026-04-01T10:00:00.000Z",
+      "items": [{"key": "alpha", "value": "first", "timestamp": "2026-04-01T10:00:00.000Z"}],
+      "itemCount": 1,
+      "isCurrent": false
+    },
+    "target": {
+      "entryId": "target001-2222",
+      "shortId": "target00",
+      "parentId": "baseline01-1111",
+      "recordedAt": "2026-04-01T12:00:00.000Z",
+      "items": [{"key": "alpha", "value": "second", "timestamp": "2026-04-01T12:00:00.000Z"}],
+      "itemCount": 1,
+      "isCurrent": true
+    },
+    "diff": {
+      "added": [],
+      "removed": [],
+      "changed": [{"type": "changed", "key": "alpha", "previousValue": "first", "currentValue": "second"}],
+      "isInitialSnapshot": false
+    },
+    "sameSnapshot": false,
+    "selectors": {
+      "baseline": {"input": "[baseline]", "matchedInput": "baseline", "resolvedId": "baseline01-1111"},
+      "target": {"input": "target00", "matchedInput": "target00", "resolvedId": "target001-2222"}
+    }
+  }
+}
+```
+
+Example explicit selector-resolution failure:
+```json
+{
+  "type": "response",
+  "command": "compare_memory_snapshots",
+  "success": true,
+  "data": {
+    "branchScope": "current",
+    "historyModel": "snapshot",
+    "status": "selector_resolution_failed",
+    "compareMode": "explicit",
+    "snapshotCount": 2,
+    "issues": [
+      {"label": "baseline", "input": "[]", "matchedInput": "", "error": "empty", "candidates": []},
+      {
+        "label": "target",
+        "input": "abc",
+        "matchedInput": "abc",
+        "error": "ambiguous",
+        "candidates": [
+          {"entryId": "abc00001-1111", "shortId": "abc00001"},
+          {"entryId": "abc00002-2222", "shortId": "abc00002"}
+        ]
+      }
+    ]
+  }
+}
+```
+
+Selector semantics are the same as the operator-facing compare surfaces:
+- exact full entry ID
+- exact displayed short ID
+- bracketed short ID copied from history output
+- strict unique prefix only
+- ambiguous prefixes are rejected
+- same-snapshot compare is reported honestly with `sameSnapshot: true` and an empty diff
+
+The same structured payload shape is also available directly from the SDK via `AgentSession.getStructuredMemoryHistory()` and `AgentSession.compareMemorySnapshots(...)`, so same-process automation does not need RPC subprocess glue to consume this contract.
+
+### Working Context
+
+#### get_working_context
+
+Get the integrated working-context surface covering memory, todos, and delegated work.
+
+```json
+{"type": "get_working_context"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "get_working_context",
+  "success": true,
+  "data": {
+    "memory": {
+      "itemCount": 3,
+      "staleCount": 0,
+      "keyPreview": ["branch", "goal"],
+      "isPersisted": true,
+      "scope": "current_branch_session_state"
+    },
+    "todo": {
+      "total": 4,
+      "completed": 1,
+      "inProgress": "Implementing panel",
+      "isPersisted": true,
+      "scope": "current_branch_session_state"
+    },
+    "delegatedWork": {
+      "activeCount": 1,
+      "completedCount": 2,
+      "failedCount": 0,
+      "activeAgents": ["worker"],
+      "isPersisted": false,
+      "scope": "current_process_runtime_state",
+      "note": "live current-process state only; not persisted and resets on session switch/resume"
+    }
+  }
+}
+```
+
+**Provenance markers:**
+- `memory.isPersisted: true` and `memory.scope: "current_branch_session_state"` — memory is persisted current-branch session state
+- `todo.isPersisted: true` and `todo.scope: "current_branch_session_state"` — todos are persisted current-branch session state
+- `delegatedWork.isPersisted: false` and `delegatedWork.scope: "current_process_runtime_state"` — delegated work is live current-process runtime state only
+
+**Empty-state behavior:**
+- The payload always includes all three sections.
+- Empty memory/todo state is represented with zero counts.
+- No delegated work is represented honestly with zero counts, an empty `activeAgents` array, and the same non-persisted runtime marker.
+
+The same working-context builder is used by the interactive working-context panel, the interactive `/session` command, and RPC `get_working_context`, so the summary semantics do not drift across surfaces.
+
 ### Model
 
 #### set_model

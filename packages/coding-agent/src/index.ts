@@ -142,6 +142,21 @@ export {
 } from "./core/extensions/index.js";
 // Footer data provider (git branch + extension statuses - data not otherwise available to extensions)
 export type { ReadonlyFooterDataProvider } from "./core/footer-data-provider.js";
+export {
+	buildStructuredMemoryCompareData,
+	buildStructuredMemoryHistoryData,
+	type MemorySnapshotContractContext,
+	type StructuredMemoryCompareData,
+	type StructuredMemoryCompareEmptyHistoryData,
+	type StructuredMemoryCompareInitialSnapshotData,
+	type StructuredMemoryCompareOkData,
+	type StructuredMemoryCompareSelectorResolutionFailedData,
+	type StructuredMemoryHistoryData,
+	type StructuredMemorySnapshot,
+	type StructuredResolvedSnapshotSelector,
+	type StructuredSnapshotSelectorCandidate,
+	type StructuredSnapshotSelectorIssue,
+} from "./core/memory-snapshot-contract.js";
 export { convertToLlm } from "./core/messages.js";
 export { ModelRegistry } from "./core/model-registry.js";
 export type {
@@ -264,6 +279,17 @@ export {
 	type WriteToolOptions,
 	writeTool,
 } from "./core/tools/index.js";
+// Working context surface
+export {
+	buildWorkingContext,
+	buildWorkingContextDelegatedWorkSummary,
+	buildWorkingContextMemorySummary,
+	buildWorkingContextTodoSummary,
+	type WorkingContext,
+	type WorkingContextDelegatedWorkSummary,
+	type WorkingContextMemorySummary,
+	type WorkingContextTodoSummary,
+} from "./core/working-context.js";
 // Main entry point
 export { main } from "./main.js";
 // Run modes for programmatic SDK usage
