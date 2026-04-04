@@ -74,6 +74,42 @@ Best practices:
 - Use appropriate timeouts for long-running operations`,
 
 	/**
+	 * PowerShell tool - Windows-first command execution
+	 */
+	powershell: `Execute PowerShell commands in the terminal.
+
+Usage: Run Windows-first shell commands for workflows that need real PowerShell semantics.
+
+When to use:
+- Windows and Unity workflows that rely on PowerShell cmdlets or Windows-native tools
+- PowerShell-specific scripting, pipelines, and object-oriented command composition
+- Native Windows automation where bash semantics would be the wrong fit
+- Any task where the user explicitly wants PowerShell instead of bash
+
+Parameters:
+- command: The PowerShell command to execute
+- timeout: Optional timeout in seconds (default varies by configuration)
+
+Behavior:
+- Commands run in a PowerShell host with non-interactive execution flags
+- The working directory persists between commands
+- Shell state does NOT persist (environment is re-initialized each call)
+- On Windows, prefers PowerShell 7 (pwsh) and falls back to Windows PowerShell when needed
+- On non-Windows hosts, requires PowerShell 7+ (pwsh)
+- Returns combined stdout and stderr output
+
+Safety notes:
+- Do NOT use PowerShell for dedicated built-in file tools when read/grep/find/ls/edit/write are available
+- Do NOT run destructive commands unless explicitly instructed
+- Prefer explicit file paths and PowerShell call syntax when invoking Windows executables with spaces
+
+Best practices:
+- Keep PowerShell usage explicit and intentional; do not assume bash syntax applies
+- Use PowerShell cmdlets and quoting rules correctly for Windows paths and arguments
+- Use appropriate timeouts for long-running commands
+- Prefer the dedicated built-in file tools over shell-based file inspection when available`,
+
+	/**
 	 * Edit tool - surgical file modifications
 	 */
 	edit: `Make surgical edits to files by finding exact text and replacing it.
@@ -349,6 +385,7 @@ export function getToolPrompt(toolName: string): string | undefined {
 const FALLBACK_DESCRIPTIONS: Record<string, string> = {
 	read: "Read file contents",
 	bash: "Execute bash commands (ls, grep, find, etc.)",
+	powershell: "Execute PowerShell commands with Windows-first semantics",
 	edit: "Make surgical edits to files (find exact text and replace)",
 	write: "Create or overwrite files",
 	grep: "Search file contents for patterns (respects .gitignore)",

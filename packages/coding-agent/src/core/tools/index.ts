@@ -43,6 +43,16 @@ export {
 } from "./ls.js";
 export { createMemoryWriteTool, type MemoryWriteInput, memoryWriteTool } from "./memory-write.js";
 export {
+	type CreateLocalPowerShellOperationsOptions,
+	createLocalPowerShellOperations,
+	createPowerShellTool,
+	type PowerShellOperations,
+	type PowerShellToolDetails,
+	type PowerShellToolInput,
+	type PowerShellToolOptions,
+	powershellTool,
+} from "./powershell.js";
+export {
 	createReadTool,
 	type ReadOperations,
 	type ReadToolDetails,
@@ -84,6 +94,7 @@ import { createFindTool, findTool } from "./find.js";
 import { createGrepTool, grepTool } from "./grep.js";
 import { createLsTool, lsTool } from "./ls.js";
 import { memoryWriteTool } from "./memory-write.js";
+import { createPowerShellTool, type PowerShellToolOptions, powershellTool } from "./powershell.js";
 import { createReadTool, type ReadToolOptions, readTool } from "./read.js";
 import { todoWriteTool } from "./todo-write.js";
 import { createWebSearchTool, webSearchTool } from "./web-search.js";
@@ -93,7 +104,15 @@ import { createWriteTool, writeTool } from "./write.js";
 export type Tool = AgentTool<any>;
 
 // Default tools for full access mode (using process.cwd())
-export const codingTools: Tool[] = [readTool, bashTool, editTool, writeTool, todoWriteTool, memoryWriteTool];
+export const codingTools: Tool[] = [
+	readTool,
+	bashTool,
+	powershellTool,
+	editTool,
+	writeTool,
+	todoWriteTool,
+	memoryWriteTool,
+];
 
 // Read-only tools for exploration without modification (using process.cwd())
 export const readOnlyTools: Tool[] = [readTool, grepTool, findTool, lsTool];
@@ -102,6 +121,7 @@ export const readOnlyTools: Tool[] = [readTool, grepTool, findTool, lsTool];
 export const allTools = {
 	read: readTool,
 	bash: bashTool,
+	powershell: powershellTool,
 	edit: editTool,
 	write: writeTool,
 	todo_write: todoWriteTool,
@@ -119,6 +139,8 @@ export interface ToolsOptions {
 	read?: ReadToolOptions;
 	/** Options for the bash tool */
 	bash?: BashToolOptions;
+	/** Options for the PowerShell tool */
+	powershell?: PowerShellToolOptions;
 }
 
 /**
@@ -128,6 +150,7 @@ export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
 	return [
 		createReadTool(cwd, options?.read),
 		createBashTool(cwd, options?.bash),
+		createPowerShellTool(cwd, options?.powershell),
 		createEditTool(cwd),
 		createWriteTool(cwd),
 		todoWriteTool,
@@ -149,6 +172,7 @@ export function createAllTools(cwd: string, options?: ToolsOptions): Record<Tool
 	return {
 		read: createReadTool(cwd, options?.read),
 		bash: createBashTool(cwd, options?.bash),
+		powershell: createPowerShellTool(cwd, options?.powershell),
 		edit: createEditTool(cwd),
 		write: createWriteTool(cwd),
 		todo_write: todoWriteTool,

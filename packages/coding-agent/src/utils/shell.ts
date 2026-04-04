@@ -5,15 +5,19 @@ import { getBinDir, getSettingsPath } from "../config.js";
 import { SettingsManager } from "../core/settings-manager.js";
 
 let cachedShellConfig: { shell: string; args: string[] } | null = null;
+let cachedPowerShellConfig: PowerShellConfig | null = null;
 
-/**
- * Find bash executable on PATH (cross-platform)
- */
-function findBashOnPath(): string | null {
+export interface PowerShellConfig {
+	shell: string;
+	args: string[];
+	flavor: "pwsh" | "powershell";
+}
+
+function findExecutableOnPath(command: string): string | null {
 	if (process.platform === "win32") {
 		// Windows: Use 'where' and verify file exists (where can return non-existent paths)
 		try {
-			const result = spawnSync("where", ["bash.exe"], { encoding: "utf-8", timeout: 5000 });
+			const result = spawnSync("where", [command], { encoding: "utf-8", timeout: 5000 });
 			if (result.status === 0 && result.stdout) {
 				const firstMatch = result.stdout.trim().split(/\r?\n/)[0];
 				if (firstMatch && existsSync(firstMatch)) {
@@ -28,7 +32,7 @@ function findBashOnPath(): string | null {
 
 	// Unix: Use 'which' and trust its output (handles Termux and special filesystems)
 	try {
-		const result = spawnSync("which", ["bash"], { encoding: "utf-8", timeout: 5000 });
+		const result = spawnSync("which", [command], { encoding: "utf-8", timeout: 5000 });
 		if (result.status === 0 && result.stdout) {
 			const firstMatch = result.stdout.trim().split(/\r?\n/)[0];
 			if (firstMatch) {
@@ -39,6 +43,13 @@ function findBashOnPath(): string | null {
 		// Ignore errors
 	}
 	return null;
+}
+
+/**
+ * Find bash executable on PATH (cross-platform)
+ */
+function findBashOnPath(): string | null {
+	return findExecutableOnPath(process.platform === "win32" ? "bash.exe" : "bash");
 }
 
 /**
@@ -116,6 +127,47 @@ export function getShellConfig(): { shell: string; args: string[] } {
 
 	cachedShellConfig = { shell: "sh", args: ["-c"] };
 	return cachedShellConfig;
+}
+
+export function getPowerShellConfig(): PowerShellConfig {
+	if (cachedPowerShellConfig) {
+		return cachedPowerShellConfig;
+	}
+
+	const args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"];
+
+	if (process.platform === "win32") {
+		const pwsh = findExecutableOnPath("pwsh.exe");
+		if (pwsh) {
+			cachedPowerShellConfig = { shell: pwsh, args, flavor: "pwsh" };
+			return cachedPowerShellConfig;
+		}
+
+		const powershell = findExecutableOnPath("powershell.exe");
+		if (powershell) {
+			cachedPowerShellConfig = { shell: powershell, args, flavor: "powershell" };
+			return cachedPowerShellConfig;
+		}
+
+		throw new Error(
+			"PowerShell is not available on this system. Install PowerShell 7 (pwsh) or ensure Windows PowerShell is available on PATH.",
+		);
+	}
+
+	const pwsh = findExecutableOnPath("pwsh");
+	if (pwsh) {
+		cachedPowerShellConfig = { shell: pwsh, args, flavor: "pwsh" };
+		return cachedPowerShellConfig;
+	}
+
+	throw new Error(
+		"PowerShell is not available on this system. On non-Windows hosts, install PowerShell 7+ (pwsh) or use the bash tool instead.",
+	);
+}
+
+export function resetShellConfigCache(): void {
+	cachedShellConfig = null;
+	cachedPowerShellConfig = null;
 }
 
 export function getShellEnv(): NodeJS.ProcessEnv {

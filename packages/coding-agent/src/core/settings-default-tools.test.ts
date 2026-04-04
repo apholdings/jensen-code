@@ -113,6 +113,13 @@ describe("settings default tools", () => {
 			expect(settingsManager.getDefaultActiveToolNames()).toEqual(["web_search"]);
 		});
 
+		it("supports powershell in configured tools", () => {
+			const settingsManager = SettingsManager.inMemory({
+				tools: { defaultActiveToolNames: ["powershell"] },
+			});
+			expect(settingsManager.getDefaultActiveToolNames()).toEqual(["powershell"]);
+		});
+
 		it("returns undefined for empty array", () => {
 			const settingsManager = SettingsManager.inMemory({
 				tools: { defaultActiveToolNames: [] },

@@ -1028,6 +1028,7 @@ export class SettingsManager {
 const allToolNames: Record<string, boolean> = {
 	read: true,
 	bash: true,
+	powershell: true,
 	edit: true,
 	write: true,
 	todo_write: true,
