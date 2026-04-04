@@ -46,4 +46,5 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "btw", description: "Queue runtime-only by-the-way guidance for the next turn" },
 	{ name: "steer", description: "Apply steering to the active workstream or resume from the latest assistant turn" },
 	{ name: "ultraplan", description: "Run, show, revise, regenerate, or apply a persisted local-first planner plan" },
+	{ name: "websearch", description: "Search the web using DuckDuckGo Lite" },
 ];

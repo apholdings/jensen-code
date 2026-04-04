@@ -27,6 +27,7 @@ import {
 	STEER_COMMAND_ACTIVE_WORK_REQUIRED,
 	STEER_COMMAND_USAGE,
 } from "../core/steer-command.js";
+import { searchDuckDuckGoLite } from "../core/tools/web-search.js";
 import { formatUltraplanShowOutput } from "../core/ultraplan.js";
 
 /**
@@ -170,6 +171,32 @@ export async function getPrintModeLocalCommandOutput(
 
 		const result = await session.runUltraplan(objective);
 		return result.displayText;
+	}
+
+	if (command === "/websearch") {
+		const query = text.slice("/websearch".length).trim();
+		if (!query) {
+			return "Usage: /websearch <query>";
+		}
+		try {
+			const results = await searchDuckDuckGoLite(query);
+			if (results.length === 0) {
+				return `No web results found for "${query}".`;
+			}
+			const lines = [`Web Search: ${query}`, ""];
+			for (const [index, result] of results.entries()) {
+				lines.push(`${index + 1}. ${result.title}`);
+				lines.push(`   ${result.url}`);
+				if (result.snippet) {
+					lines.push(`   ${result.snippet}`);
+				}
+				lines.push("");
+			}
+			return lines.join("\n");
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return `Search failed: ${message}`;
+		}
 	}
 
 	return undefined;

@@ -85,6 +85,7 @@ import {
 	STEER_COMMAND_USAGE,
 } from "../../core/steer-command.js";
 import type { TruncationResult } from "../../core/tools/truncate.js";
+import { searchDuckDuckGoLite } from "../../core/tools/web-search.js";
 import { formatUltraplanShowOutput } from "../../core/ultraplan.js";
 import { getChangelogPath, getNewEntries, parseChangelog } from "../../utils/changelog.js";
 import { copyToClipboard } from "../../utils/clipboard.js";
@@ -487,7 +488,7 @@ export class InteractiveMode {
 			["/new", "/clear", "/resume", "/session", "/name"],
 			["/tree", "/fork", "/compact", "/reload", "/init-project"],
 			["/protocol-status", "/copy", "/export", "/share", "/login", "/logout"],
-			["/memory", "/brief", "/btw", "/steer", "/help"],
+			["/memory", "/brief", "/btw", "/steer", "/websearch", "/help"],
 			["/ultraplan"],
 		]
 			.map((line) => line.map((cmd) => theme.fg("accent", cmd)).join(theme.fg("dim", ", ")))
@@ -1020,6 +1021,37 @@ export class InteractiveMode {
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(output, 1, 0));
 		this.ui.requestRender();
+	}
+
+	private async handleWebsearchCommand(text: string): Promise<void> {
+		const query = text.slice("/websearch".length).trim();
+		if (!query) {
+			this.showWarning("Usage: /websearch <query>");
+			return;
+		}
+
+		try {
+			const results = await searchDuckDuckGoLite(query);
+			if (results.length === 0) {
+				this.chatContainer.addChild(new Spacer(1));
+				this.chatContainer.addChild(new Text(`No web results found for "${query}".`, 1, 0));
+			} else {
+				const lines = [`${theme.bold(theme.fg("accent", `Web Search: ${query}`))}`, ""];
+				for (const [index, result] of results.entries()) {
+					lines.push(`${index + 1}. ${theme.fg("accent", result.title)}`);
+					lines.push(`   ${result.url}`);
+					if (result.snippet) {
+						lines.push(`   ${theme.fg("muted", result.snippet)}`);
+					}
+					lines.push("");
+				}
+				this.chatContainer.addChild(new Spacer(1));
+				this.chatContainer.addChild(new Text(lines.join("\n"), 1, 0));
+			}
+			this.ui.requestRender();
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : "Search failed");
+		}
 	}
 
 	private async handleUltraplanCommand(text: string): Promise<void> {
@@ -3170,6 +3202,12 @@ export class InteractiveMode {
 			if (text === "/ultraplan" || text.startsWith("/ultraplan ")) {
 				this.editor.setText("");
 				await this.handleUltraplanCommand(text);
+				return;
+			}
+
+			if (text === "/websearch" || text.startsWith("/websearch ")) {
+				this.editor.setText("");
+				await this.handleWebsearchCommand(text);
 				return;
 			}
 
