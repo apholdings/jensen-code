@@ -41,6 +41,7 @@ export {
 	type LsToolOptions,
 	lsTool,
 } from "./ls.js";
+export { createMemoryWriteTool, type MemoryWriteInput, memoryWriteTool } from "./memory-write.js";
 export {
 	createReadTool,
 	type ReadOperations,
@@ -49,6 +50,7 @@ export {
 	type ReadToolOptions,
 	readTool,
 } from "./read.js";
+export { createTodoWriteTool, type TodoItem, todoWriteTool } from "./todo-write.js";
 export {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
@@ -59,6 +61,14 @@ export {
 	truncateLine,
 	truncateTail,
 } from "./truncate.js";
+export {
+	createWebSearchTool,
+	type WebSearchResult,
+	type WebSearchToolDetails,
+	type WebSearchToolInput,
+	type WebSearchToolOptions,
+	webSearchTool,
+} from "./web-search.js";
 export {
 	createWriteTool,
 	type WriteOperations,
@@ -73,14 +83,17 @@ import { createEditTool, editTool } from "./edit.js";
 import { createFindTool, findTool } from "./find.js";
 import { createGrepTool, grepTool } from "./grep.js";
 import { createLsTool, lsTool } from "./ls.js";
+import { memoryWriteTool } from "./memory-write.js";
 import { createReadTool, type ReadToolOptions, readTool } from "./read.js";
+import { todoWriteTool } from "./todo-write.js";
+import { createWebSearchTool, webSearchTool } from "./web-search.js";
 import { createWriteTool, writeTool } from "./write.js";
 
 /** Tool type (AgentTool from pi-ai) */
 export type Tool = AgentTool<any>;
 
 // Default tools for full access mode (using process.cwd())
-export const codingTools: Tool[] = [readTool, bashTool, editTool, writeTool];
+export const codingTools: Tool[] = [readTool, bashTool, editTool, writeTool, todoWriteTool, memoryWriteTool];
 
 // Read-only tools for exploration without modification (using process.cwd())
 export const readOnlyTools: Tool[] = [readTool, grepTool, findTool, lsTool];
@@ -91,9 +104,12 @@ export const allTools = {
 	bash: bashTool,
 	edit: editTool,
 	write: writeTool,
+	todo_write: todoWriteTool,
+	memory_write: memoryWriteTool,
 	grep: grepTool,
 	find: findTool,
 	ls: lsTool,
+	web_search: webSearchTool,
 };
 
 export type ToolName = keyof typeof allTools;
@@ -114,6 +130,8 @@ export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
 		createBashTool(cwd, options?.bash),
 		createEditTool(cwd),
 		createWriteTool(cwd),
+		todoWriteTool,
+		memoryWriteTool,
 	];
 }
 
@@ -133,8 +151,11 @@ export function createAllTools(cwd: string, options?: ToolsOptions): Record<Tool
 		bash: createBashTool(cwd, options?.bash),
 		edit: createEditTool(cwd),
 		write: createWriteTool(cwd),
+		todo_write: todoWriteTool,
+		memory_write: memoryWriteTool,
 		grep: createGrepTool(cwd),
 		find: createFindTool(cwd),
 		ls: createLsTool(cwd),
+		web_search: createWebSearchTool(),
 	};
 }
