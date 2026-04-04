@@ -14,6 +14,7 @@
 
 ### Added
 
+- Added built-in `powershell` tool for executing PowerShell commands on Windows and cross-platform systems, with local and remote execution support.
 - Added `settings.tools.defaultActiveToolNames` configuration option to customize the default active built-in tools instead of using the hardcoded `["read", "bash", "edit", "write"]` fallback.
 - Added SDK-facing structured memory snapshot access via `AgentSession.getStructuredMemoryHistory()` and `AgentSession.compareMemorySnapshots()`, reusing the same current-branch snapshot contract already exposed by RPC mode.
 - Added an interactive working-context surface that shows active memory, visible plan/todo progress, and live subagent delegation state together, plus a matching `/session` working-context summary.
