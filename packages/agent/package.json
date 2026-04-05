@@ -1,6 +1,6 @@
 {
 	"name": "@apholdings/jensen-agent-core",
-	"version": "1.0.2",
+	"version": "1.0.3",
 	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -27,7 +27,7 @@
 		"provenance": true
 	},
 	"dependencies": {
-		"@apholdings/jensen-ai": "1.0.2"
+		"@apholdings/jensen-ai": "1.0.3"
 	},
 	"keywords": [
 		"ai",

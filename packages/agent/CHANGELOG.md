@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.3
+
+### Patch Changes
+
+- Release: Add powershell tool, memory snapshots, working-context surface, get_working_context RPC, and /ultraplan command
+- Updated dependencies
+  - @apholdings/jensen-ai@1.0.3
+
 ## 1.0.2
 
 ### Patch Changes
