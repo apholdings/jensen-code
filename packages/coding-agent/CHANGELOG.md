@@ -10,6 +10,21 @@
   - @apholdings/jensen-ai@1.0.3
   - @apholdings/jensen-tui@1.0.3
 
+### Added
+
+- Added built-in `powershell` tool for executing PowerShell commands on Windows and cross-platform systems, with local and remote execution support.
+- Added `settings.tools.defaultActiveToolNames` configuration option to customize the default active built-in tools instead of using the hardcoded `["read", "bash", "edit", "write"]` fallback.
+- Added SDK-facing structured memory snapshot access via `AgentSession.getStructuredMemoryHistory()` and `AgentSession.compareMemorySnapshots()`, reusing the same current-branch snapshot contract already exposed by RPC mode.
+- Added an interactive working-context surface that shows active memory, visible plan/todo progress, and live subagent delegation state together, plus a matching `/session` working-context summary.
+- Added shared serializable working-context contract under `packages/coding-agent/src/core/working-context.ts` with explicit `isPersisted` markers distinguishing persisted memory/todos from ephemeral delegated work state.
+- Added `get_working_context` RPC command with typed response, plus `RpcClient.getWorkingContext()` method for headless access to the integrated working-context surface.
+- Added targeted tests for working-context builder including empty delegated-work case and explicit persisted vs current-process-only provenance markers.
+- Added a local-first `/ultraplan` command that runs the planner subagent without auto-executing, persists a structured plan artifact in session-owned state, and exposes the latest stored plan via `/ultraplan show`.
+
+### Changed
+
+- Refactored interactive mode components to use a new `BorderedBox` for a cleaner, transparent UI with rounded borders in tool executions and user messages.
+
 ## 1.0.2
 
 ### Patch Changes
@@ -28,23 +43,6 @@
   - @apholdings/jensen-agent-core@0.57.7
   - @apholdings/jensen-ai@0.57.7
   - @apholdings/jensen-tui@0.57.7
-
-## [Unreleased]
-
-### Added
-
-- Added built-in `powershell` tool for executing PowerShell commands on Windows and cross-platform systems, with local and remote execution support.
-- Added `settings.tools.defaultActiveToolNames` configuration option to customize the default active built-in tools instead of using the hardcoded `["read", "bash", "edit", "write"]` fallback.
-- Added SDK-facing structured memory snapshot access via `AgentSession.getStructuredMemoryHistory()` and `AgentSession.compareMemorySnapshots()`, reusing the same current-branch snapshot contract already exposed by RPC mode.
-- Added an interactive working-context surface that shows active memory, visible plan/todo progress, and live subagent delegation state together, plus a matching `/session` working-context summary.
-- Added shared serializable working-context contract under `packages/coding-agent/src/core/working-context.ts` with explicit `isPersisted` markers distinguishing persisted memory/todos from ephemeral delegated work state.
-- Added `get_working_context` RPC command with typed response, plus `RpcClient.getWorkingContext()` method for headless access to the integrated working-context surface.
-- Added targeted tests for working-context builder including empty delegated-work case and explicit persisted vs current-process-only provenance markers.
-- Added a local-first `/ultraplan` command that runs the planner subagent without auto-executing, persists a structured plan artifact in session-owned state, and exposes the latest stored plan via `/ultraplan show`.
-
-### Changed
-
-- Refactored interactive mode components to use a new `BorderedBox` for a cleaner, transparent UI with rounded borders in tool executions and user messages.
 
 ## [0.57.6] - 2026-03-26
 
