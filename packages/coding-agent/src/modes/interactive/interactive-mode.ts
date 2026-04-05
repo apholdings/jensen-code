@@ -114,6 +114,7 @@ import { OAuthSelectorComponent } from "./components/oauth-selector.js";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.js";
 import { SessionSelectorComponent } from "./components/session-selector.js";
 import { SettingsSelectorComponent } from "./components/settings-selector.js";
+import { buildSidebarTaskData, buildSidebarTodoData, SidebarTodoPanel } from "./components/sidebar-todo-panel.js";
 import { SkillInvocationMessageComponent } from "./components/skill-invocation-message.js";
 import { ToolExecutionComponent } from "./components/tool-execution.js";
 import { TopBar } from "./components/top-bar.js";
@@ -182,6 +183,8 @@ export class InteractiveMode {
 	private pendingMessagesContainer: Container;
 	private statusContainer: Container;
 	private workingContextPanel: WorkingContextPanel;
+	private sidebarTodoPanel: SidebarTodoPanel;
+	private sidebarTaskPanel: SidebarTodoPanel;
 	private defaultEditor: CustomEditor;
 	private editor: EditorComponent;
 	private autocompleteProvider: CombinedAutocompleteProvider | undefined;
@@ -324,6 +327,8 @@ export class InteractiveMode {
 		this.pendingMessagesContainer = new Container();
 		this.statusContainer = new Container();
 		this.workingContextPanel = new WorkingContextPanel();
+		this.sidebarTodoPanel = new SidebarTodoPanel({ title: "Todos" });
+		this.sidebarTaskPanel = new SidebarTodoPanel({ title: "Tasks" });
 		this.widgetContainerAbove = new Container();
 		this.widgetContainerBelow = new Container();
 		this.keybindings = KeybindingsManager.create();
@@ -593,6 +598,26 @@ export class InteractiveMode {
 
 	private updateWorkingContextPanel(): void {
 		this.workingContextPanel.update(this.session.getWorkingContext());
+		this.updateSidebarTodoPanel();
+		this.updateSidebarTaskPanel();
+	}
+
+	private updateSidebarTodoPanel(): void {
+		const data = buildSidebarTodoData(this.session.getTodos());
+		if (!data) {
+			this.sidebarTodoPanel.clear();
+			return;
+		}
+		this.sidebarTodoPanel.update(data);
+	}
+
+	private updateSidebarTaskPanel(): void {
+		const data = buildSidebarTaskData(this.session.getTasks());
+		if (!data) {
+			this.sidebarTaskPanel.clear();
+			return;
+		}
+		this.sidebarTaskPanel.update(data);
 	}
 
 	private handleBriefCommand(text: string): void {
@@ -1295,9 +1320,9 @@ export class InteractiveMode {
 
 				addIfMissing(this.ui, this.chatContainer);
 				addIfMissing(this.ui, this.pendingMessagesContainer);
-				addIfMissing(this.ui, this.statusContainer);
 				this.updateWorkingContextPanel();
-				addIfMissing(this.ui, this.workingContextPanel);
+				mountOperatorStack(this.ui, this.workingContextPanel, this.sidebarTodoPanel, this.sidebarTaskPanel);
+				addIfMissing(this.ui, this.statusContainer);
 				this.renderWidgets(); // Initialize with default spacer
 
 				// The prompt area consists of an optional widget strip, the editor, and a bottom widget strip.
@@ -3264,6 +3289,7 @@ export class InteractiveMode {
 	}
 
 	private subscribeToAgent(): void {
+		this.unsubscribe?.();
 		this.unsubscribe = this.session.subscribe(async (event) => {
 			await this.handleEvent(event);
 		});
@@ -3285,6 +3311,7 @@ export class InteractiveMode {
 		switch (event.type) {
 			case "todo_update":
 			case "memory_update":
+			case "task_update":
 				this.updateWorkingContextPanel();
 				this.ui.requestRender();
 				break;
@@ -3639,6 +3666,13 @@ export class InteractiveMode {
 				this.ui.requestRender();
 				break;
 			}
+
+			case "notification":
+				// operator_discipline_advisory: shown as informational status
+				if (event.kind === "operator_discipline_advisory") {
+					this.showStatus(event.message);
+				}
+				break;
 		}
 	}
 
@@ -5445,6 +5479,13 @@ export class InteractiveMode {
 		info += `${theme.fg("dim", "  Scope:")} ${workingContext.todo.scope}\n`;
 		info += `${theme.fg("dim", "  Provenance:")} persisted in session entries\n`;
 
+		// Tasks section
+		info += `${theme.fg("dim", "Tasks:")} ${workingContext.tasks.completed}/${workingContext.tasks.total} completed, ${workingContext.tasks.inProgress} in progress\n`;
+		if (workingContext.tasks.inProgressTask) {
+			info += `${theme.fg("dim", "  Active:")} ${workingContext.tasks.inProgressTask.subject}\n`;
+		}
+		info += `${theme.fg("dim", "  Provenance:")} persisted in session entries\n`;
+
 		// Delegated work section
 		info += `${theme.fg("dim", "Delegated:")} ${workingContext.delegatedWork.activeCount} active, ${workingContext.delegatedWork.completedCount} done, ${workingContext.delegatedWork.failedCount} failed\n`;
 		info += `${theme.fg("dim", "  Scope:")} ${workingContext.delegatedWork.scope}\n`;
@@ -5914,4 +5955,20 @@ export class InteractiveMode {
 			this.isInitialized = false;
 		}
 	}
+}
+
+/**
+ * Mount the operator stack panels (Working Context → Todos → Tasks) onto a container.
+ * Idempotent: panels already present in the container are not re-added.
+ * Exported so tests can use the same assembly path as InteractiveMode.init().
+ */
+export function mountOperatorStack(
+	container: Container | TUI,
+	workingContextPanel: WorkingContextPanel,
+	sidebarTodoPanel: SidebarTodoPanel,
+	sidebarTaskPanel: SidebarTodoPanel,
+): void {
+	if (!container.children.includes(workingContextPanel)) container.addChild(workingContextPanel);
+	if (!container.children.includes(sidebarTodoPanel)) container.addChild(sidebarTodoPanel);
+	if (!container.children.includes(sidebarTaskPanel)) container.addChild(sidebarTaskPanel);
 }

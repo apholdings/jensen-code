@@ -1,5 +1,13 @@
 import * as os from "node:os";
-import { type Api, calculateCost, getModel, getProviders, type KnownProvider, type Model } from "@apholdings/jensen-ai";
+import {
+	type Api,
+	calculateCost,
+	getModel,
+	getProviders,
+	type KnownProvider,
+	type Model,
+	type ToolResultMessage,
+} from "@apholdings/jensen-ai";
 import { type Component, truncateToWidth, visibleWidth } from "@apholdings/jensen-tui";
 import type { AgentSession } from "../../../core/agent-session.js";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.js";
@@ -47,6 +55,23 @@ function findCurrentTurnStartIndex(messages: AgentSession["state"]["messages"]):
 	}
 
 	return null;
+}
+
+function sumDelegatedCosts(messages: AgentSession["state"]["messages"]): number {
+	let total = 0;
+	for (const message of messages) {
+		if (message.role !== "toolResult") continue;
+		const toolResult = message as ToolResultMessage;
+		if (toolResult.toolName !== "subagent") continue;
+		const details = toolResult.details as { results?: Array<{ usage?: { cost?: number } }> } | undefined;
+		if (!details || !Array.isArray(details.results)) continue;
+		for (const result of details.results) {
+			if (typeof result?.usage?.cost === "number") {
+				total += result.usage.cost;
+			}
+		}
+	}
+	return total;
 }
 
 /**
@@ -165,7 +190,13 @@ export class FooterComponent implements Component {
 	}
 
 	private getSessionCostSummary(): CostSummary {
-		return summarizeAssistantCosts(this.session.state.messages, this.session.state.model);
+		const summary = summarizeAssistantCosts(this.session.state.messages, this.session.state.model);
+		const delegated = sumDelegatedCosts(this.session.state.messages);
+		return {
+			total: summary.total + delegated,
+			hasUsage: summary.hasUsage || delegated > 0,
+			hasUnknown: summary.hasUnknown,
+		};
 	}
 
 	private getCurrentTurnCostSummary(): CostSummary | null {
@@ -174,7 +205,14 @@ export class FooterComponent implements Component {
 			return null;
 		}
 
-		return summarizeAssistantCosts(this.session.state.messages.slice(turnStartIndex), this.session.state.model);
+		const slice = this.session.state.messages.slice(turnStartIndex);
+		const summary = summarizeAssistantCosts(slice, this.session.state.model);
+		const delegated = sumDelegatedCosts(slice);
+		return {
+			total: summary.total + delegated,
+			hasUsage: summary.hasUsage || delegated > 0,
+			hasUnknown: summary.hasUnknown,
+		};
 	}
 
 	private formatCostSummary(summary: CostSummary): string {

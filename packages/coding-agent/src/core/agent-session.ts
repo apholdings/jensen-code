@@ -110,6 +110,13 @@ import { buildSystemPrompt } from "./system-prompt.js";
 import type { BashOperations } from "./tools/bash.js";
 import { createAllTools } from "./tools/index.js";
 import { createMemoryWriteTool } from "./tools/memory-write.js";
+import {
+	createTaskCreateTool,
+	createTaskGetTool,
+	createTaskListTool,
+	createTaskUpdateTool,
+	type Task,
+} from "./tools/task-tools.js";
 import { createTodoWriteTool, type TodoItem } from "./tools/todo-write.js";
 import {
 	buildUltraplanPlannerTask,
@@ -166,7 +173,9 @@ export type AgentSessionEvent =
 	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
 	| { type: "auto_fallback"; model: Model<any>; fallbackModel: Model<any>; reason: string }
 	| { type: "todo_update"; todos: Array<{ content: string; activeForm: string; status: string }> }
-	| { type: "memory_update"; items: MemoryItem[] };
+	| { type: "memory_update"; items: MemoryItem[] }
+	| { type: "task_update"; tasks: Task[] }
+	| { type: "notification"; kind: string; message: string };
 
 /** Listener function for agent session events */
 export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
@@ -341,6 +350,7 @@ export class AgentSession {
 	private _todos: TodoItem[] = [];
 	private _memoryItems: MemoryItem[] = [];
 	private _delegatedTasks: DelegatedTask[] = [];
+	private _tasks: Task[] = [];
 
 	// Extension system
 	private _extensionRunner: ExtensionRunner | undefined = undefined;
@@ -394,6 +404,7 @@ export class AgentSession {
 		const restoredContext = this.sessionManager.buildSessionContext();
 		this._todos = restoredContext.todos as TodoItem[];
 		this._memoryItems = restoredContext.memoryItems;
+		this._tasks = this.sessionManager.getLatestSessionTasks();
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
@@ -734,6 +745,20 @@ export class AgentSession {
 			for (const task of tasks) {
 				this._delegatedTasks = mergeDelegatedTask(this._delegatedTasks, task);
 			}
+
+			// Operator state discipline advisory: warn if delegating without visible task/todo state
+			if (event.toolName === "subagent") {
+				const hasVisibleState = this._tasks.length > 0 || this._todos.length > 0;
+				if (!hasVisibleState) {
+					this._emit({
+						type: "notification",
+						kind: "operator_discipline_advisory",
+						message:
+							"Delegating without visible task or todo state. Consider creating tracking entries before delegating.",
+					});
+				}
+			}
+
 			return;
 		}
 
@@ -964,6 +989,22 @@ export class AgentSession {
 	}
 
 	/**
+	 * Get the current task list.
+	 */
+	getTasks(): ReadonlyArray<Task> {
+		return this._tasks;
+	}
+
+	/**
+	 * Internal: Set tasks, persist, and emit update event.
+	 */
+	private _setTasks(tasks: Task[]): void {
+		this._tasks = tasks;
+		this.sessionManager.appendSessionTasks(tasks);
+		this._emit({ type: "task_update", tasks: this._tasks });
+	}
+
+	/**
 	 * Get memory history as a timeline of snapshots.
 	 * Delegates to SessionManager.getMemoryHistory() which walks the current branch.
 	 *
@@ -1054,6 +1095,7 @@ export class AgentSession {
 		return buildWorkingContext({
 			memoryItems: this.getMemoryItems(),
 			todos: this.getTodos(),
+			tasks: this.getTasks(),
 			delegatedWorkSummary: this.getDelegatedWorkSummary(),
 		});
 	}
@@ -1979,6 +2021,7 @@ export class AgentSession {
 		this._todos = [];
 		this._memoryItems = [];
 		this._delegatedTasks = [];
+		this._tasks = [];
 
 		this.sessionManager.appendThinkingLevelChange(this.thinkingLevel);
 		this._emit({ type: "todo_update", todos: this._todos });
@@ -2907,6 +2950,28 @@ export class AgentSession {
 		});
 		this._baseToolRegistry.set("memory_write", memoryWriteTool as unknown as AgentTool);
 
+		// Create task tools with session callbacks
+		const taskCreateTool = createTaskCreateTool(
+			() => this._tasks,
+			(tasks) => this._setTasks(tasks),
+		);
+		const taskListTool = createTaskListTool(
+			() => this._tasks,
+			(tasks) => this._setTasks(tasks),
+		);
+		const taskGetTool = createTaskGetTool(
+			() => this._tasks,
+			(tasks) => this._setTasks(tasks),
+		);
+		const taskUpdateTool = createTaskUpdateTool(
+			() => this._tasks,
+			(tasks) => this._setTasks(tasks),
+		);
+		this._baseToolRegistry.set("task_create", taskCreateTool as unknown as AgentTool);
+		this._baseToolRegistry.set("task_list", taskListTool as unknown as AgentTool);
+		this._baseToolRegistry.set("task_get", taskGetTool as unknown as AgentTool);
+		this._baseToolRegistry.set("task_update", taskUpdateTool as unknown as AgentTool);
+
 		const extensionsResult = this._resourceLoader.getExtensions();
 		if (options.flagValues) {
 			for (const [name, value] of options.flagValues) {
@@ -3303,8 +3368,10 @@ export class AgentSession {
 		this._todos = sessionContext.todos as TodoItem[];
 		this._memoryItems = sessionContext.memoryItems;
 		this._delegatedTasks = [];
+		this._tasks = this.sessionManager.getLatestSessionTasks();
 		this._emit({ type: "todo_update", todos: this._todos });
 		this._emit({ type: "memory_update", items: this._memoryItems });
+		this._emit({ type: "task_update", tasks: this._tasks });
 
 		// Emit session_switch event to extensions
 		if (this._extensionRunner) {

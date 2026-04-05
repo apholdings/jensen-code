@@ -2,7 +2,7 @@ import { Agent } from "@apholdings/jensen-agent-core";
 import { describe, expect, it } from "vitest";
 import { AgentSession } from "./agent-session.js";
 import { AuthStorage } from "./auth-storage.js";
-import { SESSION_MEMORY_CUSTOM_TYPE, SESSION_TODOS_CUSTOM_TYPE } from "./memory.js";
+import { SESSION_MEMORY_CUSTOM_TYPE, SESSION_TASKS_CUSTOM_TYPE, SESSION_TODOS_CUSTOM_TYPE } from "./memory.js";
 import { ModelRegistry } from "./model-registry.js";
 import { DefaultResourceLoader } from "./resource-loader.js";
 import { SessionManager } from "./session-manager.js";
@@ -53,6 +53,7 @@ describe("AgentSession.getWorkingContext()", () => {
 			buildWorkingContext({
 				memoryItems: session.getMemoryItems(),
 				todos: session.getTodos(),
+				tasks: session.getTasks(),
 				delegatedWorkSummary: session.getDelegatedWorkSummary(),
 			}),
 		);
@@ -163,6 +164,7 @@ describe("AgentSession.getWorkingContext()", () => {
 		const directComposition = buildWorkingContext({
 			memoryItems: session.getMemoryItems(),
 			todos: session.getTodos(),
+			tasks: session.getTasks(),
 			delegatedWorkSummary: session.getDelegatedWorkSummary(),
 		});
 
@@ -179,5 +181,27 @@ describe("AgentSession.getWorkingContext()", () => {
 		expect(consolidatedPath.todo.scope).toBe("current_branch_session_state");
 		expect(consolidatedPath.delegatedWork.isPersisted).toBe(false);
 		expect(consolidatedPath.delegatedWork.scope).toBe("current_process_runtime_state");
+	});
+
+	it("resets tasks to empty array when newSession() is called", async () => {
+		const sessionManager = SessionManager.inMemory("/tmp/project");
+		// Seed tasks via SessionManager (simulates task_create -> persisted)
+		sessionManager.appendCustomEntry(SESSION_TASKS_CUSTOM_TYPE, [
+			{ id: "task_clear_1", subject: "Task before new session", description: "desc", status: "in_progress" },
+			{ id: "task_clear_2", subject: "Completed task", description: "desc2", status: "completed" },
+		]);
+
+		// Create session — tasks should be loaded from SessionManager
+		const session = createSession(sessionManager);
+		expect(session.getTasks()).toHaveLength(2);
+		expect(session.getWorkingContext().tasks.total).toBe(2);
+
+		// newSession() resets all state
+		await session.newSession();
+		expect(session.getTasks()).toEqual([]);
+		expect(session.getWorkingContext().tasks.total).toBe(0);
+		expect(session.getWorkingContext().tasks.pending).toBe(0);
+		expect(session.getWorkingContext().tasks.inProgress).toBe(0);
+		expect(session.getWorkingContext().tasks.completed).toBe(0);
 	});
 });

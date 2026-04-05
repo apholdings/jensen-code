@@ -307,11 +307,12 @@ Best practices:
 
 Usage: Create and track a list of tasks to complete. This provides visible progress tracking during execution.
 
-When to use:
-- Multi-step tasks with distinct phases (e.g., "implement feature", "write tests", "update docs")
-- Complex workflows where tracking completion state helps the model stay organized
-- When the user asks for multiple changes across different files or areas
-- Long-running tasks that benefit from visible progress indicators
+When to use proactively:
+- The user provides a list of things to do (treat each as a todo item)
+- Work spans multiple files or distinct phases
+- Starting complex work without a clear plan (create todos as your plan)
+- After completing a task, create/update todos for next steps
+- During active work, at least one todo should be in_progress
 
 Parameters:
 - todos: Array of task objects with:
@@ -320,19 +321,19 @@ Parameters:
   - status: One of "pending", "in_progress", or "completed"
 
 Semantics:
-- FULL LIST REPLACEMENT: Each call completely replaces the previous list
-- Start tasks as "pending", update to "in_progress" when working on them, "completed" when done
-- Call todo_write with the full updated list each time status changes
+- FULL LIST REPLACEMENT: Each call completely replaces the previous list — include ALL current todos in every call
+- Mark tasks in_progress when you start working on them, completed when done
+- Mark tasks complete IMMEDIATELY after finishing (do not leave them in_progress)
+- Exactly ONE task should be in_progress at any time during active work
 - An empty array clears all todos
 
 When NOT to use:
-- Single-step tasks (just do it directly)
+- Single trivial operations (just do them directly)
 - Quick file reads or lookups
-- Simple one-off operations
-- Tasks that are better tracked mentally
+- Tasks better tracked mentally
 
 Examples:
-- Start a workflow: todos=[{content: "Read existing code", activeForm: "Reading existing code", status: "pending"}, {content: "Implement feature", activeForm: "Implementing feature", status: "pending"}]
+- Start workflow: todos=[{content: "Read existing code", activeForm: "Reading existing code", status: "pending"}, {content: "Implement feature", activeForm: "Implementing feature", status: "pending"}]
 - Begin work: update status of first task to "in_progress"
 - Finish and move on: update first to "completed", second to "in_progress"
 - Clear list: todos=[] (when all tasks are done)`,
@@ -367,6 +368,145 @@ When NOT to use:
 - Large notes or raw transcripts
 - Facts that are already obvious from current prompt context
 - Speculative information that may go stale quickly`,
+
+	/**
+	 * Task create tool - structured multi-step work tracking
+	 */
+	task_create: `Create a structured task for multi-step work tracking.
+
+Usage: Create a new explicit work item that can be inspected, updated, and tracked across the session.
+
+When to use:
+- The work is multi-step and spans multiple tool calls or turns
+- The work has a clear deliverable that should be tracked explicitly
+- The work is complex enough that it benefits from having a separate subject and description
+- You want to give the model explicit awareness of a work item it is currently doing
+- Use task_update to mark it in_progress when you start working on it
+
+When to use vs task_list:
+- Always call task_list FIRST to check for existing tasks and avoid duplicates
+- Only create a new task if no existing task covers the work
+
+Parameters:
+- subject: Brief title/subject of the task (required)
+- description: Detailed description of what the task involves
+- activeForm: Strongly recommended — active-form phrasing shown when task is in_progress (e.g., "Implementing feature X")
+- metadata: Optional free-form metadata object
+
+Status transitions:
+- After creating, use task_update to mark the task as in_progress before starting work
+- When the deliverable is complete, use task_update to mark it as completed
+- Keep status in_sync with actual work state
+
+Meaningful tasks only:
+- Do NOT create a task for every trivial step; reserve tasks for meaningful multi-step work
+- A task should represent a coherent unit of work, not a single command
+- Quick lookups, file reads, or exploratory work do not need tasks
+
+Anti-patterns:
+- Do NOT create a task and then never update its status
+- Do NOT confuse tasks with todo_write items — tasks have explicit id/subject/description and are designed for model-visible work tracking
+
+Examples:
+- Create a task before starting multi-file refactoring
+- Create a task when the user assigns a complex feature to implement
+- Create a task when you need to track a complex investigation across multiple steps`,
+
+	/**
+	 * Task list tool - list all structured tasks
+	 */
+	task_list: `List all structured tasks with their current status.
+
+Usage: Get a summary view of all tasks grouped by status (pending, in_progress, completed).
+
+When to use:
+- Before creating a new task: ALWAYS check here first to avoid duplicates
+- You want to check the current state of all tracked work
+- You are about to start new work and want to know what is already in progress
+- You need to assess what remains before wrapping up
+
+When to use vs task_get:
+- Use task_list for a summary view or when you don't have a specific task ID
+- Use task_get when you have a task ID and need full details
+
+Parameters: None
+
+Examples:
+- List tasks before creating a new one to check for overlap
+- List tasks at the start of a session to assess current state
+- List tasks before updating status to see the full picture`,
+
+	/**
+	 * Task get tool - retrieve a specific task by ID
+	 */
+	task_get: `Retrieve full details of a specific task by its ID.
+
+Usage: Inspect a single task's subject, description, status, activeForm, and metadata.
+
+When to use:
+- You have a task ID and need to see the full task details
+- You need the current status before updating
+- You want to verify task state after resuming a session
+- You are about to update a task and want to confirm the current values
+
+Parameters:
+- taskId: The unique ID of the task (required)
+
+When NOT to use:
+- You don't know the task ID — use task_list first
+- You want to update multiple tasks — use task_update directly with known IDs
+- You just want a summary — use task_list instead
+
+Examples:
+- Get task details before updating status
+- Verify a task exists after session resume
+- Read description to understand what a task involves before working on it
+
+Anti-patterns:
+- Do NOT use task_get to list all tasks — use task_list instead`,
+
+	/**
+	 * Task update tool - update an existing task's fields
+	 */
+	task_update: `Update one or more fields of an existing task.
+
+Usage: Modify task status, subject, description, activeForm, or metadata.
+
+When to use:
+- Mark a task as in_progress when you start working on it
+- Mark a task as completed when you finish it
+- Update the subject or description if requirements change
+- Change the activeForm to reflect current work phrasing
+- Update metadata to record progress or decisions
+
+Status transition rules:
+- pending → in_progress: Mark when you begin working on a task
+- in_progress → completed: Mark immediately when the deliverable is done
+- Exactly ONE task should be in_progress at any time
+- Do not leave tasks in_progress after finishing — mark them completed immediately
+
+When NOT to use:
+- You don't know the task ID — use task_list first
+- You want to create a new task — use task_create instead
+- You want to see task details — use task_get instead
+
+Parameters:
+- taskId: The unique ID of the task to update (required)
+- subject: New subject/title (optional)
+- description: New description (optional)
+- status: New status — "pending", "in_progress", or "completed" (optional)
+- activeForm: New active-form phrasing for in_progress display (optional)
+- metadata: Replacement metadata object (optional)
+
+Anti-patterns:
+- Do NOT update a task you did not create or verify exists
+- Do NOT leave a task in_progress when you finish — update to completed immediately
+- Do NOT use task_update to create tasks — use task_create instead
+
+Examples:
+- Update task status to in_progress when starting work
+- Update task status to completed when done
+- Update activeForm to show "Refactoring authentication module" while in_progress`,
 };
 
 /**
@@ -393,6 +533,10 @@ const FALLBACK_DESCRIPTIONS: Record<string, string> = {
 	ls: "List directory contents",
 	todo_write: "Update the session's structured task/todo list for multi-step workflows",
 	memory_write: "Record or clear structured session memory that survives compaction",
+	task_create: "Create a structured task for multi-step work tracking",
+	task_list: "List all structured tasks with their current status",
+	task_get: "Retrieve full details of a specific task by its ID",
+	task_update: "Update an existing task's fields (status, subject, description, etc.)",
 };
 
 /**

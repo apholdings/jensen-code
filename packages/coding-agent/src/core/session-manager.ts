@@ -21,9 +21,12 @@ import {
 	type MemoryHistorySnapshot,
 	type MemoryItem,
 	parseMemoryItems,
+	parseTasks,
 	parseTodoSnapshot,
 	SESSION_MEMORY_CUSTOM_TYPE,
+	SESSION_TASKS_CUSTOM_TYPE,
 	SESSION_TODOS_CUSTOM_TYPE,
+	type Task,
 	type TodoSnapshotItem,
 } from "./memory.js";
 import {
@@ -931,6 +934,10 @@ export class SessionManager {
 		return this.appendCustomEntry(SESSION_TODOS_CUSTOM_TYPE, todos);
 	}
 
+	appendSessionTasks(tasks: Task[]): string {
+		return this.appendCustomEntry(SESSION_TASKS_CUSTOM_TYPE, tasks);
+	}
+
 	getLatestSessionMemory(): MemoryItem[] {
 		const entries = this.getBranch();
 		for (let i = entries.length - 1; i >= 0; i--) {
@@ -1021,6 +1028,21 @@ export class SessionManager {
 			const entry = entries[i];
 			if (entry.type === "custom" && entry.customType === SESSION_TODOS_CUSTOM_TYPE) {
 				return parseTodoSnapshot(entry.data);
+			}
+		}
+		return [];
+	}
+
+	/**
+	 * Get the latest task snapshot from the current branch.
+	 * Returns an empty array if no tasks have been persisted.
+	 */
+	getLatestSessionTasks(): Task[] {
+		const entries = this.getBranch();
+		for (let i = entries.length - 1; i >= 0; i--) {
+			const entry = entries[i];
+			if (entry.type === "custom" && entry.customType === SESSION_TASKS_CUSTOM_TYPE) {
+				return parseTasks(entry.data);
 			}
 		}
 		return [];

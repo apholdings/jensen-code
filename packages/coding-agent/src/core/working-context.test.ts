@@ -261,6 +261,7 @@ describe("buildWorkingContext (full integration)", () => {
 		const context = buildWorkingContext({
 			memoryItems: [],
 			todos: [],
+			tasks: [],
 			delegatedWorkSummary: makeDelegatedWorkSummary([]),
 		});
 
@@ -275,6 +276,16 @@ describe("buildWorkingContext (full integration)", () => {
 			todo: {
 				total: 0,
 				completed: 0,
+				inProgress: undefined,
+				isPersisted: true,
+				scope: "current_branch_session_state",
+			},
+			tasks: {
+				total: 0,
+				pending: 0,
+				inProgress: 0,
+				completed: 0,
+				inProgressTask: undefined,
 				isPersisted: true,
 				scope: "current_branch_session_state",
 			},
@@ -297,6 +308,7 @@ describe("buildWorkingContext (full integration)", () => {
 		const context = buildWorkingContext({
 			memoryItems,
 			todos: [],
+			tasks: [],
 			delegatedWorkSummary: makeDelegatedWorkSummary([]),
 		});
 
@@ -311,6 +323,16 @@ describe("buildWorkingContext (full integration)", () => {
 			todo: {
 				total: 0,
 				completed: 0,
+				inProgress: undefined,
+				isPersisted: true,
+				scope: "current_branch_session_state",
+			},
+			tasks: {
+				total: 0,
+				pending: 0,
+				inProgress: 0,
+				completed: 0,
+				inProgressTask: undefined,
 				isPersisted: true,
 				scope: "current_branch_session_state",
 			},
@@ -333,6 +355,7 @@ describe("buildWorkingContext (full integration)", () => {
 		const context = buildWorkingContext({
 			memoryItems: [],
 			todos,
+			tasks: [],
 			delegatedWorkSummary: makeDelegatedWorkSummary([]),
 		});
 
@@ -347,6 +370,16 @@ describe("buildWorkingContext (full integration)", () => {
 			todo: {
 				total: 1,
 				completed: 1,
+				inProgress: undefined,
+				isPersisted: true,
+				scope: "current_branch_session_state",
+			},
+			tasks: {
+				total: 0,
+				pending: 0,
+				inProgress: 0,
+				completed: 0,
+				inProgressTask: undefined,
 				isPersisted: true,
 				scope: "current_branch_session_state",
 			},
@@ -370,6 +403,7 @@ describe("buildWorkingContext (full integration)", () => {
 		const context = buildWorkingContext({
 			memoryItems: [],
 			todos: [],
+			tasks: [],
 			delegatedWorkSummary: summary,
 		});
 
@@ -384,6 +418,16 @@ describe("buildWorkingContext (full integration)", () => {
 			todo: {
 				total: 0,
 				completed: 0,
+				inProgress: undefined,
+				isPersisted: true,
+				scope: "current_branch_session_state",
+			},
+			tasks: {
+				total: 0,
+				pending: 0,
+				inProgress: 0,
+				completed: 0,
+				inProgressTask: undefined,
 				isPersisted: true,
 				scope: "current_branch_session_state",
 			},
@@ -409,6 +453,7 @@ describe("buildWorkingContext (full integration)", () => {
 		const context = buildWorkingContext({
 			memoryItems,
 			todos,
+			tasks: [],
 			delegatedWorkSummary: summary,
 		});
 
@@ -431,6 +476,7 @@ describe("buildWorkingContext (full integration)", () => {
 		const context = buildWorkingContext({
 			memoryItems: [makeMemoryItem("alpha")],
 			todos: [makeTodoItem("task1", "in_progress", "Current")],
+			tasks: [],
 			delegatedWorkSummary: makeDelegatedWorkSummary([makeDelegatedTask("worker1", "active")]),
 		});
 
@@ -446,6 +492,7 @@ describe("buildWorkingContext (full integration)", () => {
 		const context = buildWorkingContext({
 			memoryItems: [makeMemoryItem("alpha")],
 			todos: [makeTodoItem("task1", "pending")],
+			tasks: [],
 			delegatedWorkSummary: makeDelegatedWorkSummary([]),
 		});
 

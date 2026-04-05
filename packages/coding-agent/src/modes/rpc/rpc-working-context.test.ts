@@ -6,7 +6,7 @@ import { Agent, type AgentEvent } from "@apholdings/jensen-agent-core";
 import { describe, expect, it } from "vitest";
 import { AgentSession } from "../../core/agent-session.js";
 import { AuthStorage } from "../../core/auth-storage.js";
-import { SESSION_MEMORY_CUSTOM_TYPE, SESSION_TODOS_CUSTOM_TYPE } from "../../core/memory.js";
+import { SESSION_MEMORY_CUSTOM_TYPE, SESSION_TASKS_CUSTOM_TYPE, SESSION_TODOS_CUSTOM_TYPE } from "../../core/memory.js";
 import { ModelRegistry } from "../../core/model-registry.js";
 import { DefaultResourceLoader } from "../../core/resource-loader.js";
 import { SessionManager } from "../../core/session-manager.js";
@@ -158,6 +158,7 @@ describe("RPC working-context payload", () => {
 		const payload = buildWorkingContext({
 			memoryItems: [{ key: "branch", value: "feature/refactor", timestamp: "2026-04-02T10:00:00.000Z" }],
 			todos: [{ content: "Ship RPC surface", activeForm: "Shipping RPC surface", status: "in_progress" }],
+			tasks: [],
 			delegatedWorkSummary: {
 				active: [
 					{
@@ -194,6 +195,7 @@ describe("RPC working-context payload", () => {
 		const payload = buildWorkingContext({
 			memoryItems: [],
 			todos: [],
+			tasks: [],
 			delegatedWorkSummary: {
 				active: [],
 				completed: [],
@@ -255,6 +257,15 @@ describe("RPC working-context payload", () => {
 					isPersisted: true,
 					scope: "current_branch_session_state",
 				},
+				tasks: {
+					total: 0,
+					pending: 0,
+					inProgress: 0,
+					completed: 0,
+					inProgressTask: undefined,
+					isPersisted: true,
+					scope: "current_branch_session_state",
+				},
 				delegatedWork: {
 					activeCount: 1,
 					completedCount: 0,
@@ -279,10 +290,22 @@ describe("RPC working-context payload", () => {
 				memoryItems: [{ key: "session.source", value: "source state", timestamp: "2026-04-02T12:00:00.000Z" }],
 				todos: [{ content: "Source task", activeForm: "Working source task", status: "in_progress" }],
 			});
+			sourceSessionManager.appendCustomEntry(SESSION_TASKS_CUSTOM_TYPE, [
+				{ id: "src_task_1", subject: "Source session task", description: "source desc", status: "pending" },
+				{
+					id: "src_task_2",
+					subject: "Source in progress task",
+					description: "source desc 2",
+					status: "in_progress",
+				},
+			]);
 			const targetSessionManager = createPersistedSessionManager(cwd, sessionDir, {
 				memoryItems: [{ key: "session.target", value: "target state", timestamp: "2026-04-02T12:05:00.000Z" }],
 				todos: [{ content: "Target task", activeForm: "Working target task", status: "in_progress" }],
 			});
+			targetSessionManager.appendCustomEntry(SESSION_TASKS_CUSTOM_TYPE, [
+				{ id: "tgt_task_1", subject: "Target session task", description: "target desc", status: "pending" },
+			]);
 			const targetSessionFile = targetSessionManager.getSessionFile();
 			if (!targetSessionFile) {
 				throw new Error("Expected target persisted session file");
@@ -314,6 +337,15 @@ describe("RPC working-context payload", () => {
 						total: 1,
 						completed: 0,
 						inProgress: "Working source task",
+						isPersisted: true,
+						scope: "current_branch_session_state",
+					},
+					tasks: {
+						total: 2,
+						pending: 1,
+						inProgress: 1,
+						completed: 0,
+						inProgressTask: { id: "src_task_2", subject: "Source in progress task", activeForm: undefined },
 						isPersisted: true,
 						scope: "current_branch_session_state",
 					},
@@ -361,6 +393,15 @@ describe("RPC working-context payload", () => {
 						total: 1,
 						completed: 0,
 						inProgress: "Working target task",
+						isPersisted: true,
+						scope: "current_branch_session_state",
+					},
+					tasks: {
+						total: 1,
+						pending: 1,
+						inProgress: 0,
+						completed: 0,
+						inProgressTask: undefined,
 						isPersisted: true,
 						scope: "current_branch_session_state",
 					},

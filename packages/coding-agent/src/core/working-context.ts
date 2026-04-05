@@ -11,7 +11,7 @@
  */
 
 import type { DelegatedMode, DelegatedStatus, DelegatedWorkSummary } from "./delegated-work.js";
-import type { MemoryItem } from "./memory.js";
+import type { MemoryItem, Task } from "./memory.js";
 import { reviewMemoryItems } from "./memory-review.js";
 
 // ============================================================================
@@ -75,6 +75,23 @@ export interface WorkingContextDelegatedWorkSummary {
 }
 
 /**
+ * Task summary with explicit provenance marker.
+ * Tasks are persisted in session entries on the current branch.
+ */
+export interface WorkingContextTaskSummary {
+	total: number;
+	pending: number;
+	inProgress: number;
+	completed: number;
+	/** The task currently marked in_progress, if any */
+	inProgressTask?: { id: string; subject: string; activeForm?: string };
+	/** Explicit marker: tasks are persisted in session entries */
+	isPersisted: true;
+	/** Explicit scope: current branch session state */
+	scope: "current_branch_session_state";
+}
+
+/**
  * Aggregated working context surface.
  * This is always a current-state summary, not a history surface.
  */
@@ -83,6 +100,8 @@ export interface WorkingContext {
 	memory: WorkingContextMemorySummary;
 	/** Todo summary persisted in current-branch session entries. */
 	todo: WorkingContextTodoSummary;
+	/** Task summary persisted in current-branch session entries. */
+	tasks: WorkingContextTaskSummary;
 	/** Delegated work summary from live current-process runtime state. */
 	delegatedWork: WorkingContextDelegatedWorkSummary;
 }
@@ -167,18 +186,43 @@ export function buildWorkingContextDelegatedWorkSummary(
 }
 
 /**
+ * Build a task summary from task items.
+ */
+export function buildWorkingContextTaskSummary(tasks: readonly Task[]): WorkingContextTaskSummary {
+	const pending = tasks.filter((t) => t.status === "pending");
+	const inProgress = tasks.filter((t) => t.status === "in_progress");
+	const completed = tasks.filter((t) => t.status === "completed");
+	const inProgressTask = inProgress[0];
+
+	return {
+		total: tasks.length,
+		pending: pending.length,
+		inProgress: inProgress.length,
+		completed: completed.length,
+		inProgressTask:
+			inProgressTask !== undefined
+				? { id: inProgressTask.id, subject: inProgressTask.subject, activeForm: inProgressTask.activeForm }
+				: undefined,
+		isPersisted: true,
+		scope: "current_branch_session_state",
+	};
+}
+
+/**
  * Build the complete working context from session state.
  */
 export function buildWorkingContext(options: {
 	memoryItems: readonly MemoryItem[];
 	todos: ReadonlyArray<{ content: string; activeForm: string; status: string }>;
+	tasks: ReadonlyArray<Task>;
 	delegatedWorkSummary: DelegatedWorkSummary;
 }): WorkingContext {
-	const { memoryItems, todos, delegatedWorkSummary } = options;
+	const { memoryItems, todos, tasks, delegatedWorkSummary } = options;
 
 	return {
 		memory: buildWorkingContextMemorySummary(memoryItems),
 		todo: buildWorkingContextTodoSummary(todos),
+		tasks: buildWorkingContextTaskSummary(tasks),
 		delegatedWork: buildWorkingContextDelegatedWorkSummary(delegatedWorkSummary),
 	};
 }

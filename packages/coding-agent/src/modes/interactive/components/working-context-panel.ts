@@ -3,6 +3,7 @@ import type {
 	WorkingContext,
 	WorkingContextDelegatedWorkSummary,
 	WorkingContextMemorySummary,
+	WorkingContextTaskSummary,
 	WorkingContextTodoSummary,
 } from "../../../core/working-context.js";
 import { theme } from "../theme/theme.js";
@@ -25,6 +26,18 @@ interface PanelTodoSummary {
 	total: number;
 	completed: number;
 	inProgress?: string;
+}
+
+/**
+ * Panel-local task summary type.
+ * Omits isPersisted for panel rendering (backward compatible).
+ */
+interface PanelTaskSummary {
+	total: number;
+	pending: number;
+	inProgress: number;
+	completed: number;
+	inProgressTask?: { id: string; subject: string; activeForm?: string };
 }
 
 /**
@@ -59,12 +72,14 @@ export type WorkingContextData =
 	| {
 			memory?: PanelMemorySummary;
 			todo?: PanelTodoSummary;
+			tasks?: PanelTaskSummary;
 			delegatedWork?: PanelDelegatedWorkSummary;
 	  };
 
 /** Aliases for backwards compatibility */
 export type MemorySummary = WorkingContextMemorySummary;
 export type TodoSummary = WorkingContextTodoSummary;
+export type TaskSummary = WorkingContextTaskSummary;
 export type DelegatedWorkSummary = WorkingContextDelegatedWorkSummary;
 
 const DETAIL_THRESHOLD = 72;
@@ -96,15 +111,17 @@ export class WorkingContextPanel implements Component {
 
 		const memory = this.data.memory;
 		const todo = this.data.todo;
+		const tasks = this.data.tasks;
 		const delegatedWork = this.data.delegatedWork;
 		const isSharedContract = memory !== undefined && todo !== undefined && delegatedWork !== undefined;
 		const hasVisibleState =
 			(memory?.itemCount ?? 0) > 0 ||
 			(todo?.total ?? 0) > 0 ||
+			(tasks?.total ?? 0) > 0 ||
 			(delegatedWork?.activeCount ?? 0) > 0 ||
 			(delegatedWork?.completedCount ?? 0) > 0 ||
 			(delegatedWork?.failedCount ?? 0) > 0;
-		if ((!memory && !todo && !delegatedWork) || (isSharedContract && !hasVisibleState)) {
+		if ((!memory && !todo && !tasks && !delegatedWork) || (isSharedContract && !hasVisibleState)) {
 			return [];
 		}
 
@@ -119,6 +136,13 @@ export class WorkingContextPanel implements Component {
 		if (todo) {
 			summaryParts.push(theme.fg("muted", "Plan:"), `${todo.completed}/${todo.total} done`);
 		}
+		if (tasks) {
+			summaryParts.push(
+				theme.fg("muted", "Tasks:"),
+				`${tasks.completed}/${tasks.total}`,
+				`${tasks.inProgress} active`,
+			);
+		}
 		if (delegatedWork) {
 			summaryParts.push(
 				theme.fg("muted", "Delegated:"),
@@ -130,7 +154,7 @@ export class WorkingContextPanel implements Component {
 
 		const lines = [truncateToWidth(summaryParts.join(" "), width)];
 		if (width < DETAIL_THRESHOLD) {
-			return lines;
+			return ["", ...lines];
 		}
 
 		if (memory) {
@@ -140,7 +164,12 @@ export class WorkingContextPanel implements Component {
 
 		if (todo) {
 			const activeText = todo.inProgress ?? "(none)";
-			lines.push(truncateToWidth(`  ${theme.fg("muted", "Current task:")} ${activeText}`, width));
+			lines.push(truncateToWidth(`  ${theme.fg("muted", "Current todo:")} ${activeText}`, width));
+		}
+
+		if (tasks) {
+			const taskLabel = tasks.inProgressTask ? tasks.inProgressTask.subject : "(none)";
+			lines.push(truncateToWidth(`  ${theme.fg("muted", "Current task:")} ${taskLabel}`, width));
 		}
 
 		if (delegatedWork) {
@@ -156,7 +185,7 @@ export class WorkingContextPanel implements Component {
 			}
 		}
 
-		return lines;
+		return ["", ...lines];
 	}
 
 	invalidate(): void {

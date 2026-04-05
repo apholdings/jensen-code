@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Model } from "@apholdings/jensen-ai";
 import { describe, expect, it } from "vitest";
 import { AuthStorage } from "./auth-storage.js";
-import { SESSION_MEMORY_CUSTOM_TYPE, SESSION_TODOS_CUSTOM_TYPE } from "./memory.js";
+import { SESSION_MEMORY_CUSTOM_TYPE, SESSION_TASKS_CUSTOM_TYPE, SESSION_TODOS_CUSTOM_TYPE } from "./memory.js";
 import { ModelRegistry } from "./model-registry.js";
 import { DefaultResourceLoader } from "./resource-loader.js";
 import { createAgentSession } from "./sdk.js";
@@ -71,6 +71,14 @@ describe("createAgentSession startup resume boundary", () => {
 			persistedSession.appendCustomEntry(SESSION_TODOS_CUSTOM_TYPE, [
 				{ content: "Resume startup test", activeForm: "Restoring startup test", status: "in_progress" },
 			]);
+			persistedSession.appendCustomEntry(SESSION_TASKS_CUSTOM_TYPE, [
+				{
+					id: "task_resume_1",
+					subject: "Resume test task",
+					description: "verify startup resume",
+					status: "in_progress",
+				},
+			]);
 			persistedSession.appendMessage({
 				role: "assistant",
 				api: restoredModel.api,
@@ -118,6 +126,14 @@ describe("createAgentSession startup resume boundary", () => {
 			]);
 			expect(session.getTodos()).toEqual([
 				{ content: "Resume startup test", activeForm: "Restoring startup test", status: "in_progress" },
+			]);
+			expect(session.getTasks()).toEqual([
+				{
+					id: "task_resume_1",
+					subject: "Resume test task",
+					description: "verify startup resume",
+					status: "in_progress",
+				},
 			]);
 			expect(session.messages).toEqual(
 				expect.arrayContaining([
