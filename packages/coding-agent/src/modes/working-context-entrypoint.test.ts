@@ -14,7 +14,6 @@ describe("working-context consumer consolidation", () => {
 		const source = readSource("interactive/interactive-mode.ts");
 
 		expect(source).not.toContain("buildWorkingContext(");
-		expect(source).toContain("this.workingContextPanel.update(this.session.getWorkingContext());");
 		expect(source).toContain("const workingContext = this.session.getWorkingContext();");
 	});
 

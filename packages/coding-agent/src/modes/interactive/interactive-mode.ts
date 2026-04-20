@@ -121,7 +121,6 @@ import { TopBar } from "./components/top-bar.js";
 import { TreeSelectorComponent } from "./components/tree-selector.js";
 import { UserMessageComponent } from "./components/user-message.js";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.js";
-import { WorkingContextPanel } from "./components/working-context-panel.js";
 import {
 	getAvailableThemes,
 	getAvailableThemesWithPaths,
@@ -182,7 +181,6 @@ export class InteractiveMode {
 	private chatContainer: Container;
 	private pendingMessagesContainer: Container;
 	private statusContainer: Container;
-	private workingContextPanel: WorkingContextPanel;
 	private sidebarTodoPanel: SidebarTodoPanel;
 	private sidebarTaskPanel: SidebarTodoPanel;
 	private defaultEditor: CustomEditor;
@@ -326,7 +324,6 @@ export class InteractiveMode {
 		this.chatContainer = new Container();
 		this.pendingMessagesContainer = new Container();
 		this.statusContainer = new Container();
-		this.workingContextPanel = new WorkingContextPanel();
 		this.sidebarTodoPanel = new SidebarTodoPanel({ title: "Todos" });
 		this.sidebarTaskPanel = new SidebarTodoPanel({ title: "Tasks" });
 		this.widgetContainerAbove = new Container();
@@ -594,12 +591,6 @@ export class InteractiveMode {
 		if (diffMonths < 12) return `${diffMonths}mo ago`;
 		const diffYears = Math.floor(diffMonths / 12);
 		return `${diffYears}y ago`;
-	}
-
-	private updateWorkingContextPanel(): void {
-		this.workingContextPanel.update(this.session.getWorkingContext());
-		this.updateSidebarTodoPanel();
-		this.updateSidebarTaskPanel();
 	}
 
 	private updateSidebarTodoPanel(): void {
@@ -1239,7 +1230,8 @@ export class InteractiveMode {
 		this.isBashMode = false;
 
 		// Ensure clean widget state
-		this.updateWorkingContextPanel();
+		this.updateSidebarTodoPanel();
+		this.updateSidebarTaskPanel();
 		this.renderWidgets(false);
 		this.updatePromptChrome();
 
@@ -1320,8 +1312,9 @@ export class InteractiveMode {
 
 				addIfMissing(this.ui, this.chatContainer);
 				addIfMissing(this.ui, this.pendingMessagesContainer);
-				this.updateWorkingContextPanel();
-				mountOperatorStack(this.ui, this.workingContextPanel, this.sidebarTodoPanel, this.sidebarTaskPanel);
+				mountOperatorStack(this.ui, this.sidebarTodoPanel, this.sidebarTaskPanel);
+				this.updateSidebarTodoPanel();
+				this.updateSidebarTaskPanel();
 				addIfMissing(this.ui, this.statusContainer);
 				this.renderWidgets(); // Initialize with default spacer
 
@@ -3312,7 +3305,8 @@ export class InteractiveMode {
 			case "todo_update":
 			case "memory_update":
 			case "task_update":
-				this.updateWorkingContextPanel();
+				this.updateSidebarTodoPanel();
+				this.updateSidebarTaskPanel();
 				this.ui.requestRender();
 				break;
 			case "agent_start":
@@ -3476,7 +3470,8 @@ export class InteractiveMode {
 				break;
 
 			case "tool_execution_start": {
-				this.updateWorkingContextPanel();
+				this.updateSidebarTodoPanel();
+				this.updateSidebarTaskPanel();
 				if (!this.pendingTools.has(event.toolCallId)) {
 					const component = new ToolExecutionComponent(
 						event.toolName,
@@ -3513,7 +3508,8 @@ export class InteractiveMode {
 			}
 
 			case "tool_execution_end": {
-				this.updateWorkingContextPanel();
+				this.updateSidebarTodoPanel();
+				this.updateSidebarTaskPanel();
 				const component = this.pendingTools.get(event.toolCallId);
 				if (component) {
 					component.updateResult({ ...event.result, isError: event.isError });
@@ -5964,11 +5960,9 @@ export class InteractiveMode {
  */
 export function mountOperatorStack(
 	container: Container | TUI,
-	workingContextPanel: WorkingContextPanel,
 	sidebarTodoPanel: SidebarTodoPanel,
 	sidebarTaskPanel: SidebarTodoPanel,
 ): void {
-	if (!container.children.includes(workingContextPanel)) container.addChild(workingContextPanel);
 	if (!container.children.includes(sidebarTodoPanel)) container.addChild(sidebarTodoPanel);
 	if (!container.children.includes(sidebarTaskPanel)) container.addChild(sidebarTaskPanel);
 }

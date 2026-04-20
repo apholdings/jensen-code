@@ -72,7 +72,8 @@ describe("InteractiveMode notification event handling", () => {
 		it("handles notification event correctly without regression on other event types", async () => {
 			const showStatus = vi.fn();
 			const requestRender = vi.fn();
-			const updateWorkingContextPanel = vi.fn();
+			const updateSidebarTodoPanel = vi.fn();
+			const updateSidebarTaskPanel = vi.fn();
 			const footer = { invalidate: vi.fn() };
 
 			const mode = Object.assign(Object.create(InteractiveMode.prototype), {
@@ -80,11 +81,16 @@ describe("InteractiveMode notification event handling", () => {
 				sessionEpoch: 1,
 				showStatus,
 				ui: { requestRender },
-				updateWorkingContextPanel,
+				updateSidebarTodoPanel,
+				updateSidebarTaskPanel,
 				footer,
 				lastStatusText: undefined,
 				lastStatusSpacer: undefined,
 				chatContainer: { children: [] },
+				session: {
+					getTodos: vi.fn(() => []),
+					getTasks: vi.fn(() => []),
+				},
 			}) as NotificationHarness;
 
 			// Verify task_update still works (different event type)
@@ -95,7 +101,8 @@ describe("InteractiveMode notification event handling", () => {
 
 			await mode.handleEvent(taskUpdateEvent);
 
-			expect(updateWorkingContextPanel).toHaveBeenCalled();
+			expect(updateSidebarTodoPanel).toHaveBeenCalled();
+			expect(updateSidebarTaskPanel).toHaveBeenCalled();
 			expect(showStatus).not.toHaveBeenCalled();
 		});
 	});

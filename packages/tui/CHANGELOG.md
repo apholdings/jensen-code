@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## 1.0.5
+
+### Patch Changes
+
+- Removed orphaned `WorkingContextPanel` TUI component and its test file, completing the working-context panel removal cleanup. No breaking API changes.
+
 ## 1.0.4
 
 ## 1.0.3

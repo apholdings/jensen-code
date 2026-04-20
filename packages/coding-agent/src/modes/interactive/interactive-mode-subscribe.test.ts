@@ -5,7 +5,6 @@ import type { AgentSessionEvent, AgentSessionEventListener } from "../../core/ag
 import type { Task } from "../../core/memory.js";
 import type { WorkingContext } from "../../core/working-context.js";
 import { SidebarTodoPanel } from "./components/sidebar-todo-panel.js";
-import { WorkingContextPanel } from "./components/working-context-panel.js";
 import { InteractiveMode, mountOperatorStack } from "./interactive-mode.js";
 import { initTheme } from "./theme/theme.js";
 
@@ -112,7 +111,6 @@ interface SubscribeHarness {
 	};
 	session: SubscribableMockSession;
 	ui: Container & { requestRender: () => void };
-	workingContextPanel: WorkingContextPanel;
 	sidebarTodoPanel: SidebarTodoPanel;
 	sidebarTaskPanel: SidebarTodoPanel;
 }
@@ -122,16 +120,14 @@ function createSubscribeHarness(): SubscribeHarness {
 	const ui = new Container() as Container & { requestRender: () => void };
 	ui.requestRender = vi.fn();
 
-	const workingContextPanel = new WorkingContextPanel();
 	const sidebarTodoPanel = new SidebarTodoPanel({ title: "Todos" });
 	const sidebarTaskPanel = new SidebarTodoPanel({ title: "Tasks" });
 
-	mountOperatorStack(ui, workingContextPanel, sidebarTodoPanel, sidebarTaskPanel);
+	mountOperatorStack(ui, sidebarTodoPanel, sidebarTaskPanel);
 
 	const mode = Object.assign(Object.create(InteractiveMode.prototype), {
 		session,
 		ui,
-		workingContextPanel,
 		sidebarTodoPanel,
 		sidebarTaskPanel,
 		footer: { invalidate: vi.fn() },
@@ -140,7 +136,7 @@ function createSubscribeHarness(): SubscribeHarness {
 		unsubscribe: undefined,
 	}) as SubscribeHarness["mode"];
 
-	return { mode, session, ui, workingContextPanel, sidebarTodoPanel, sidebarTaskPanel };
+	return { mode, session, ui, sidebarTodoPanel, sidebarTaskPanel };
 }
 
 function renderStack(harness: SubscribeHarness, width = 100): string {

@@ -5,7 +5,6 @@ import type { AgentSessionEvent } from "../../core/agent-session.js";
 import type { Task } from "../../core/memory.js";
 import type { WorkingContext } from "../../core/working-context.js";
 import { SidebarTodoPanel } from "./components/sidebar-todo-panel.js";
-import { WorkingContextPanel } from "./components/working-context-panel.js";
 import { InteractiveMode, mountOperatorStack } from "./interactive-mode.js";
 import { initTheme } from "./theme/theme.js";
 
@@ -29,7 +28,6 @@ import { initTheme } from "./theme/theme.js";
 interface OperatorStackHarness {
 	session: StatefulMockSession;
 	ui: Container & { requestRender: () => void };
-	workingContextPanel: WorkingContextPanel;
 	sidebarTodoPanel: SidebarTodoPanel;
 	sidebarTaskPanel: SidebarTodoPanel;
 	footer: { invalidate: () => void };
@@ -109,17 +107,15 @@ function createHarness(): OperatorStackHarness {
 	const ui = new Container() as Container & { requestRender: () => void };
 	ui.requestRender = vi.fn();
 
-	const workingContextPanel = new WorkingContextPanel();
 	const sidebarTodoPanel = new SidebarTodoPanel({ title: "Todos" });
 	const sidebarTaskPanel = new SidebarTodoPanel({ title: "Tasks" });
 
 	// Use the same production assembly path as InteractiveMode.init()
-	mountOperatorStack(ui, workingContextPanel, sidebarTodoPanel, sidebarTaskPanel);
+	mountOperatorStack(ui, sidebarTodoPanel, sidebarTaskPanel);
 
 	const harness = Object.assign(Object.create(InteractiveMode.prototype), {
 		session,
 		ui,
-		workingContextPanel,
 		sidebarTodoPanel,
 		sidebarTaskPanel,
 		footer: { invalidate: vi.fn() },
@@ -212,12 +208,10 @@ describe("InteractiveMode operator stack (Working Context / Todos / Tasks)", () 
 		await harness.handleEvent({ type: "task_update", tasks: harness.session._tasks });
 
 		const stack = renderStack(harness);
-		const workingIdx = stack.indexOf("Working Context");
 		const todosIdx = stack.indexOf("Todos");
 		const tasksIdx = stack.indexOf("Tasks ");
 
-		expect(workingIdx).toBeGreaterThanOrEqual(0);
-		expect(todosIdx).toBeGreaterThan(workingIdx);
+		expect(todosIdx).toBeGreaterThanOrEqual(0);
 		expect(tasksIdx).toBeGreaterThan(todosIdx);
 	});
 
@@ -257,7 +251,6 @@ describe("InteractiveMode operator stack (Working Context / Todos / Tasks)", () 
 		}
 
 		expect(harness.ui.children.length).toBe(initialChildrenLength);
-		expect(harness.ui.children).toContain(harness.workingContextPanel);
 		expect(harness.ui.children).toContain(harness.sidebarTodoPanel);
 		expect(harness.ui.children).toContain(harness.sidebarTaskPanel);
 	});
@@ -276,37 +269,36 @@ describe("InteractiveMode operator stack (Working Context / Todos / Tasks)", () 
 		expect(harness.sidebarTodoPanel.render(100)).toEqual([]);
 		// Task panel still empty too; stack collapses cleanly
 		expect(harness.sidebarTaskPanel.render(100)).toEqual([]);
-		// Container still has all three panels mounted (no remounting)
-		expect(harness.ui.children).toHaveLength(3);
+		// Container still has both panels mounted (no remounting)
+		expect(harness.ui.children).toHaveLength(2);
 	});
 });
 
 describe("mountOperatorStack (production assembly path)", () => {
-	it("mounts panels in Working Context → Todos → Tasks order", () => {
+	it("mounts panels in Todos → Tasks order", () => {
 		const container = new Container();
-		const workingContextPanel = new WorkingContextPanel();
+
 		const sidebarTodoPanel = new SidebarTodoPanel({ title: "Todos" });
 		const sidebarTaskPanel = new SidebarTodoPanel({ title: "Tasks" });
 
-		mountOperatorStack(container, workingContextPanel, sidebarTodoPanel, sidebarTaskPanel);
+		mountOperatorStack(container, sidebarTodoPanel, sidebarTaskPanel);
 
-		expect(container.children).toHaveLength(3);
-		expect(container.children[0]).toBe(workingContextPanel);
-		expect(container.children[1]).toBe(sidebarTodoPanel);
-		expect(container.children[2]).toBe(sidebarTaskPanel);
+		expect(container.children).toHaveLength(2);
+		expect(container.children[0]).toBe(sidebarTodoPanel);
+		expect(container.children[1]).toBe(sidebarTaskPanel);
 	});
 
 	it("is idempotent: calling multiple times does not duplicate panels", () => {
 		const container = new Container();
-		const workingContextPanel = new WorkingContextPanel();
+
 		const sidebarTodoPanel = new SidebarTodoPanel({ title: "Todos" });
 		const sidebarTaskPanel = new SidebarTodoPanel({ title: "Tasks" });
 
-		mountOperatorStack(container, workingContextPanel, sidebarTodoPanel, sidebarTaskPanel);
-		mountOperatorStack(container, workingContextPanel, sidebarTodoPanel, sidebarTaskPanel);
-		mountOperatorStack(container, workingContextPanel, sidebarTodoPanel, sidebarTaskPanel);
+		mountOperatorStack(container, sidebarTodoPanel, sidebarTaskPanel);
+		mountOperatorStack(container, sidebarTodoPanel, sidebarTaskPanel);
+		mountOperatorStack(container, sidebarTodoPanel, sidebarTaskPanel);
 
-		expect(container.children).toHaveLength(3);
+		expect(container.children).toHaveLength(2);
 	});
 
 	it("is the same path InteractiveMode.init() calls (harness uses the exported helper)", () => {
@@ -314,8 +306,7 @@ describe("mountOperatorStack (production assembly path)", () => {
 		// confirms that the harness and production code share the same assembly function.
 		const harness = createHarness();
 
-		expect(harness.ui.children[0]).toBe(harness.workingContextPanel);
-		expect(harness.ui.children[1]).toBe(harness.sidebarTodoPanel);
-		expect(harness.ui.children[2]).toBe(harness.sidebarTaskPanel);
+		expect(harness.ui.children[0]).toBe(harness.sidebarTodoPanel);
+		expect(harness.ui.children[1]).toBe(harness.sidebarTaskPanel);
 	});
 });
