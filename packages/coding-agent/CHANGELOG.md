@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed PowerShell tool not producing output on Windows when spawned directly (vs via bash). Removed the `-NonInteractive` flag which prevented proper stdout pipe initialization and output formatting.
+
 ## 1.0.7
 
 ### Patch Changes

@@ -134,7 +134,7 @@ export function getPowerShellConfig(): PowerShellConfig {
 		return cachedPowerShellConfig;
 	}
 
-	const args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"];
+	const args = ["-NoLogo", "-NoProfile", "-Command"];
 
 	if (process.platform === "win32") {
 		const pwsh = findExecutableOnPath("pwsh.exe");

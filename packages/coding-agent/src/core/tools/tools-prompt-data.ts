@@ -91,7 +91,7 @@ Parameters:
 - timeout: Optional timeout in seconds (default varies by configuration)
 
 Behavior:
-- Commands run in a PowerShell host with non-interactive execution flags
+- Commands run in a PowerShell host with standard execution flags
 - The working directory persists between commands
 - Shell state does NOT persist (environment is re-initialized each call)
 - On Windows, prefers PowerShell 7 (pwsh) and falls back to Windows PowerShell when needed

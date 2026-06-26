@@ -147,7 +147,7 @@ export function createPowerShellTool(cwd: string, options?: PowerShellToolOption
 	return {
 		name: "powershell",
 		label: "powershell",
-		description: `Execute a PowerShell command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds. Windows-first: on non-Windows hosts this requires PowerShell 7+ (pwsh).`,
+		description: `Execute a PowerShell command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds. On Windows, prefers PowerShell 7 (pwsh) and falls back to Windows PowerShell when needed. On non-Windows hosts, this requires PowerShell 7+ (pwsh).`,
 		parameters: powershellSchema,
 		execute: async (
 			_toolCallId: string,
