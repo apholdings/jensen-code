@@ -1,5 +1,7 @@
 # Changelog
 
+## [Unreleased]
+
 ## [1.0.8] - 2026-06-26
 
 ### Patch Changes
