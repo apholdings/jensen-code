@@ -1,16 +1,10 @@
 # Changelog
 
-## 1.0.6
+## [Unreleased]
 
 ### Patch Changes
 
 - Refresh the built-in OpenRouter model catalog to match the current upstream model list and metadata.
-
-## [Unreleased]
-
-### Changed
-
-- Refreshed the built-in OpenRouter model catalog to match the current upstream model list and metadata.
 
 ## 1.0.5
 
