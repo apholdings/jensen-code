@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Added
+
+- Caveman output compression: `/caveman`, `/caveman lite`, `/caveman full`, `/caveman ultra`, `/caveman off`, `/caveman status` session-scoped commands with silent natural-language activation/deactivation and strict safety exclusions
+- Added boundary-aware natural language parser with 10 control phrases and false-positive negation
+
+### Fixed
+
+- Fixed caveman level reset in newSession(), switchSession(), and fork() lifecycle methods
+- Removed unsolicited caveman activation announcements from model prose
+
+### Changed
+
+- Replaced compression level semantics with user contract: lite (professional prose without filler), full (tighter phrasing), ultra (simple answers with mandatory fallback)
+- Expanded safety policy to cover tool calls/args, structured envelopes, delegated evidence, and invariance from project-local override
+
 ## [1.0.8] - 2026-06-26
 
 ### Fixed

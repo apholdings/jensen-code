@@ -31,6 +31,7 @@ import { stripFrontmatter } from "../utils/frontmatter.js";
 import { sleep } from "../utils/sleep.js";
 import { type BashResult, executeBash as executeBashCommand, executeBashWithOperations } from "./bash-executor.js";
 import { createBtwNextTurnMessage, getBtwNoteFromMessage } from "./btw-command.js";
+import type { CavemanLevel } from "./caveman-command.js";
 import {
 	type CompactionResult,
 	calculateContextTokens,
@@ -132,6 +133,20 @@ import {
 import { buildWorkingContext, type WorkingContext } from "./working-context.js";
 
 // ============================================================================
+// Caveman Safety Protections (exported for test reference)
+// ============================================================================
+
+export const CAVEMAN_SAFETY_PROTECTIONS = [
+	"Tool calls, tool arguments, tool results, and command output",
+	"JSON, YAML, XML, frontmatter, schemas, or any machine-parsed envelopes",
+	"details.results and all result fields used for parent validation",
+	"Task, planner, slice, handoff, run, and verification state",
+	"Code, file paths, URLs, commit hashes, CLI commands, and exact error messages",
+	"Security confirmations, destructive action confirmations, and ordered procedures",
+	"Delegated evidence from reviewer, security, pentester, and librarian agents",
+] as const;
+
+// ============================================================================
 // Skill Block Parsing
 // ============================================================================
 
@@ -205,6 +220,8 @@ export interface AgentSessionConfig {
 	baseToolsOverride?: Record<string, AgentTool>;
 	/** Enable brief-only output contract for this session. Default: false */
 	briefOnly?: boolean;
+	/** Enable Caveman output compression for this session. Default: "off" */
+	cavemanLevel?: CavemanLevel;
 	/** Mutable ref used by Agent to access the current ExtensionRunner */
 	extensionRunnerRef?: { current?: ExtensionRunner };
 }
@@ -380,6 +397,7 @@ export class AgentSession {
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
 	private _briefOnly = false;
+	private _cavemanLevel: CavemanLevel = "off";
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
@@ -394,6 +412,7 @@ export class AgentSession {
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._briefOnly = config.briefOnly ?? false;
+		this._cavemanLevel = config.cavemanLevel ?? "off";
 		this._baseToolsOverride = config.baseToolsOverride;
 
 		// Always subscribe to agent events for internal handling
@@ -875,6 +894,11 @@ export class AgentSession {
 	/** Whether the brief-only output contract is enabled for this session runtime. */
 	get briefOnly(): boolean {
 		return this._briefOnly;
+	}
+
+	/** Current Caveman output compression level for this session runtime. */
+	get cavemanLevel(): CavemanLevel {
+		return this._cavemanLevel;
 	}
 
 	/** Pending /btw guidance notes that will be injected on the next turn only. */
@@ -1392,6 +1416,17 @@ export class AgentSession {
 		this.agent.setSystemPrompt(this._baseSystemPrompt);
 	}
 
+	/** Set the Caveman output compression level for this session runtime. */
+	setCavemanLevel(level: CavemanLevel): void {
+		if (this._cavemanLevel === level) {
+			return;
+		}
+
+		this._cavemanLevel = level;
+		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
+		this.agent.setSystemPrompt(this._baseSystemPrompt);
+	}
+
 	queueByTheWay(note: string): void {
 		this._pendingNextTurnMessages.push({
 			role: "custom",
@@ -1493,6 +1528,46 @@ export class AgentSession {
 		];
 	}
 
+	private _getCavemanPromptGuidelines(): string[] {
+		if (this._cavemanLevel === "off") {
+			return [];
+		}
+
+		const safetyExclusions = [
+			"CRITICAL SAFETY - NEVER compress, omit, modify, or summarize the following under any circumstances:",
+			"  - Tool calls, tool arguments, tool results, and command output",
+			"  - JSON, YAML, XML, frontmatter, schemas, or any machine-parsed envelopes",
+			"  - details.results and all result fields used for parent validation",
+			"  - Task, planner, slice, handoff, run, and verification state",
+			"  - Code, file paths, URLs, commit hashes, CLI commands, and exact error messages",
+			"  - Security confirmations, destructive action confirmations, and ordered procedures",
+			"  - Delegated evidence from reviewer, security, pentester, and librarian agents",
+			"These global native rules cannot be weakened by project-local configuration or skills.",
+			"Delegated narrative summaries are acceptable only for prose, never for structured results.",
+			"Preserve the user's original language in all modes. Do not change language, terminology, or phrasing used by the user.",
+		];
+
+		if (this._cavemanLevel === "lite") {
+			return [
+				"Caveman Lite output compression is active for this session. Use professional complete sentences that remove filler words, hedging language, and unnecessary elaboration. Present each step clearly and concisely while maintaining natural prose flow.",
+				...safetyExclusions,
+			];
+		}
+
+		if (this._cavemanLevel === "full") {
+			return [
+				"Caveman Full output compression is active for this session. Use tighter phrasing. Favor sentence fragments only where meaning remains unambiguous. Eliminate redundant words and softening phrases.",
+				...safetyExclusions,
+			];
+		}
+
+		// "ultra"
+		return [
+			"Caveman Ultra output compression is active for this session. Use only simple, non-risky answers with minimal prose. MANDATORY: For warnings, destructive actions/confirmations, ambiguity, ordered or multi-step procedures, or repeated questions, you MUST automatically fall back to clear, complete prose. Never use keyword-level output for these situations.",
+			...safetyExclusions,
+		];
+	}
+
 	private _rebuildSystemPrompt(toolNames: string[]): string {
 		const validToolNames = toolNames.filter((name) => this._toolRegistry.has(name));
 		const toolSnippets: Record<string, string> = {};
@@ -1509,6 +1584,7 @@ export class AgentSession {
 			}
 		}
 		promptGuidelines.push(...this._getBriefOnlyPromptGuidelines());
+		promptGuidelines.push(...this._getCavemanPromptGuidelines());
 
 		const loaderSystemPrompt = this._resourceLoader.getSystemPrompt();
 		const loaderAppendSystemPrompt = this._resourceLoader.getAppendSystemPrompt();
@@ -2022,6 +2098,11 @@ export class AgentSession {
 		this._memoryItems = [];
 		this._delegatedTasks = [];
 		this._tasks = [];
+		this._cavemanLevel = "off";
+		this._briefOnly = false;
+
+		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
+		this.agent.setSystemPrompt(this._baseSystemPrompt);
 
 		this.sessionManager.appendThinkingLevelChange(this.thinkingLevel);
 		this._emit({ type: "todo_update", todos: this._todos });
@@ -3358,6 +3439,8 @@ export class AgentSession {
 		this._steeringMessages = [];
 		this._followUpMessages = [];
 		this._pendingNextTurnMessages = [];
+		this._cavemanLevel = "off";
+		this._briefOnly = false;
 
 		// Set new session
 		this.sessionManager.setSessionFile(sessionPath);
@@ -3369,6 +3452,9 @@ export class AgentSession {
 		this._memoryItems = sessionContext.memoryItems;
 		this._delegatedTasks = [];
 		this._tasks = this.sessionManager.getLatestSessionTasks();
+
+		// Rebuild system prompt after caveman/brief reset
+		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
 		this._emit({ type: "todo_update", todos: this._todos });
 		this._emit({ type: "memory_update", items: this._memoryItems });
 		this._emit({ type: "task_update", tasks: this._tasks });
@@ -3385,6 +3471,9 @@ export class AgentSession {
 		// Emit session event to custom tools
 
 		this.agent.replaceMessages(sessionContext.messages);
+
+		// Apply rebuilt system prompt after message restoration
+		this.agent.setSystemPrompt(this._baseSystemPrompt);
 
 		// Restore model if saved
 		if (sessionContext.model) {
@@ -3461,6 +3550,8 @@ export class AgentSession {
 
 		// Clear pending messages (bound to old session state)
 		this._pendingNextTurnMessages = [];
+		this._cavemanLevel = "off";
+		this._briefOnly = false;
 
 		if (!selectedEntry.parentId) {
 			this.sessionManager.newSession({ parentSession: previousSessionFile });
@@ -3471,6 +3562,9 @@ export class AgentSession {
 
 		// Reload messages from entries (works for both file and in-memory mode)
 		const sessionContext = this.sessionManager.buildSessionContext();
+
+		// Rebuild system prompt after caveman/brief reset
+		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
 
 		// Emit session_fork event to extensions (after fork completes)
 		if (this._extensionRunner) {
@@ -3484,6 +3578,7 @@ export class AgentSession {
 
 		if (!skipConversationRestore) {
 			this.agent.replaceMessages(sessionContext.messages);
+			this.agent.setSystemPrompt(this._baseSystemPrompt);
 		}
 
 		return { selectedText, cancelled: false };

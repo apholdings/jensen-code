@@ -50,6 +50,12 @@ import {
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.js";
 import { BRIEF_ONLY_COMMAND_USAGE, parseBriefOnlyCommand, runBriefOnlyCommand } from "../../core/brief-only-command.js";
 import { BTW_COMMAND_USAGE, parseBtwCommand, runBtwCommand } from "../../core/btw-command.js";
+import {
+	CAVEMAN_COMMAND_USAGE,
+	parseCavemanCommand,
+	parseCavemanNaturalLanguage,
+	runCavemanCommand,
+} from "../../core/caveman-command.js";
 import type { CompactionResult } from "../../core/compaction/index.js";
 import { describeContextFiles } from "../../core/context-files.js";
 import type {
@@ -490,7 +496,7 @@ export class InteractiveMode {
 			["/new", "/clear", "/resume", "/session", "/name"],
 			["/tree", "/fork", "/compact", "/reload", "/init-project"],
 			["/protocol-status", "/copy", "/export", "/share", "/login", "/logout"],
-			["/memory", "/brief", "/btw", "/steer", "/websearch", "/help"],
+			["/memory", "/caveman", "/brief", "/btw", "/steer", "/websearch", "/help"],
 			["/ultraplan"],
 		]
 			.map((line) => line.map((cmd) => theme.fg("accent", cmd)).join(theme.fg("dim", ", ")))
@@ -620,6 +626,17 @@ export class InteractiveMode {
 
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(runBriefOnlyCommand(this.session, action), 1, 0));
+		this.ui.requestRender();
+	}
+
+	private handleCavemanCommand(text: string): void {
+		const action = parseCavemanCommand(text);
+		if (!action) {
+			this.showWarning(CAVEMAN_COMMAND_USAGE);
+			return;
+		}
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(runCavemanCommand(this.session, action), 1, 0));
 		this.ui.requestRender();
 	}
 
@@ -3194,6 +3211,19 @@ export class InteractiveMode {
 
 			if (text === "/brief" || text.startsWith("/brief ")) {
 				this.handleBriefCommand(text);
+				this.editor.setText("");
+				return;
+			}
+
+			// Detect natural language caveman activation/deactivation phrases
+			const cavemanAction = parseCavemanNaturalLanguage(text);
+			if (cavemanAction) {
+				this.session.setCavemanLevel(cavemanAction);
+				// DO NOT announce activation/deactivation - continue to normal processing silently
+			}
+
+			if (text === "/caveman" || text.startsWith("/caveman ")) {
+				this.handleCavemanCommand(text);
 				this.editor.setText("");
 				return;
 			}
