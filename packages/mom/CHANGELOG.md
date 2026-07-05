@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.9
+
+### Patch Changes
+
+- Updated dependencies
+  - @apholdings/jensen-code@1.0.9
+  - @apholdings/jensen-agent-core@1.0.9
+  - @apholdings/jensen-ai@1.0.9
+
 ## [Unreleased]
 
 ## [1.0.8] - 2026-06-26
