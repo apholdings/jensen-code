@@ -8,12 +8,7 @@
     "url": "https://github.com/apholdings/jensen-code"
   },
   "workspaces": [
-    "packages/*",
-    "packages/web-ui/example",
-    "packages/coding-agent/examples/extensions/with-deps",
-    "packages/coding-agent/examples/extensions/custom-provider-anthropic",
-    "packages/coding-agent/examples/extensions/custom-provider-gitlab-duo",
-    "packages/coding-agent/examples/extensions/custom-provider-qwen-cli"
+    "packages/web-ui/example"
   ],
   "scripts": {
     "clean": "npm run clean --workspaces",
@@ -47,7 +42,7 @@
   },
   "version": "0.1.5",
   "dependencies": {
-    "@apholdings/jensen-code": "1.0.1",
+    "@apholdings/jensen-code": "1.1.0",
     "@mariozechner/jiti": "^2.6.5",
     "get-east-asian-width": "^1.4.0"
   },

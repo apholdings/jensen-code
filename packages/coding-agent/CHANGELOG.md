@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.0
+
+### Minor Changes
+
+- Fixed todo_write tool to bound context payload size and correctly mark compacted todo snapshots for retention
+
+### Patch Changes
+
+- @apholdings/jensen-agent-core@1.1.0
+- @apholdings/jensen-ai@1.1.0
+- @apholdings/jensen-tui@1.1.0
+
 ## 1.0.9
 
 ### Patch Changes
