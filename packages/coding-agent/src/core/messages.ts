@@ -152,7 +152,7 @@ export function createCustomMessage(
 	};
 }
 
-const TODO_WRITE_CONTEXT_ARGUMENTS = { todos: [] } as const;
+const TODO_WRITE_CONTEXT_ARGUMENTS = { todos: [], snapshotOmitted: true } as const;
 
 /**
  * Keep persisted assistant messages intact for session replay and UI rendering while

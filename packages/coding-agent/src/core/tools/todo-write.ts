@@ -13,6 +13,11 @@ const todoWriteSchema = Type.Object({
 		}),
 		{ description: "Full replacement list of all tasks" },
 	),
+	snapshotOmitted: Type.Optional(
+		Type.Boolean({
+			description: "Internal history marker indicating the full snapshot was omitted from model context",
+		}),
+	),
 });
 
 export type TodoWriteInput = Static<typeof todoWriteSchema>;

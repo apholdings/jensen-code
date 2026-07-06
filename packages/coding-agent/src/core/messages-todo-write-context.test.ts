@@ -215,7 +215,7 @@ describe("todo_write model context", () => {
 		expect(compactedCall.content[0]).toMatchObject({
 			type: "toolCall",
 			name: "todo_write",
-			arguments: { todos: [] },
+			arguments: { todos: [], snapshotOmitted: true },
 		});
 		const compactedToolCall = compactedCall.content[0];
 		if (compactedToolCall.type !== "toolCall") throw new Error("Expected tool call");
@@ -247,7 +247,7 @@ describe("todo_write model context", () => {
 		expect(converted[0]).toEqual(orphan);
 		expect(converted[1]).toMatchObject({
 			role: "assistant",
-			content: [{ type: "toolCall", arguments: { todos: [] } }],
+			content: [{ type: "toolCall", arguments: { todos: [], snapshotOmitted: true } }],
 		});
 	});
 });
