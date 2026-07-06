@@ -86,6 +86,7 @@ export function createTodoWriteTool(
 			if (todos.length > 0) {
 				summary += `: ${pending} pending, ${inProgress} in progress, ${completed} completed`;
 			}
+			summary += ". Full snapshot stored outside model context.";
 
 			return {
 				content: [{ type: "text", text: summary }],

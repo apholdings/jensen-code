@@ -6,7 +6,7 @@
  */
 
 import type { AgentMessage } from "@apholdings/jensen-agent-core";
-import type { ImageContent, Message, TextContent } from "@apholdings/jensen-ai";
+import type { AssistantMessage, ImageContent, Message, TextContent, ToolCall } from "@apholdings/jensen-ai";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
@@ -152,6 +152,28 @@ export function createCustomMessage(
 	};
 }
 
+const TODO_WRITE_CONTEXT_ARGUMENTS = { todos: [] } as const;
+
+/**
+ * Keep persisted assistant messages intact for session replay and UI rendering while
+ * excluding full todo snapshots from the model-facing conversation history.
+ */
+function compactTodoWriteCalls(message: AssistantMessage, completedToolCalls: ReadonlySet<ToolCall>): AssistantMessage {
+	let changed = false;
+	const content = message.content.map((block) => {
+		if (block.type !== "toolCall" || !completedToolCalls.has(block)) {
+			return block;
+		}
+		changed = true;
+		return {
+			...block,
+			arguments: TODO_WRITE_CONTEXT_ARGUMENTS,
+		};
+	});
+
+	return changed ? { ...message, content } : message;
+}
+
 /**
  * Transform AgentMessages (including custom types) to LLM-compatible Messages.
  *
@@ -161,6 +183,30 @@ export function createCustomMessage(
  * - Custom extensions and tools
  */
 export function convertToLlm(messages: AgentMessage[]): Message[] {
+	const completedTodoWriteCalls = new Set<ToolCall>();
+	const pendingResultsByCallId = new Map<string, number>();
+	for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex--) {
+		const message = messages[messageIndex];
+		if (message.role === "toolResult" && message.toolName === "todo_write") {
+			pendingResultsByCallId.set(message.toolCallId, (pendingResultsByCallId.get(message.toolCallId) ?? 0) + 1);
+			continue;
+		}
+		if (message.role !== "assistant") {
+			continue;
+		}
+		for (let contentIndex = message.content.length - 1; contentIndex >= 0; contentIndex--) {
+			const block = message.content[contentIndex];
+			if (block.type !== "toolCall" || block.name !== "todo_write") {
+				continue;
+			}
+			const pendingResults = pendingResultsByCallId.get(block.id) ?? 0;
+			if (pendingResults > 0) {
+				completedTodoWriteCalls.add(block);
+				pendingResultsByCallId.set(block.id, pendingResults - 1);
+			}
+		}
+	}
+
 	return messages
 		.map((m): Message | undefined => {
 			switch (m.role) {
@@ -203,9 +249,10 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						timestamp: m.timestamp,
 					};
 				case "user":
-				case "assistant":
 				case "toolResult":
 					return m;
+				case "assistant":
+					return compactTodoWriteCalls(m, completedTodoWriteCalls);
 				default:
 					// biome-ignore lint/correctness/noSwitchDeclarations: fine
 					const _exhaustiveCheck: never = m;
