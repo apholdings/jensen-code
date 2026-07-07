@@ -50,8 +50,18 @@ export {
 	type PowerShellToolDetails,
 	type PowerShellToolInput,
 	type PowerShellToolOptions,
+	type PowerShellValidateResult,
 	powershellTool,
+	resetPowerShellHealthCheck,
 } from "./powershell.js";
+export {
+	createProcessManagerTool,
+	type ProcessManagerInput,
+	type ProcessManagerOperations,
+	type ProcessManagerToolOptions,
+	type ProcessRecord,
+	processManagerTool,
+} from "./process-manager.js";
 export {
 	createReadTool,
 	type ReadOperations,

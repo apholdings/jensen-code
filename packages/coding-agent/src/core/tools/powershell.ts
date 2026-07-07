@@ -20,6 +20,22 @@ function getTempFilePath(): string {
 	return join(tmpdir(), `pi-powershell-${id}.log`);
 }
 
+/**
+ * Encode a PowerShell command as UTF-16LE base64 for use with -EncodedCommand.
+ * This avoids all quoting and encoding issues across PowerShell versions.
+ */
+function encodePowerShellCommand(command: string): string {
+	return Buffer.from(command, "utf-16le").toString("base64");
+}
+
+/**
+ * UTF-8 encoding preamble forced before every user command.
+ * On Windows PowerShell 5.1, stdout defaults to the system OEM code page
+ * when writing to a pipe, which causes TextDecoder("utf-8") to produce garbled output.
+ * This preamble forces UTF-8 output encoding on all PowerShell versions.
+ */
+const ENCODING_PREAMBLE = "[Console]::OutputEncoding=[Text.Encoding]::UTF8;$OutputEncoding=[Text.Encoding]::UTF8;";
+
 const powershellSchema = Type.Object({
 	command: Type.String({ description: "PowerShell command to execute" }),
 	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
@@ -33,6 +49,11 @@ export interface PowerShellToolDetails {
 	cancelled?: boolean;
 }
 
+export interface PowerShellValidateResult {
+	valid: boolean;
+	error?: string;
+}
+
 export interface PowerShellOperations {
 	exec: (
 		command: string,
@@ -44,10 +65,132 @@ export interface PowerShellOperations {
 			env?: NodeJS.ProcessEnv;
 		},
 	) => Promise<{ exitCode: number | null }>;
+
+	/**
+	 * Validate that the PowerShell transport works correctly.
+	 * Runs a probe command and verifies stdout is properly captured.
+	 * If the probe returns exit 0 but no stdout marker, the transport is broken
+	 * (likely encoding mismatch on Windows PowerShell 5.1).
+	 */
+	validate?: (cwd: string, options: { signal?: AbortSignal; timeout?: number }) => Promise<PowerShellValidateResult>;
 }
 
 export interface CreateLocalPowerShellOperationsOptions {
 	resolveConfig?: () => PowerShellConfig;
+}
+
+/**
+ * Low-level PowerShell spawn helper. Used by both exec and validate.
+ */
+function spawnRawPowerShell(
+	resolveConfig: () => PowerShellConfig,
+	wrappedCommand: string,
+	cwd: string,
+	spawnEnv: NodeJS.ProcessEnv | undefined,
+): ReturnType<typeof spawn> {
+	const shellConfig = resolveConfig();
+	// Strip -Command from args (last element) and replace with -EncodedCommand + base64
+	const baseArgs = shellConfig.args.slice(0, -1);
+	const encoded = encodePowerShellCommand(wrappedCommand);
+	const spawnArgs = [...baseArgs, "-EncodedCommand", encoded];
+
+	return spawn(shellConfig.shell, spawnArgs, {
+		cwd,
+		shell: false,
+		detached: true,
+		windowsHide: shellConfig.windowsHide,
+		env: spawnEnv ?? getShellEnv(),
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+}
+
+/**
+ * Generic exec helper: spawns PowerShell and resolves/rejects based on lifecycle.
+ */
+function execPowerShell(
+	resolveConfig: () => PowerShellConfig,
+	command: string,
+	cwd: string,
+	options: {
+		onData: (data: Buffer) => void;
+		signal?: AbortSignal;
+		timeout?: number;
+		env?: NodeJS.ProcessEnv;
+	},
+): Promise<{ exitCode: number | null }> {
+	return new Promise((resolve, reject) => {
+		if (!existsSync(cwd)) {
+			reject(new Error(`Working directory does not exist: ${cwd}\nCannot execute PowerShell commands.`));
+			return;
+		}
+
+		// Pre-validate config resolution (spawnRawPowerShell also validates, but we want
+		// a clear error before spawning)
+		try {
+			resolveConfig();
+		} catch (error) {
+			reject(error instanceof Error ? error : new Error(String(error)));
+			return;
+		}
+
+		const wrappedCommand = `${ENCODING_PREAMBLE}${command}`;
+		const child = spawnRawPowerShell(resolveConfig, wrappedCommand, cwd, options.env);
+
+		let timedOut = false;
+		let timeoutHandle: NodeJS.Timeout | undefined;
+		if (options.timeout !== undefined && options.timeout > 0) {
+			timeoutHandle = setTimeout(() => {
+				timedOut = true;
+				if (child.pid) {
+					killProcessTree(child.pid);
+				}
+			}, options.timeout * 1000);
+		}
+
+		if (child.stdout) {
+			child.stdout.on("data", options.onData);
+		}
+		if (child.stderr) {
+			child.stderr.on("data", options.onData);
+		}
+
+		child.on("error", (err) => {
+			if (timeoutHandle) clearTimeout(timeoutHandle);
+			if (options.signal) options.signal.removeEventListener("abort", onAbort);
+			reject(err);
+		});
+
+		const onAbort = () => {
+			if (child.pid) {
+				killProcessTree(child.pid);
+			}
+		};
+
+		if (options.signal) {
+			if (options.signal.aborted) {
+				onAbort();
+			} else {
+				options.signal.addEventListener("abort", onAbort, { once: true });
+			}
+		}
+
+		child.on("close", (code) => {
+			if (timeoutHandle) clearTimeout(timeoutHandle);
+			if (options.signal) options.signal.removeEventListener("abort", onAbort);
+
+			if (options.signal?.aborted) {
+				reject(new Error("aborted"));
+				return;
+			}
+
+			if (timedOut) {
+				reject(new Error(`timeout:${options.timeout}`));
+				return;
+			}
+
+			resolve({ exitCode: code });
+		});
+	});
 }
 
 export function createLocalPowerShellOperations(
@@ -55,90 +198,80 @@ export function createLocalPowerShellOperations(
 ): PowerShellOperations {
 	const resolveConfig = options.resolveConfig ?? getPowerShellConfig;
 
-	return {
-		exec: (command, cwd, { onData, signal, timeout, env }) => {
-			return new Promise((resolve, reject) => {
-				if (!existsSync(cwd)) {
-					reject(new Error(`Working directory does not exist: ${cwd}\nCannot execute PowerShell commands.`));
-					return;
-				}
+	const ops: PowerShellOperations = {
+		exec: (command, cwd, execOptions) => execPowerShell(resolveConfig, command, cwd, execOptions),
 
-				let shellConfig: PowerShellConfig;
-				try {
-					shellConfig = resolveConfig();
-				} catch (error) {
-					reject(error instanceof Error ? error : new Error(String(error)));
-					return;
-				}
+		validate: (cwd, { signal, timeout }) => {
+			return new Promise((resolve) => {
+				const marker = `JENSEN_PS_HEALTH_${randomBytes(4).toString("hex")}`;
+				const probeCommand = `Write-Output '${marker}'`;
+				let rawOutput = "";
 
-				const child = spawn(shellConfig.shell, [...shellConfig.args, command], {
-					cwd,
-					detached: true,
-					env: env ?? getShellEnv(),
-					stdio: ["ignore", "pipe", "pipe"],
-				});
-
-				let timedOut = false;
-				let timeoutHandle: NodeJS.Timeout | undefined;
-				if (timeout !== undefined && timeout > 0) {
-					timeoutHandle = setTimeout(() => {
-						timedOut = true;
-						if (child.pid) {
-							killProcessTree(child.pid);
+				ops.exec(probeCommand, cwd, {
+					onData: (data) => {
+						rawOutput += data.toString("utf-8");
+					},
+					signal,
+					timeout: timeout ?? 10,
+					env: getShellEnv(),
+				})
+					.then(({ exitCode }) => {
+						if (exitCode === 0 && rawOutput.includes(marker)) {
+							resolve({ valid: true });
+						} else if (exitCode === 0 && !rawOutput.includes(marker)) {
+							resolve({
+								valid: false,
+								error: "JENSEN_POWERSHELL_TRANSPORT_BROKEN",
+							});
+						} else {
+							resolve({
+								valid: false,
+								error: `Health probe failed with exit code ${exitCode}. Raw output: ${rawOutput.slice(0, 200)}`,
+							});
 						}
-					}, timeout * 1000);
-				}
-
-				if (child.stdout) {
-					child.stdout.on("data", onData);
-				}
-				if (child.stderr) {
-					child.stderr.on("data", onData);
-				}
-
-				child.on("error", (err) => {
-					if (timeoutHandle) clearTimeout(timeoutHandle);
-					if (signal) signal.removeEventListener("abort", onAbort);
-					reject(err);
-				});
-
-				const onAbort = () => {
-					if (child.pid) {
-						killProcessTree(child.pid);
-					}
-				};
-
-				if (signal) {
-					if (signal.aborted) {
-						onAbort();
-					} else {
-						signal.addEventListener("abort", onAbort, { once: true });
-					}
-				}
-
-				child.on("close", (code) => {
-					if (timeoutHandle) clearTimeout(timeoutHandle);
-					if (signal) signal.removeEventListener("abort", onAbort);
-
-					if (signal?.aborted) {
-						reject(new Error("aborted"));
-						return;
-					}
-
-					if (timedOut) {
-						reject(new Error(`timeout:${timeout}`));
-						return;
-					}
-
-					resolve({ exitCode: code });
-				});
+					})
+					.catch((err: Error) => {
+						resolve({
+							valid: false,
+							error: `Health probe error: ${err.message}`,
+						});
+					});
 			});
 		},
 	};
+
+	return ops;
 }
 
 export interface PowerShellToolOptions {
 	operations?: PowerShellOperations;
+}
+
+/**
+ * Lazily-tracked health check: only runs once per process lifetime.
+ * Reset via resetPowerShellHealthCheck() for testing.
+ */
+let healthCheckResult: PowerShellValidateResult | undefined;
+
+export function resetPowerShellHealthCheck(): void {
+	healthCheckResult = undefined;
+}
+
+function ensureHealthCheck(ops: PowerShellOperations, cwd: string): Promise<PowerShellValidateResult | undefined> {
+	// If already validated, skip
+	if (healthCheckResult !== undefined) {
+		return Promise.resolve(healthCheckResult);
+	}
+
+	// If no validate method, skip (mock operations)
+	if (!ops.validate) {
+		return Promise.resolve(undefined);
+	}
+
+	return ops.validate(cwd, { timeout: 10 }).then((result) => {
+		healthCheckResult = result;
+		return result;
+	});
 }
 
 export function createPowerShellTool(cwd: string, options?: PowerShellToolOptions): AgentTool<typeof powershellSchema> {
@@ -155,6 +288,17 @@ export function createPowerShellTool(cwd: string, options?: PowerShellToolOption
 			signal?: AbortSignal,
 			onUpdate?,
 		) => {
+			// Run health check on first invocation
+			const health = await ensureHealthCheck(ops, cwd);
+			if (health && !health.valid) {
+				throw new Error(
+					`PowerShell transport validation failed: ${health.error}. ` +
+						`The PowerShell host was found but could not produce readable output. ` +
+						`This is likely caused by an encoding mismatch (PowerShell outputs UTF-16LE but the runtime expects UTF-8). ` +
+						`The command wrapper should have forced UTF-8. Check that the PowerShell host responds to -EncodedCommand.`,
+				);
+			}
+
 			return new Promise((resolve, reject) => {
 				let tempFilePath: string | undefined;
 				let tempFileStream: ReturnType<typeof createWriteStream> | undefined;

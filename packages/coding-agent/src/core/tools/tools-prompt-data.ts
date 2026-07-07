@@ -85,6 +85,8 @@ When to use:
 - PowerShell-specific scripting, pipelines, and object-oriented command composition
 - Native Windows automation where bash semantics would be the wrong fit
 - Any task where the user explicitly wants PowerShell instead of bash
+- Managing Windows processes, listeners, services, and paths
+- Use for persistent server processes (Next.js, dev servers) instead of nohup or Git Bash backgrounding
 
 Parameters:
 - command: The PowerShell command to execute
@@ -97,17 +99,25 @@ Behavior:
 - On Windows, prefers PowerShell 7 (pwsh) and falls back to Windows PowerShell when needed
 - On non-Windows hosts, requires PowerShell 7+ (pwsh)
 - Returns combined stdout and stderr output
+- Output encoding is forced to UTF-8 via -EncodedCommand wrapper
+- A health probe runs on first invocation; if transport is broken (encoding mismatch), execution fails with JENSEN_POWERSHELL_TRANSPORT_BROKEN
 
 Safety notes:
 - Do NOT use PowerShell for dedicated built-in file tools when read/grep/find/ls/edit/write are available
 - Do NOT run destructive commands unless explicitly instructed
 - Prefer explicit file paths and PowerShell call syntax when invoking Windows executables with spaces
+- Do NOT fall back to Git Bash when PowerShell transport fails. PowerShell failures are infrastructure errors, not a signal to use bash instead.
+- Treat (no output) from a probe command that should produce output as a transport failure, not an empty result.
 
 Best practices:
 - Keep PowerShell usage explicit and intentional; do not assume bash syntax applies
 - Use PowerShell cmdlets and quoting rules correctly for Windows paths and arguments
 - Use appropriate timeouts for long-running commands
-- Prefer the dedicated built-in file tools over shell-based file inspection when available`,
+- Prefer the dedicated built-in file tools over shell-based file inspection when available
+- For port checking: use Get-NetTCPConnection with $_.LocalPort, not $.LocalPort
+- For process details (CommandLine): use Get-CimInstance Win32_Process, not Get-Process ... CommandLine
+- Apply timeouts to HTTP requests, tests, and polling loops
+- Use the process_manager tool for persistent servers, not nohup, &, or Git Bash backgrounding`,
 
 	/**
 	 * Edit tool - surgical file modifications
@@ -370,6 +380,49 @@ When NOT to use:
 - Speculative information that may go stale quickly`,
 
 	/**
+	 * Process manager tool - persistent background process management on Windows
+	 */
+	process_manager: `Manage persistent background processes on Windows via PowerShell.
+
+Usage: Start, monitor, and stop long-running processes without Git Bash or nohup.
+
+When to use:
+- Starting a Next.js dev server (npm run dev)
+- Starting any persistent HTTP listener
+- Managing background processes on Windows
+- Checking if a managed process is still alive
+- Stopping a process started by this tool
+- Never use nohup, Git Bash &, or shell wrappers for persistent processes on Windows
+
+Actions:
+- start: Launch a new background process. Required params: command, optional: cwd, expectedPort, readyTimeout.
+- status: Check if a managed process is running. Required: runId.
+- stop: Terminate a managed process. Required: runId.
+- list: Show all managed processes.
+
+Parameters:
+- action: "start", "status", "stop", or "list"
+- command: The full command to execute (for start). Example: "npm run dev -- -p 3000"
+- cwd: Working directory (defaults to current)
+- expectedPort: TCP port the process should listen on. Enables readiness polling with port-ownership verification.
+- readyTimeout: Max seconds to wait for readiness (default 30, max 45)
+- runId: The run ID returned by start (required for status and stop)
+
+Behavior:
+- On start: spawns process via PowerShell Start-Process, redirects stdout/stderr to log files, returns runId and root PID
+- Polls for readiness when expectedPort is given: verifies port owner belongs to the process tree
+- Never declares "ready" just because a port is occupied -- verifies PID tree ownership
+- If port is owned by a foreign process, returns a clear conflict error
+- On stop: kills only processes registered by this tool, never unknown PIDs
+- On status: checks if root PID is alive, reports stdout/stderr log paths
+
+Safety notes:
+- Never kills unknown processes
+- Only stops processes registered by this session
+- Port ownership is verified before declaring readiness
+- Readiness polling is limited to max 45 seconds`,
+
+	/**
 	 * Task create tool - structured multi-step work tracking
 	 */
 	task_create: `Create a structured task for multi-step work tracking.
@@ -533,6 +586,7 @@ const FALLBACK_DESCRIPTIONS: Record<string, string> = {
 	ls: "List directory contents",
 	todo_write: "Update the session's structured task/todo list for multi-step workflows",
 	memory_write: "Record or clear structured session memory that survives compaction",
+	process_manager: "Manage persistent background processes on Windows (start, status, stop, list)",
 	task_create: "Create a structured task for multi-step work tracking",
 	task_list: "List all structured tasks with their current status",
 	task_get: "Retrieve full details of a specific task by its ID",
