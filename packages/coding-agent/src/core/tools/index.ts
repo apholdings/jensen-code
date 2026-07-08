@@ -105,6 +105,7 @@ import { createGrepTool, grepTool } from "./grep.js";
 import { createLsTool, lsTool } from "./ls.js";
 import { memoryWriteTool } from "./memory-write.js";
 import { createPowerShellTool, type PowerShellToolOptions, powershellTool } from "./powershell.js";
+import { createProcessManagerTool, type ProcessManagerToolOptions, processManagerTool } from "./process-manager.js";
 import { createReadTool, type ReadToolOptions, readTool } from "./read.js";
 import { todoWriteTool } from "./todo-write.js";
 import { createWebSearchTool, webSearchTool } from "./web-search.js";
@@ -122,6 +123,7 @@ export const codingTools: Tool[] = [
 	writeTool,
 	todoWriteTool,
 	memoryWriteTool,
+	processManagerTool,
 ];
 
 // Read-only tools for exploration without modification (using process.cwd())
@@ -140,6 +142,7 @@ export const allTools = {
 	find: findTool,
 	ls: lsTool,
 	web_search: webSearchTool,
+	process_manager: processManagerTool,
 };
 
 export type ToolName = keyof typeof allTools;
@@ -151,6 +154,8 @@ export interface ToolsOptions {
 	bash?: BashToolOptions;
 	/** Options for the PowerShell tool */
 	powershell?: PowerShellToolOptions;
+	/** Options for the process manager tool */
+	process_manager?: ProcessManagerToolOptions;
 }
 
 /**
@@ -165,6 +170,7 @@ export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
 		createWriteTool(cwd),
 		todoWriteTool,
 		memoryWriteTool,
+		createProcessManagerTool(cwd, options?.process_manager),
 	];
 }
 
@@ -191,5 +197,6 @@ export function createAllTools(cwd: string, options?: ToolsOptions): Record<Tool
 		find: createFindTool(cwd),
 		ls: createLsTool(cwd),
 		web_search: createWebSearchTool(),
+		process_manager: createProcessManagerTool(cwd, options?.process_manager),
 	};
 }

@@ -15,6 +15,78 @@ import {
 } from "../../utils/shell.js";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateTail } from "./truncate.js";
 
+/**
+ * Stateful stream decoder that normalizes PowerShell output to UTF-8.
+ *
+ * PowerShell may emit UTF-16LE (with or without BOM) or UTF-8 depending on
+ * the host version and whether the encoding preamble takes effect.
+ * This decoder detects the encoding on the first non-empty chunk and
+ * decodes consistently across arbitrary chunk boundaries using TextDecoder.
+ *
+ * @internal Exported for testing.
+ */
+export class PowerStreamDecoder {
+	private decoder: InstanceType<typeof TextDecoder> | null = null;
+	private encoding: "utf-8" | "utf-16le" | null = null;
+	private haveReadFirstChunk = false;
+
+	/**
+	 * Detect encoding from the first bytes of the stream.
+	 * Returns "utf-16le" if a BOM or NUL-alternation pattern is found,
+	 * "utf-8" otherwise.
+	 */
+	private detectEncoding(chunk: Buffer): "utf-8" | "utf-16le" {
+		// UTF-16LE BOM
+		if (chunk.length >= 2 && chunk[0] === 0xff && chunk[1] === 0xfe) {
+			return "utf-16le";
+		}
+		// NUL-alternation pattern: ASCII text in UTF-16LE has every other byte = 0x00.
+		// Check first N bytes where N = min(chunk.length, 32).
+		const sampleLen = Math.min(chunk.length, 32);
+		let nulCount = 0;
+		for (let i = 1; i < sampleLen; i += 2) {
+			if (chunk[i] === 0x00) nulCount++;
+		}
+		// If >70% of odd bytes are NUL, it's likely UTF-16LE.
+		const oddBytes = Math.floor(sampleLen / 2);
+		if (oddBytes >= 4 && nulCount / oddBytes > 0.7) {
+			return "utf-16le";
+		}
+		return "utf-8";
+	}
+
+	/** Feed a chunk. Returns decoded UTF-8 string, or "" if nothing to emit. */
+	feed(chunk: Buffer): string {
+		if (chunk.length === 0) return "";
+
+		if (!this.haveReadFirstChunk) {
+			this.haveReadFirstChunk = true;
+			this.encoding = this.detectEncoding(chunk);
+			this.decoder = new TextDecoder(this.encoding, { fatal: false });
+		}
+
+		// If encoding is UTF-16LE and chunk starts with BOM, skip it.
+		// The BOM is only present on the very first chunk.
+		if (this.encoding === "utf-16le" && chunk.length >= 2 && chunk[0] === 0xff && chunk[1] === 0xfe) {
+			chunk = chunk.subarray(2);
+		}
+
+		if (chunk.length === 0) return "";
+		return this.decoder!.decode(chunk, { stream: true });
+	}
+
+	/** Flush any remaining decoder state. Call once when the stream closes. */
+	flush(): string {
+		if (!this.decoder) return "";
+		return this.decoder.decode(undefined, { stream: false });
+	}
+
+	/** Whether any data has been fed to this decoder. */
+	get hasData(): boolean {
+		return this.haveReadFirstChunk;
+	}
+}
+
 function getTempFilePath(): string {
 	const id = randomBytes(8).toString("hex");
 	return join(tmpdir(), `pi-powershell-${id}.log`);
@@ -94,10 +166,14 @@ function spawnRawPowerShell(
 	const encoded = encodePowerShellCommand(wrappedCommand);
 	const spawnArgs = [...baseArgs, "-EncodedCommand", encoded];
 
+	// NOTE: detached: true breaks stdout/stderr capture on pwsh 7.x (streams
+	// are disconnected from the parent process). killProcessTree uses taskkill /T
+	// on Windows, which terminates the entire tree without requiring detached.
+	// Evidence from byte-probe: detached=false → clean UTF-8 output; detached=true → empty.
 	return spawn(shellConfig.shell, spawnArgs, {
 		cwd,
 		shell: false,
-		detached: true,
+		detached: false,
 		windowsHide: shellConfig.windowsHide,
 		env: spawnEnv ?? getShellEnv(),
 		stdio: ["ignore", "pipe", "pipe"],
@@ -147,12 +223,40 @@ function execPowerShell(
 			}, options.timeout * 1000);
 		}
 
+		// Use separate stateful decoders per stream to normalize PowerShell
+		// output to UTF-8 regardless of whether the host emits UTF-8 or UTF-16LE.
+		// Both streams emit to the same onData callback but are decoded independently.
+		const stdoutDecoder = new PowerStreamDecoder();
+		const stderrDecoder = new PowerStreamDecoder();
+
 		if (child.stdout) {
-			child.stdout.on("data", options.onData);
+			child.stdout.on("data", (chunk: Buffer) => {
+				const text = stdoutDecoder.feed(chunk);
+				if (text.length > 0) {
+					options.onData(Buffer.from(text, "utf-8"));
+				}
+			});
 		}
 		if (child.stderr) {
-			child.stderr.on("data", options.onData);
+			child.stderr.on("data", (chunk: Buffer) => {
+				const text = stderrDecoder.feed(chunk);
+				if (text.length > 0) {
+					options.onData(Buffer.from(text, "utf-8"));
+				}
+			});
 		}
+
+		// Flush decoders on close to emit any remaining buffered bytes
+		child.on("close", () => {
+			const stdoutFlush = stdoutDecoder.flush();
+			if (stdoutFlush.length > 0) {
+				options.onData(Buffer.from(stdoutFlush, "utf-8"));
+			}
+			const stderrFlush = stderrDecoder.flush();
+			if (stderrFlush.length > 0) {
+				options.onData(Buffer.from(stderrFlush, "utf-8"));
+			}
+		});
 
 		child.on("error", (err) => {
 			if (timeoutHandle) clearTimeout(timeoutHandle);
@@ -208,6 +312,7 @@ export function createLocalPowerShellOperations(
 				let rawOutput = "";
 
 				ops.exec(probeCommand, cwd, {
+					// onData already receives normalized UTF-8 buffers from the decoders
 					onData: (data) => {
 						rawOutput += data.toString("utf-8");
 					},
@@ -221,12 +326,17 @@ export function createLocalPowerShellOperations(
 						} else if (exitCode === 0 && !rawOutput.includes(marker)) {
 							resolve({
 								valid: false,
-								error: "JENSEN_POWERSHELL_TRANSPORT_BROKEN",
+								error:
+									"JENSEN_POWERSHELL_TRANSPORT_BROKEN. " +
+									"The PowerShell host ran successfully but did not produce the expected health probe marker. " +
+									`Output length: ${rawOutput.length} bytes. ` +
+									"Likely causes: detached process disconnecting streams, encoding mismatch that survived normalization, " +
+									"or PowerShell host producing output on a channel not captured by stdout/stderr pipes.",
 							});
 						} else {
 							resolve({
 								valid: false,
-								error: `Health probe failed with exit code ${exitCode}. Raw output: ${rawOutput.slice(0, 200)}`,
+								error: `Health probe failed with exit code ${exitCode}. Output: ${rawOutput.slice(0, 200)}`,
 							});
 						}
 					})
@@ -291,12 +401,7 @@ export function createPowerShellTool(cwd: string, options?: PowerShellToolOption
 			// Run health check on first invocation
 			const health = await ensureHealthCheck(ops, cwd);
 			if (health && !health.valid) {
-				throw new Error(
-					`PowerShell transport validation failed: ${health.error}. ` +
-						`The PowerShell host was found but could not produce readable output. ` +
-						`This is likely caused by an encoding mismatch (PowerShell outputs UTF-16LE but the runtime expects UTF-8). ` +
-						`The command wrapper should have forced UTF-8. Check that the PowerShell host responds to -EncodedCommand.`,
-				);
+				throw new Error(`PowerShell transport validation failed: ${health.error}`);
 			}
 
 			return new Promise((resolve, reject) => {

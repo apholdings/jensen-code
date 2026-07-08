@@ -105,6 +105,7 @@ function generateRunId(): string {
 // ---------------------------------------------------------------------------
 
 const GET_PORT_OWNER_PS = `
+$ProgressPreference = 'SilentlyContinue';
 $port = {PORT};
 $conn = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -First 1;
 if ($conn) {
@@ -113,8 +114,8 @@ if ($conn) {
   $netstat = netstat -ano 2>$null | Select-String ":$port ";
   if ($netstat) {
     $parts = $netstat -split '\\s+';
-    $pid = $parts[$parts.Length - 1];
-    Write-Output "PID:$pid"
+    $ownerPid = $parts[$parts.Length - 1];
+    Write-Output "PID:$ownerPid"
   } else {
     Write-Output "NONE"
   }
@@ -146,21 +147,25 @@ $cmd = '{COMMAND}';
 $cwd = '{CWD}';
 $stdoutPath = '{STDOUT_PATH}';
 $stderrPath = '{STDERR_PATH}';
-$proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmd -WorkingDirectory $cwd -NoNewWindow -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath;
+$wrapped = "cmd.exe /c " + $cmd + " > " + '"' + $stdoutPath + '"' + " 2> " + '"' + $stderrPath + '"';
+$proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $wrapped -WorkingDirectory $cwd -WindowStyle Hidden -PassThru;
 Write-Output "PID:$($proc.Id)"`;
 
 const STOP_PROCESS_PS = `
 $pidToStop = {PID};
 try {
-  Stop-Process -Id $pidToStop -Force -ErrorAction Stop;
+  taskkill /T /PID $pidToStop /F 2>&1 | Out-Null;
   Write-Output 'STOP_OK'
 } catch {
   Write-Output "STOP_ERR:$($_.Exception.Message)"
 }`;
 
+// NOTE: $procId is used instead of $pid because $PID is a read-only
+// automatic PowerShell variable (current session PID). Using $pid would
+// silently resolve to pwsh.exe's own PID instead of the target.
 const CHECK_PROCESS_ALIVE_PS = `
-$pid = {PID};
-$proc = Get-Process -Id $pid -ErrorAction SilentlyContinue;
+$procId = {PID};
+$proc = Get-Process -Id $procId -ErrorAction SilentlyContinue;
 if ($proc) {
   Write-Output 'ALIVE'
 } else {

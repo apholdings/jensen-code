@@ -212,4 +212,15 @@ describe("process manager tool", () => {
 			"Unknown action",
 		);
 	});
+
+	it("is registered in codingTools", async () => {
+		const { codingTools } = await import("./index.js");
+		const names = codingTools.map((t: { name: string }) => t.name);
+		expect(names).toContain("process_manager");
+	});
+
+	it("is registered in allTools", async () => {
+		const { allTools } = await import("./index.js");
+		expect(allTools).toHaveProperty("process_manager");
+	});
 });
