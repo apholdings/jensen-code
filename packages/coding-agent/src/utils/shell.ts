@@ -11,6 +11,8 @@ export interface PowerShellConfig {
 	shell: string;
 	args: string[];
 	flavor: "pwsh" | "powershell";
+	/** Whether to hide the window on Windows (windowsHide spawn option) */
+	windowsHide: boolean;
 }
 
 function findExecutableOnPath(command: string): string | null {
@@ -134,18 +136,19 @@ export function getPowerShellConfig(): PowerShellConfig {
 		return cachedPowerShellConfig;
 	}
 
-	const args = ["-NoLogo", "-NoProfile", "-Command"];
+	const args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"];
+	const windowsHide = process.platform === "win32";
 
 	if (process.platform === "win32") {
 		const pwsh = findExecutableOnPath("pwsh.exe");
 		if (pwsh) {
-			cachedPowerShellConfig = { shell: pwsh, args, flavor: "pwsh" };
+			cachedPowerShellConfig = { shell: pwsh, args, flavor: "pwsh", windowsHide };
 			return cachedPowerShellConfig;
 		}
 
 		const powershell = findExecutableOnPath("powershell.exe");
 		if (powershell) {
-			cachedPowerShellConfig = { shell: powershell, args, flavor: "powershell" };
+			cachedPowerShellConfig = { shell: powershell, args, flavor: "powershell", windowsHide };
 			return cachedPowerShellConfig;
 		}
 
@@ -156,7 +159,7 @@ export function getPowerShellConfig(): PowerShellConfig {
 
 	const pwsh = findExecutableOnPath("pwsh");
 	if (pwsh) {
-		cachedPowerShellConfig = { shell: pwsh, args, flavor: "pwsh" };
+		cachedPowerShellConfig = { shell: pwsh, args, flavor: "pwsh", windowsHide: false };
 		return cachedPowerShellConfig;
 	}
 
