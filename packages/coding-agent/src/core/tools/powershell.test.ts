@@ -363,7 +363,7 @@ describe("health probe with decoder", () => {
 			// Command is like: "[Console]::OutputEncoding=...;Write-Output 'JENSEN_PS_HEALTH_abcdef01'"
 			const match = command.match(/JENSEN_PS_HEALTH_[a-f0-9]+/);
 			if (match) {
-				onData(Buffer.from(match[0] + "\r\n", "utf-8"));
+				onData(Buffer.from(`${match[0]}\r\n`, "utf-8"));
 			}
 			return { exitCode: 0 };
 		};
@@ -388,7 +388,7 @@ describe("health probe with decoder", () => {
 		ops.exec = async (command, _cwd, { onData }) => {
 			const match = command.match(/JENSEN_PS_HEALTH_[a-f0-9]+/);
 			if (match) {
-				onData(Buffer.from(match[0] + "\r\n", "utf-8"));
+				onData(Buffer.from(`${match[0]}\r\n`, "utf-8"));
 			}
 			return { exitCode: 0 };
 		};
