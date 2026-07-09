@@ -37,7 +37,7 @@
   - @apholdings/jensen-ai@1.0.9
   - @apholdings/jensen-tui@1.0.9
 
-## [Unreleased]
+## [1.1.3] - 2026-07-09
 
 ## [1.0.8] - 2026-06-26
 
@@ -230,7 +230,7 @@ Jensen Code is a fork of [pi-mono](https://github.com/badlogic/pi-mono). This re
 
 ## Inherited Upstream History (pi-mono)
 
-### [Unreleased] (Inherited)
+### [1.1.3] - 2026-07-09 (Inherited)
 
 ### Fixed
 

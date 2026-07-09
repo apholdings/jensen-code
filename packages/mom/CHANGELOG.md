@@ -36,7 +36,7 @@
   - @apholdings/jensen-agent-core@1.0.9
   - @apholdings/jensen-ai@1.0.9
 
-## [Unreleased]
+## [1.1.3] - 2026-07-09
 
 ## [1.0.8] - 2026-06-26
 
@@ -104,7 +104,7 @@
   - @apholdings/jensen-ai@0.57.7
   - @apholdings/jensen-code@0.57.7
 
-## [Unreleased]
+## [1.1.3] - 2026-07-09
 
 ## [0.57.6] - 2026-03-26
 
