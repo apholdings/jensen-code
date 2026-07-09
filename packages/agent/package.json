@@ -24,7 +24,7 @@
 	},
 	"publishConfig": {
 		"access": "public",
-		"provenance": true
+		"provenance": false
 	},
 	"dependencies": {
 		"@apholdings/jensen-ai": "1.1.3"

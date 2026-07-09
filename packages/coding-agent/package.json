@@ -41,7 +41,7 @@
 	},
 	"publishConfig": {
 		"access": "public",
-		"provenance": true
+		"provenance": false
 	},
 	"dependencies": {
 		"@apholdings/jensen-agent-core": "1.1.3",

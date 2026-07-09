@@ -1,60 +1,60 @@
 {
-  "name": "@apholdings/jensen-tui",
-  "version": "1.1.3",
-  "description": "Terminal User Interface library with differential rendering for efficient text-based applications",
-  "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "files": [
-    "dist/**/*",
-    "README.md"
-  ],
-  "scripts": {
-    "clean": "shx rm -rf dist",
-    "build": "tsgo -p tsconfig.build.json",
-    "dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
-    "test": "node --test --import tsx test/*.test.ts",
-    "prepublishOnly": "npm run clean && npm run build"
-  },
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
-  },
-  "keywords": [
-    "tui",
-    "terminal",
-    "ui",
-    "text-editor",
-    "differential-rendering",
-    "typescript",
-    "cli"
-  ],
-  "author": "AP Holdings",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/apholdings/jensen-code.git",
-    "directory": "packages/tui"
-  },
-  "homepage": "https://github.com/apholdings/jensen-code/tree/main/packages/tui",
-  "bugs": {
-    "url": "https://github.com/apholdings/jensen-code/issues"
-  },
-  "engines": {
-    "node": ">=20.0.0"
-  },
-  "dependencies": {
-    "@types/mime-types": "^2.1.4",
-    "chalk": "^5.5.0",
-    "get-east-asian-width": "^1.3.0",
-    "marked": "^15.0.12",
-    "mime-types": "^3.0.1"
-  },
-  "optionalDependencies": {
-    "koffi": "^2.9.0"
-  },
-  "devDependencies": {
-    "@xterm/headless": "^5.5.0",
-    "@xterm/xterm": "^5.5.0"
-  }
+	"name": "@apholdings/jensen-tui",
+	"version": "1.1.3",
+	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"files": [
+		"dist/**/*",
+		"README.md"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsgo -p tsconfig.build.json",
+		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
+		"test": "node --test --import tsx test/*.test.ts",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"publishConfig": {
+		"access": "public",
+		"provenance": false
+	},
+	"keywords": [
+		"tui",
+		"terminal",
+		"ui",
+		"text-editor",
+		"differential-rendering",
+		"typescript",
+		"cli"
+	],
+	"author": "AP Holdings",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/apholdings/jensen-code.git",
+		"directory": "packages/tui"
+	},
+	"homepage": "https://github.com/apholdings/jensen-code/tree/main/packages/tui",
+	"bugs": {
+		"url": "https://github.com/apholdings/jensen-code/issues"
+	},
+	"engines": {
+		"node": ">=20.0.0"
+	},
+	"dependencies": {
+		"@types/mime-types": "^2.1.4",
+		"chalk": "^5.5.0",
+		"get-east-asian-width": "^1.3.0",
+		"marked": "^15.0.12",
+		"mime-types": "^3.0.1"
+	},
+	"optionalDependencies": {
+		"koffi": "^2.9.0"
+	},
+	"devDependencies": {
+		"@xterm/headless": "^5.5.0",
+		"@xterm/xterm": "^5.5.0"
+	}
 }
