@@ -20,7 +20,7 @@
 	},
 	"publishConfig": {
 		"access": "public",
-		"provenance": false
+		"provenance": true
 	},
 	"dependencies": {
 		"@anthropic-ai/sandbox-runtime": "^0.0.16",

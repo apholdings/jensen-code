@@ -39,7 +39,7 @@
 	},
 	"publishConfig": {
 		"access": "public",
-		"provenance": false
+		"provenance": true
 	},
 	"dependencies": {
 		"@anthropic-ai/sdk": "^0.82.0",
