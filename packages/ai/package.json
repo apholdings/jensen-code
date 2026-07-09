@@ -1,84 +1,84 @@
 {
-	"name": "@apholdings/jensen-ai",
-	"version": "1.1.1",
-	"description": "Unified LLM API with automatic model discovery and provider configuration",
-	"type": "module",
-	"main": "./dist/index.js",
-	"types": "./dist/index.d.ts",
-	"exports": {
-		".": {
-			"types": "./dist/index.d.ts",
-			"import": "./dist/index.js"
-		},
-		"./oauth": {
-			"types": "./dist/oauth.d.ts",
-			"import": "./dist/oauth.js"
-		},
-		"./bedrock-provider": {
-			"types": "./bedrock-provider.d.ts",
-			"import": "./bedrock-provider.js"
-		}
-	},
-	"bin": {
-		"jensen-ai": "dist/cli.js"
-	},
-	"files": [
-		"dist",
-		"bedrock-provider.js",
-		"bedrock-provider.d.ts",
-		"README.md"
-	],
-	"scripts": {
-		"clean": "shx rm -rf dist",
-		"generate-models": "npx tsx scripts/generate-models.ts",
-		"build": "npm run generate-models && tsgo -p tsconfig.build.json",
-		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
-		"dev:tsc": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
-		"test": "vitest --run --passWithNoTests",
-		"prepublishOnly": "npm run clean && npm run build"
-	},
-	"publishConfig": {
-		"access": "public",
-		"provenance": true
-	},
-	"dependencies": {
-		"@anthropic-ai/sdk": "^0.82.0",
-		"@aws-sdk/client-bedrock-runtime": "^3.1023.0",
-		"@google/genai": "^1.48.0",
-		"@mistralai/mistralai": "1.14.1",
-		"@sinclair/typebox": "^0.34.41",
-		"ajv": "^8.17.1",
-		"ajv-formats": "^3.0.1",
-		"chalk": "^5.6.2",
-		"openai": "6.33.0",
-		"partial-json": "^0.1.7",
-		"proxy-agent": "^6.5.0",
-		"undici": "^7.19.1",
-		"zod-to-json-schema": "^3.24.6"
-	},
-	"keywords": [
-		"ai",
-		"llm",
-		"openai",
-		"anthropic",
-		"gemini",
-		"bedrock",
-		"unified",
-		"api"
-	],
-	"author": "AP Holdings",
-	"license": "MIT",
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/apholdings/jensen-code.git",
-		"directory": "packages/ai"
-	},
-	"engines": {
-		"node": ">=20.0.0"
-	},
-	"devDependencies": {
-		"@types/node": "^24.3.0",
-		"canvas": "^3.2.0",
-		"vitest": "^3.2.4"
-	}
+  "name": "@apholdings/jensen-ai",
+  "version": "1.1.2",
+  "description": "Unified LLM API with automatic model discovery and provider configuration",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./oauth": {
+      "types": "./dist/oauth.d.ts",
+      "import": "./dist/oauth.js"
+    },
+    "./bedrock-provider": {
+      "types": "./bedrock-provider.d.ts",
+      "import": "./bedrock-provider.js"
+    }
+  },
+  "bin": {
+    "jensen-ai": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "bedrock-provider.js",
+    "bedrock-provider.d.ts",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "shx rm -rf dist",
+    "generate-models": "npx tsx scripts/generate-models.ts",
+    "build": "npm run generate-models && tsgo -p tsconfig.build.json",
+    "dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
+    "dev:tsc": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
+    "test": "vitest --run --passWithNoTests",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.82.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1023.0",
+    "@google/genai": "^1.48.0",
+    "@mistralai/mistralai": "1.14.1",
+    "@sinclair/typebox": "^0.34.41",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "chalk": "^5.6.2",
+    "openai": "6.33.0",
+    "partial-json": "^0.1.7",
+    "proxy-agent": "^6.5.0",
+    "undici": "^7.19.1",
+    "zod-to-json-schema": "^3.24.6"
+  },
+  "keywords": [
+    "ai",
+    "llm",
+    "openai",
+    "anthropic",
+    "gemini",
+    "bedrock",
+    "unified",
+    "api"
+  ],
+  "author": "AP Holdings",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/apholdings/jensen-code.git",
+    "directory": "packages/ai"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "canvas": "^3.2.0",
+    "vitest": "^3.2.4"
+  }
 }
