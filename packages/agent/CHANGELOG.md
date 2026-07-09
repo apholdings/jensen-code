@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.2
+
+### Patch Changes
+
+- @apholdings/jensen-ai@1.1.2
+
+## 1.1.1
+
+### Patch Changes
+
+- @apholdings/jensen-ai@1.1.1
+
 ## 1.1.0
 
 ### Patch Changes
