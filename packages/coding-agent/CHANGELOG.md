@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Terminal tab title now shows an animated braille spinner (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`) while Jensen is actively working. The spinner covers the full agent cycle (model generation, tool execution, streaming) and stops when Jensen is idle, waiting for user input, cancelled, or errored.
+- Terminal title prefix changed from legacy `π` symbol to `Jensen` (e.g., `Jensen - django-mmo`).
+
 ## 1.1.2
 
 ### Patch Changes

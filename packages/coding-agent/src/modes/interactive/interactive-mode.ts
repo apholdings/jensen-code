@@ -90,6 +90,7 @@ import {
 	STEER_COMMAND_ACTIVE_WORK_REQUIRED,
 	STEER_COMMAND_USAGE,
 } from "../../core/steer-command.js";
+import { TerminalTitle } from "../../core/terminal-title.js";
 import type { TruncationResult } from "../../core/tools/truncate.js";
 import { searchDuckDuckGoLite } from "../../core/tools/web-search.js";
 import { formatUltraplanShowOutput } from "../../core/ultraplan.js";
@@ -252,6 +253,9 @@ export class InteractiveMode {
 
 	// Track pending bash components (shown in pending area, moved to chat on submit)
 	private pendingBashComponents: BashExecutionComponent[] = [];
+
+	// Terminal title with animated working indicator
+	private terminalTitleController!: TerminalTitle;
 
 	// Auto-compaction state
 	private autoCompactionLoader: Loader | undefined = undefined;
@@ -1398,11 +1402,12 @@ export class InteractiveMode {
 	private updateTerminalTitle(): void {
 		const cwdBasename = path.basename(process.cwd());
 		const sessionName = this.sessionManager.getSessionName();
-		if (sessionName) {
-			this.ui.terminal.setTitle(`π - ${sessionName} - ${cwdBasename}`);
-		} else {
-			this.ui.terminal.setTitle(`π - ${cwdBasename}`);
+		const workspaceName = sessionName ? `${sessionName} - ${cwdBasename}` : cwdBasename;
+
+		if (!this.terminalTitleController) {
+			this.terminalTitleController = new TerminalTitle(this.ui.terminal, workspaceName);
 		}
+		this.terminalTitleController.initialize(workspaceName);
 	}
 
 	/**
@@ -3340,6 +3345,9 @@ export class InteractiveMode {
 				this.ui.requestRender();
 				break;
 			case "agent_start":
+				// Start terminal title spinner
+				this.terminalTitleController?.setWorking(true);
+
 				// Restore main escape handler if retry handler is still active
 				// (retry success event fires later, but we need main handler now)
 				if (this.retryEscapeHandler) {
@@ -3550,6 +3558,9 @@ export class InteractiveMode {
 			}
 
 			case "agent_end":
+				// Stop terminal title spinner
+				this.terminalTitleController?.setWorking(false);
+
 				if (this.loadingAnimation) {
 					this.loadingAnimation.dispose();
 					const oldLoader = this.loadingAnimation;
@@ -5967,6 +5978,7 @@ export class InteractiveMode {
 			this.retryLoader = undefined;
 		}
 		this.clearExtensionTerminalInputListeners();
+		this.terminalTitleController?.dispose();
 		this.footer.dispose();
 		this.footerDataProvider.dispose();
 		if (this.unsubscribe) {
