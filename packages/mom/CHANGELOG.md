@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.4
+
+### Patch Changes
+
+- Updated dependencies
+  - @apholdings/jensen-code@1.1.4
+  - @apholdings/jensen-agent-core@1.1.4
+  - @apholdings/jensen-ai@1.1.4
+
 ## [Unreleased]
 
 ## 1.1.2

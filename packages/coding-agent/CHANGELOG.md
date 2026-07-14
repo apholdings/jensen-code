@@ -1,10 +1,15 @@
 # Changelog
 
+## 1.1.4
+
+### Patch Changes
+
+- Fixed `todo_write` state recovery between inference turns. The tool can now retrieve the persisted todo list when called with `{todos:[], snapshotOmitted:true}`, preventing the model from reconstructing task lists incorrectly after the full snapshot was omitted from context for token optimization.
+  - @apholdings/jensen-agent-core@1.1.4
+  - @apholdings/jensen-ai@1.1.4
+  - @apholdings/jensen-tui@1.1.4
+
 ## [Unreleased]
-
-### Fixed
-
-- Fixed `todo_write` state recovery between inference turns. The tool can now retrieve the persisted todo list when called with `{todos:[], snapshotOmitted:true}`, preventing the model from reconstructing task lists incorrectly after the full snapshot was omitted from context for token optimization ([#XXX](https://github.com/apholdings/jensen-code/issues/XXX))
 
 ## 1.1.2
 
