@@ -45,9 +45,9 @@
   "engines": {
     "node": ">=20.0.0"
   },
-  "version": "1.1.4",
+  "version": "1.1.5",
   "dependencies": {
-    "@apholdings/jensen-code": "1.1.4",
+    "@apholdings/jensen-code": "1.1.5",
     "@mariozechner/jiti": "^2.6.5",
     "get-east-asian-width": "^1.4.0"
   },
