@@ -329,13 +329,15 @@ Parameters:
   - content: Imperative description of what needs to be done (e.g., "Implement user authentication")
   - activeForm: Present continuous form shown during execution (e.g., "Implementing user authentication")
   - status: One of "pending", "in_progress", or "completed"
+- snapshotOmitted: Optional boolean. Set to true alongside an empty todos array to retrieve the current persisted todo state without modifying it. Use this when the conversation history shows a compacted todo_write call (with snapshotOmitted:true and empty todos) and you need to recover the current state before making edits.
 
 Semantics:
 - FULL LIST REPLACEMENT: Each call completely replaces the previous list — include ALL current todos in every call
 - Mark tasks in_progress when you start working on them, completed when done
 - Mark tasks complete IMMEDIATELY after finishing (do not leave them in_progress)
 - Exactly ONE task should be in_progress at any time during active work
-- An empty array clears all todos
+- An empty array clears all todos (unless snapshotOmitted:true is also set, in which case it reads state)
+- Call todo_write with {todos:[], snapshotOmitted:true} to retrieve the current state before making edits
 
 When NOT to use:
 - Single trivial operations (just do them directly)
@@ -346,7 +348,8 @@ Examples:
 - Start workflow: todos=[{content: "Read existing code", activeForm: "Reading existing code", status: "pending"}, {content: "Implement feature", activeForm: "Implementing feature", status: "pending"}]
 - Begin work: update status of first task to "in_progress"
 - Finish and move on: update first to "completed", second to "in_progress"
-- Clear list: todos=[] (when all tasks are done)`,
+- Clear list: todos=[] (when all tasks are done)
+- Recover state: todos=[], snapshotOmitted=true (returns current state without modifying it)`,
 
 	/**
 	 * Memory write tool - structured session memory

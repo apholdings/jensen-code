@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `todo_write` state recovery between inference turns. The tool can now retrieve the persisted todo list when called with `{todos:[], snapshotOmitted:true}`, preventing the model from reconstructing task lists incorrectly after the full snapshot was omitted from context for token optimization ([#XXX](https://github.com/apholdings/jensen-code/issues/XXX))
+
 ## 1.1.2
 
 ### Patch Changes

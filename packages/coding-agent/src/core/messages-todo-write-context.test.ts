@@ -185,8 +185,8 @@ describe("todo_write model context", () => {
 				type: "text",
 				text:
 					todos.length === 1
-						? "Updated todo list (1 total): 0 pending, 1 in progress, 0 completed. Full snapshot stored outside model context."
-						: "Updated todo list (1000 total): 999 pending, 1 in progress, 0 completed. Full snapshot stored outside model context.",
+						? "Updated todo list (1 total): 0 pending, 1 in progress, 0 completed. Full snapshot stored outside model context. Call todo_write with {todos:[], snapshotOmitted:true} to retrieve current state."
+						: "Updated todo list (1000 total): 999 pending, 1 in progress, 0 completed. Full snapshot stored outside model context. Call todo_write with {todos:[], snapshotOmitted:true} to retrieve current state.",
 			},
 		]);
 		expect(initial).not.toEqual(todos);
@@ -248,6 +248,208 @@ describe("todo_write model context", () => {
 		expect(converted[1]).toMatchObject({
 			role: "assistant",
 			content: [{ type: "toolCall", arguments: { todos: [], snapshotOmitted: true } }],
+		});
+	});
+
+	describe("read mode (snapshotOmitted recovery)", () => {
+		it("returns persisted state without modifying it", async () => {
+			const existing = [
+				{ content: "Task A", activeForm: "Doing A", status: "pending" as const },
+				{ content: "Task B", activeForm: "Doing B", status: "in_progress" as const },
+				{ content: "Task C", activeForm: "Doing C", status: "completed" as const },
+			];
+			let persisted = [...existing];
+			const tool = createTodoWriteTool(
+				() => persisted,
+				(next) => {
+					persisted = next;
+				},
+			);
+			const result = await tool.execute("read-call", { todos: [], snapshotOmitted: true });
+			expect(result.content[0]).toMatchObject({
+				type: "text",
+			});
+			const text = (result.content[0] as { type: "text"; text: string }).text;
+			expect(text).toContain("Current todo list (3 total): 1 pending, 1 in progress, 1 completed");
+			expect(text).toContain("[ ] Task A");
+			expect(text).toContain("[>] Doing B");
+			expect(text).toContain("[x] Task C");
+			expect(persisted).toEqual(existing); // state unchanged
+			expect(result.details).toEqual({ todos: existing });
+		});
+
+		it("returns empty message when no todos exist", async () => {
+			let persisted: TodoItem[] = [];
+			const tool = createTodoWriteTool(
+				() => persisted,
+				(next) => {
+					persisted = next;
+				},
+			);
+			const result = await tool.execute("read-call", { todos: [], snapshotOmitted: true });
+			expect(result.content).toEqual([{ type: "text", text: "Todo list is empty." }]);
+			expect(result.details).toEqual({ todos: [] });
+		});
+
+		it("snapshotOmitted without empty todos still writes (not read)", async () => {
+			let persisted: TodoItem[] = [];
+			const tool = createTodoWriteTool(
+				() => persisted,
+				(next) => {
+					persisted = next;
+				},
+			);
+			const newTodos: TodoItem[] = [{ content: "New task", activeForm: "Doing new task", status: "pending" }];
+			const result = await tool.execute("write-call", {
+				todos: newTodos,
+				snapshotOmitted: true,
+			});
+			expect(persisted).toEqual(newTodos);
+			expect(result.content[0]).toMatchObject({
+				type: "text",
+			});
+			const text = (result.content[0] as { type: "text"; text: string }).text;
+			expect(text).toContain("Updated todo list (1 total)");
+		});
+	});
+
+	describe("write-read-write round-trip", () => {
+		it("preserves exact content across write, read, and write-update", async () => {
+			let persisted: TodoItem[] = [];
+			const tool = createTodoWriteTool(
+				() => persisted,
+				(next) => {
+					persisted = next;
+				},
+			);
+
+			// Step 1: Write initial list
+			const initialList: TodoItem[] = [
+				{ content: "Audit codebase", activeForm: "Auditing codebase", status: "pending" },
+				{ content: "Implement fix", activeForm: "Implementing fix", status: "pending" },
+				{ content: "Write tests", activeForm: "Writing tests", status: "pending" },
+				{ content: "Review changes", activeForm: "Reviewing changes", status: "pending" },
+				{ content: "Deploy", activeForm: "Deploying", status: "pending" },
+			];
+			await tool.execute("write-1", { todos: initialList });
+			expect(persisted).toEqual(initialList);
+
+			// Step 2: Read back (simulating next inference turn)
+			const readResult = await tool.execute("read-1", { todos: [], snapshotOmitted: true });
+			expect(readResult.details).toEqual({ todos: initialList });
+
+			// Step 3: Update: mark first as in_progress, second stays pending
+			const updatedList: TodoItem[] = [
+				{ content: "Audit codebase", activeForm: "Auditing codebase", status: "in_progress" },
+				{ content: "Implement fix", activeForm: "Implementing fix", status: "pending" },
+				{ content: "Write tests", activeForm: "Writing tests", status: "pending" },
+				{ content: "Review changes", activeForm: "Reviewing changes", status: "pending" },
+				{ content: "Deploy", activeForm: "Deploying", status: "pending" },
+			];
+			await tool.execute("write-2", { todos: updatedList });
+			expect(persisted).toEqual(updatedList);
+
+			// Step 4: Read again, verify exact content
+			const readResult2 = await tool.execute("read-2", { todos: [], snapshotOmitted: true });
+			expect(readResult2.details).toEqual({ todos: updatedList });
+
+			// Step 5: Complete first, start second
+			const updatedList2: TodoItem[] = [
+				{ content: "Audit codebase", activeForm: "Auditing codebase", status: "completed" },
+				{ content: "Implement fix", activeForm: "Implementing fix", status: "in_progress" },
+				{ content: "Write tests", activeForm: "Writing tests", status: "pending" },
+				{ content: "Review changes", activeForm: "Reviewing changes", status: "pending" },
+				{ content: "Deploy", activeForm: "Deploying", status: "pending" },
+			];
+			await tool.execute("write-3", { todos: updatedList2 });
+			expect(persisted).toEqual(updatedList2);
+		});
+
+		it("adding a task preserves all existing tasks", async () => {
+			let persisted: TodoItem[] = [];
+			const tool = createTodoWriteTool(
+				() => persisted,
+				(next) => {
+					persisted = next;
+				},
+			);
+
+			const initial: TodoItem[] = [
+				{ content: "Task 1", activeForm: "Doing 1", status: "pending" },
+				{ content: "Task 2", activeForm: "Doing 2", status: "pending" },
+			];
+			await tool.execute("write-1", { todos: initial });
+
+			// Read back
+			const readResult = await tool.execute("read-1", { todos: [], snapshotOmitted: true });
+			expect(readResult.details).toEqual({ todos: initial });
+
+			// Add a new task
+			const withNew: TodoItem[] = [...initial, { content: "Task 3", activeForm: "Doing 3", status: "pending" }];
+			await tool.execute("write-2", { todos: withNew });
+			expect(persisted).toEqual(withNew);
+			expect(persisted.length).toBe(3);
+		});
+
+		it("idempotent writes do not cause duplication", async () => {
+			let persisted: TodoItem[] = [];
+			const tool = createTodoWriteTool(
+				() => persisted,
+				(next) => {
+					persisted = next;
+				},
+			);
+
+			const list: TodoItem[] = [{ content: "Task A", activeForm: "Doing A", status: "pending" }];
+			await tool.execute("write-1", { todos: list });
+			await tool.execute("write-2", { todos: list });
+			await tool.execute("write-3", { todos: list });
+
+			expect(persisted).toEqual(list);
+			expect(persisted.length).toBe(1);
+		});
+
+		it("clearing the list works correctly", async () => {
+			let persisted: TodoItem[] = [];
+			const tool = createTodoWriteTool(
+				() => persisted,
+				(next) => {
+					persisted = next;
+				},
+			);
+
+			const list: TodoItem[] = [{ content: "Task A", activeForm: "Doing A", status: "pending" }];
+			await tool.execute("write-1", { todos: list });
+			expect(persisted).toEqual(list);
+
+			// Clear (no snapshotOmitted)
+			await tool.execute("write-2", { todos: [] });
+			expect(persisted).toEqual([]);
+
+			// Read back confirms empty
+			const readResult = await tool.execute("read-1", { todos: [], snapshotOmitted: true });
+			expect(readResult.content).toEqual([{ type: "text", text: "Todo list is empty." }]);
+		});
+
+		it("large list read does not embed raw snapshot in context arguments", async () => {
+			let persisted: TodoItem[] = makeTodos(100, 200);
+			const tool = createTodoWriteTool(
+				() => persisted,
+				(next) => {
+					persisted = next;
+				},
+			);
+
+			// Read: input is {todos:[], snapshotOmitted:true} — tiny
+			const input = { todos: [], snapshotOmitted: true };
+			const inputSize = byteLength(input);
+			expect(inputSize).toBeLessThan(50);
+
+			const result = await tool.execute("read-call", input);
+			// Result is larger (contains content) but input stays bounded
+			expect(result.content[0].type).toBe("text");
+			const text = (result.content[0] as { type: "text"; text: string }).text;
+			expect(text).toContain("Current todo list (100 total)");
 		});
 	});
 });

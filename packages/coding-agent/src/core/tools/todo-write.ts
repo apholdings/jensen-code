@@ -30,21 +30,50 @@ export interface TodoItem {
 }
 
 /**
+ * Format a single todo item for display.
+ */
+function formatTodoItem(todo: TodoItem): string {
+	const statusMark = todo.status === "completed" ? "x" : todo.status === "in_progress" ? ">" : " ";
+	return `- [${statusMark}] ${todo.status === "in_progress" ? todo.activeForm : todo.content}`;
+}
+
+/**
  * Create the todo_write tool.
- * @param _getSessionTodos - Callback to get the current todos from session (reserved for future use)
+ * @param getSessionTodos - Callback to get the current todos from session
  * @param setSessionTodos - Callback to set todos in session and trigger update event
  */
 export function createTodoWriteTool(
-	_getSessionTodos: () => TodoItem[],
+	getSessionTodos: () => TodoItem[],
 	setSessionTodos: (todos: TodoItem[]) => void,
 ): AgentTool<typeof todoWriteSchema> {
 	return {
 		name: "todo_write",
 		label: "todo_write",
 		description:
-			"Update the session's structured task/todo list. Use proactively for multi-step tasks. Full list replacement each call.",
+			"Update the session's structured task/todo list for multi-step workflows. Full list replacement each call. When the conversation history shows '{todos:[], snapshotOmitted:true}', call todo_write with those exact arguments to retrieve the current state before editing.",
 		parameters: todoWriteSchema,
-		execute: async (_toolCallId: string, { todos }: { todos: TodoItem[] }, _signal?: AbortSignal) => {
+		execute: async (_toolCallId: string, { todos, snapshotOmitted }: TodoWriteInput, _signal?: AbortSignal) => {
+			// Read mode: snapshot was omitted from context, return current state
+			if (snapshotOmitted === true && (!todos || todos.length === 0)) {
+				const current = getSessionTodos();
+				if (current.length === 0) {
+					return {
+						content: [{ type: "text", text: "Todo list is empty." }],
+						details: { todos: [] },
+					};
+				}
+				const lines = current.map(formatTodoItem);
+				const pending = current.filter((t) => t.status === "pending").length;
+				const inProgress = current.filter((t) => t.status === "in_progress").length;
+				const completed = current.filter((t) => t.status === "completed").length;
+				const header = `Current todo list (${current.length} total): ${pending} pending, ${inProgress} in progress, ${completed} completed.`;
+				return {
+					content: [{ type: "text", text: `${header}\n${lines.join("\n")}` }],
+					details: { todos: current },
+				};
+			}
+
+			// Write mode: full list replacement
 			// Validate todos
 			if (!Array.isArray(todos)) {
 				return {
@@ -91,7 +120,8 @@ export function createTodoWriteTool(
 			if (todos.length > 0) {
 				summary += `: ${pending} pending, ${inProgress} in progress, ${completed} completed`;
 			}
-			summary += ". Full snapshot stored outside model context.";
+			summary +=
+				". Full snapshot stored outside model context. Call todo_write with {todos:[], snapshotOmitted:true} to retrieve current state.";
 
 			return {
 				content: [{ type: "text", text: summary }],
