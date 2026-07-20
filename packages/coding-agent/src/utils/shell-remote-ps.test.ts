@@ -5,6 +5,7 @@ import {
 	encodePowerShellCommand,
 	getPowerShellConfig,
 	REMOTE_POWERSHELL_PREAMBLE,
+	validateSshHost,
 } from "./shell.js";
 
 // ============================================================================
@@ -86,15 +87,16 @@ describe("encodePowerShellCommand", () => {
 // ============================================================================
 
 describe("buildRemotePowerShellArgs", () => {
-	it("returns argv array with host as first arg", () => {
+	it("returns argv array with -- separator and host", () => {
 		const args = buildRemotePowerShellArgs("test-host", "Write-Output 'hello'");
 		expect(Array.isArray(args)).toBe(true);
-		expect(args[0]).toBe("test-host");
+		expect(args[0]).toBe("--");
+		expect(args[1]).toBe("test-host");
 	});
 
 	it("includes powershell.exe with correct flags", () => {
 		const args = buildRemotePowerShellArgs("test-host", "exit 0");
-		expect(args[1]).toBe("powershell.exe");
+		expect(args[2]).toBe("powershell.exe");
 		expect(args).toContain("-NoProfile");
 		expect(args).toContain("-NonInteractive");
 		expect(args).toContain("-EncodedCommand");
@@ -114,23 +116,68 @@ describe("buildRemotePowerShellArgs", () => {
 		expect(encoded.length).toBeGreaterThan(0);
 	});
 
-	it("encoded payload contains preamble keywords", () => {
+	it("encoded payload starts with preamble", () => {
 		const command = "exit 0";
 		const args = buildRemotePowerShellArgs("test-host", command);
 		const encoded = args[args.length - 1];
-		// Decode and verify preamble is present
+		// Decode and verify exact preamble structure
 		const buf = Buffer.from(encoded, "base64");
 		const decoded = buf.toString("utf16le");
-		expect(decoded).toContain("ErrorActionPreference");
-		expect(decoded).toContain("ProgressPreference");
+		expect(decoded.startsWith("$ErrorActionPreference")).toBe(true);
+		expect(decoded.codePointAt(0)).toBe("$".codePointAt(0));
+		expect(decoded).not.toContain("\uFEFF");
+		expect(decoded).toContain("$ProgressPreference");
 		expect(decoded).toContain("exit 0");
+	});
+
+	it("encoded payload fails if $ is lost or shifted", () => {
+		// Verify that the test correctly detects corruption of the first character
+		const command = "exit 0";
+		const args = buildRemotePowerShellArgs("test-host", command);
+		const encoded = args[args.length - 1];
+		const buf = Buffer.from(encoded, "base64");
+
+		// Corrupt the first byte to simulate BOM corruption
+		const corrupted = Buffer.concat([Buffer.from([0xff, 0xfe]), buf.subarray(2)]);
+		const decodedCorrupt = corrupted.toString("utf16le");
+		expect(decodedCorrupt.startsWith("$")).toBe(false);
+		expect(decodedCorrupt.startsWith("\uFEFF")).toBe(true);
+
+		// Corrupt by shifting first byte to simulate dropped byte
+		const shifted = buf.subarray(1);
+		// Adding a trailing zero to keep valid UTF-16LE alignment
+		const shiftedAligned = Buffer.concat([shifted, Buffer.from([0x00])]);
+		const decodedShift = shiftedAligned.toString("utf16le");
+		expect(decodedShift.startsWith("$")).toBe(false);
+	});
+
+	it("encoded payload rejects empty source", () => {
+		const encoded = encodePowerShellCommand("");
+		expect(encoded).toBe("");
+	});
+
+	it("encoded payload handles emoji via surrogate pairs", () => {
+		const source = "Write-Output '\uD83D\uDE80'";
+		const encoded = encodePowerShellCommand(source);
+		const buf = Buffer.from(encoded, "base64");
+		const decoded = buf.toString("utf16le");
+		expect(decoded).toContain("\uD83D\uDE80");
+		expect(decoded).toBe(source);
+	});
+
+	it("encoded payload handles Unicode non-BMP", () => {
+		const source = "''"; // empty string literal
+		const encoded = encodePowerShellCommand(source);
+		const buf = Buffer.from(encoded, "base64");
+		const decoded = buf.toString("utf16le");
+		expect(decoded).toBe(source);
 	});
 
 	it("does not hardcode any hostname", () => {
 		const args1 = buildRemotePowerShellArgs("host-a", "exit 0");
 		const args2 = buildRemotePowerShellArgs("host-b", "exit 0");
-		expect(args1[0]).toBe("host-a");
-		expect(args2[0]).toBe("host-b");
+		expect(args1[1]).toBe("host-a");
+		expect(args2[1]).toBe("host-b");
 	});
 
 	it("does not contain any LotG paths or hostnames", () => {
@@ -141,6 +188,62 @@ describe("buildRemotePowerShellArgs", () => {
 		expect(full).not.toContain("django-mmo");
 		expect(full).not.toContain("light-of-the-galaxy");
 		expect(full).not.toMatch(/D:/);
+	});
+});
+
+// ============================================================================
+// validateSshHost tests
+// ============================================================================
+
+describe("validateSshHost", () => {
+	it("accepts legitimate hostname", () => {
+		expect(() => validateSshHost("test-host")).not.toThrow();
+	});
+
+	it("accepts user@host", () => {
+		expect(() => validateSshHost("user@host")).not.toThrow();
+	});
+
+	it("accepts IPv4 address", () => {
+		expect(() => validateSshHost("192.168.1.1")).not.toThrow();
+	});
+
+	it("accepts IPv6 address", () => {
+		expect(() => validateSshHost("[::1]")).not.toThrow();
+	});
+
+	it("accepts host-alias", () => {
+		expect(() => validateSshHost("my-server-alias")).not.toThrow();
+	});
+
+	it("rejects empty host", () => {
+		expect(() => validateSshHost("")).toThrow("must not be empty");
+	});
+
+	it("rejects host starting with - (option injection)", () => {
+		expect(() => validateSshHost("-oProxyCommand=evil")).toThrow("starts with");
+	});
+
+	it("rejects host starting with - followed by legitimate name", () => {
+		expect(() => validateSshHost("-host.example.com")).toThrow("starts with");
+	});
+
+	it("rejects host with spaces", () => {
+		expect(() => validateSshHost("host with spaces")).toThrow("whitespace");
+	});
+
+	it("rejects host with newlines", () => {
+		expect(() => validateSshHost("host\ninjected")).toThrow("whitespace");
+	});
+
+	it("rejects host with tab", () => {
+		expect(() => validateSshHost("host\tinjected")).toThrow("whitespace");
+	});
+
+	it("-- separator prevents option interpretation", () => {
+		const args = buildRemotePowerShellArgs("test-host", "exit 0");
+		expect(args[0]).toBe("--");
+		expect(args[1]).toBe("test-host");
 	});
 });
 

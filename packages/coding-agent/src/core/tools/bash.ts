@@ -46,7 +46,12 @@ export interface BashOperations {
 		command: string,
 		cwd: string,
 		options: {
+			/** Combined stdout + stderr stream (legacy, always called) */
 			onData: (data: Buffer) => void;
+			/** Separate stdout stream (optional, called alongside onData) */
+			onStdout?: (data: Buffer) => void;
+			/** Separate stderr stream (optional, called alongside onData) */
+			onStderr?: (data: Buffer) => void;
 			signal?: AbortSignal;
 			timeout?: number;
 			env?: NodeJS.ProcessEnv;
@@ -63,7 +68,7 @@ export interface BashOperations {
  */
 export function createLocalBashOperations(): BashOperations {
 	return {
-		exec: (command, cwd, { onData, signal, timeout, env }) => {
+		exec: (command, cwd, { onData, onStdout, onStderr, signal, timeout, env }) => {
 			return new Promise((resolve, reject) => {
 				const { shell, args } = getShellConfig();
 
@@ -92,12 +97,19 @@ export function createLocalBashOperations(): BashOperations {
 					}, timeout * 1000);
 				}
 
-				// Stream stdout and stderr
+				// Stream stdout and stderr — both go to onData for backward compat,
+				// and separately to onStdout/onStderr for consumers that need separation.
 				if (child.stdout) {
-					child.stdout.on("data", onData);
+					child.stdout.on("data", (data: Buffer) => {
+						onData(data);
+						onStdout?.(data);
+					});
 				}
 				if (child.stderr) {
-					child.stderr.on("data", onData);
+					child.stderr.on("data", (data: Buffer) => {
+						onData(data);
+						onStderr?.(data);
+					});
 				}
 
 				// Handle shell spawn errors

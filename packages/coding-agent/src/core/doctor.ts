@@ -2,7 +2,7 @@
  * Doctor diagnostics module for system health checks.
  */
 
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getPowerShellConfig, resetShellConfigCache } from "../utils/shell.js";
@@ -358,23 +358,118 @@ function checkShell(): DoctorCheckResult {
 }
 
 /**
+ * Result of a PowerShell validation probe.
+ */
+export interface PowerShellDoctorResult {
+	/** Whether getPowerShellConfig() succeeded */
+	configured: boolean;
+	/** Whether the pwsh executable was found on PATH */
+	executableFound: boolean;
+	/** Absolute path to the pwsh executable, or null */
+	executablePath: string | null;
+	/** Whether pwsh --version succeeded */
+	versionDetected: boolean;
+	/** The detected version string, or null */
+	version: string | null;
+	/** Whether the non-interactive probe (pwsh -NoProfile -NonInteractive -Command 'exit 0') passed */
+	nonInteractiveProbePassed: boolean;
+	/** Whether the exit code probe (exit 0) correctly returned exit code 0 */
+	exitCodeProbePassed: boolean;
+}
+
+/**
+ * Probe PowerShell version by executing "pwsh --version".
+ * Returns the version string or null if it fails.
+ */
+function probePowerShellVersion(pwshPath: string): string | null {
+	try {
+		const result = spawnSync(pwshPath, ["--version"], {
+			encoding: "utf-8",
+			timeout: 5000,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		if (result.status === 0 && result.stdout) {
+			return result.stdout.trim();
+		}
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Probe PowerShell non-interactive execution.
+ * Runs: pwsh -NoLogo -NoProfile -NonInteractive -Command 'exit 0'
+ */
+function probePowerShellNonInteractive(pwshPath: string): boolean {
+	try {
+		const result = spawnSync(pwshPath, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "exit 0"], {
+			encoding: "utf-8",
+			timeout: 5000,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		return result.status === 0;
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Check PowerShell Core (pwsh) availability for cross-platform integration tests.
  * Not a requirement for all Linux users — only for PowerShell Core integration.
+ *
+ * Reports structured diagnostics: configured, executableFound, executablePath,
+ * versionDetected, version, nonInteractiveProbePassed, exitCodeProbePassed.
  */
-function checkPowerShell(): DoctorCheckResult {
+function checkPowerShell(): { result: DoctorCheckResult; details: PowerShellDoctorResult } {
+	const details: PowerShellDoctorResult = {
+		configured: false,
+		executableFound: false,
+		executablePath: null,
+		versionDetected: false,
+		version: null,
+		nonInteractiveProbePassed: false,
+		exitCodeProbePassed: false,
+	};
+
 	try {
 		resetShellConfigCache();
 		const config = getPowerShellConfig();
+		details.configured = true;
+		details.executableFound = true;
+		details.executablePath = config.shell;
+
+		// Probe version
+		const version = probePowerShellVersion(config.shell);
+		if (version) {
+			details.versionDetected = true;
+			details.version = version;
+		}
+
+		// Probe non-interactive execution
+		const nonInteractiveOk = probePowerShellNonInteractive(config.shell);
+		details.nonInteractiveProbePassed = nonInteractiveOk;
+		details.exitCodeProbePassed = nonInteractiveOk;
+
+		const versionInfo = details.version ? ` (${details.version})` : "";
+		const probeStatus = nonInteractiveOk ? "" : " — non-interactive probe failed";
+
 		return {
-			name: "pwsh",
-			status: "ok",
-			message: `pwsh ${config.flavor} available at ${config.shell}`,
+			result: {
+				name: "pwsh",
+				status: nonInteractiveOk ? "ok" : "warn",
+				message: `pwsh ${config.flavor}${versionInfo} available at ${config.shell}${probeStatus}`,
+			},
+			details,
 		};
 	} catch {
 		return {
-			name: "pwsh",
-			status: "warn",
-			message: "pwsh not found — PowerShell Core integration tests will be skipped",
+			result: {
+				name: "pwsh",
+				status: "warn",
+				message: "pwsh not found — PowerShell Core integration tests will be skipped",
+			},
+			details,
 		};
 	}
 }
@@ -423,7 +518,7 @@ export async function runDoctorChecks(options: DoctorOptions = {}): Promise<Doct
 
 	// 8. PowerShell Core check
 	const psCheck = checkPowerShell();
-	checks.push(psCheck);
+	checks.push(psCheck.result);
 
 	// Generate summary
 	const okCount = checks.filter((c) => c.status === "ok").length;

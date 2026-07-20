@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { delimiter } from "node:path";
+import { delimiter, join } from "node:path";
 import { spawn, spawnSync } from "child_process";
 import { getBinDir, getSettingsPath } from "../config.js";
 import { SettingsManager } from "../core/settings-manager.js";
@@ -163,6 +163,14 @@ export function getPowerShellConfig(): PowerShellConfig {
 		return cachedPowerShellConfig;
 	}
 
+	// Check known static installation paths before giving up.
+	// Common for local/per-user PowerShell installs that aren't on PATH.
+	const homeLocalPwsh = join(process.env.HOME || process.env.USERPROFILE || "/tmp", ".local", "powershell", "pwsh");
+	if (existsSync(homeLocalPwsh)) {
+		cachedPowerShellConfig = { shell: homeLocalPwsh, args, flavor: "pwsh", windowsHide: false };
+		return cachedPowerShellConfig;
+	}
+
 	throw new Error(
 		"PowerShell is not available on this system. On non-Windows hosts, install PowerShell 7+ (pwsh) or use the bash tool instead.",
 	);
@@ -297,20 +305,47 @@ export function encodePowerShellCommand(source: string): string {
 }
 
 /**
+ * Validate an SSH hostname/destination for use in spawn argv.
+ *
+ * Rejects: empty hosts, hosts starting with "-" (option injection),
+ * hosts containing spaces or newlines, hosts that are empty after trim.
+ *
+ * Accepts: user@host, host-alias, IPv4, IPv6 (with or without brackets),
+ * and any hostname valid per RFC 952/1123.
+ *
+ * Throws a descriptive Error on invalid input so the caller gets a
+ * clear failure instead of a silently corrupted command.
+ */
+export function validateSshHost(host: string): void {
+	if (!host || host.trim().length === 0) {
+		throw new Error("SSH host must not be empty");
+	}
+	if (host.startsWith("-")) {
+		throw new Error(`SSH host starts with "-" — possible option injection: "${host}"`);
+	}
+	if (/[\s]/.test(host)) {
+		throw new Error(`SSH host contains whitespace — possible injection: "${host}"`);
+	}
+}
+
+/**
  * Build argv for executing a PowerShell command on a remote Windows host via SSH.
  *
  * Produces a structured argv array suitable for spawn/exec with shell: false.
  * Uses -EncodedCommand for reliable quoting, exit code propagation, and Unicode.
  *
- * @param host - SSH hostname (e.g., "blackpearl")
+ * The returned array includes "--" to prevent hostname-based option injection.
+ *
+ * @param host - SSH hostname (validated; must not be empty, start with -, or contain spaces)
  * @param command - PowerShell source code
  * @returns Structured argv for the ssh process
  */
 export function buildRemotePowerShellArgs(host: string, command: string): string[] {
+	validateSshHost(host);
 	const preamble = REMOTE_POWERSHELL_PREAMBLE;
 	const fullScript = `${preamble}; ${command}`;
 	const encoded = encodePowerShellCommand(fullScript);
-	return [host, "powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded];
+	return ["--", host, "powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded];
 }
 
 /**
@@ -319,10 +354,13 @@ export function buildRemotePowerShellArgs(host: string, command: string): string
  * Uses -Command (not -EncodedCommand). Only appropriate for simple commands
  * without pipes, complex quoting, multiline scripts, or untrusted data.
  *
- * @param host - SSH hostname
+ * The returned array includes "--" to prevent hostname-based option injection.
+ *
+ * @param host - SSH hostname (validated)
  * @param command - Simple PowerShell command
  * @returns Structured argv for the ssh process
  */
 export function buildSimpleRemotePowerShellArgs(host: string, command: string): string[] {
-	return [host, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command];
+	validateSshHost(host);
+	return ["--", host, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command];
 }

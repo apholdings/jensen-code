@@ -161,6 +161,106 @@ describe("BashResult timestamps", () => {
 });
 
 // ============================================================================
+// BashResult separation tests (stdout, stderr, timedOut, spawnError)
+// ============================================================================
+
+describe("BashResult stream separation", () => {
+	it("captures stdout only with exit 0", async () => {
+		const result = await executeBash("printf 'hello stdout'");
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("hello stdout");
+		expect(result.stderr).toBe("");
+		expect(result.output).toContain("hello stdout");
+		expect(result.timedOut).toBe(false);
+		expect(result.cancelled).toBe(false);
+		expect(result.spawnError).toBeUndefined();
+	});
+
+	it("captures stderr only with exit 0", async () => {
+		const result = await executeBash("printf 'error message' >&2");
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toContain("error message");
+		expect(result.stdout).toBe("");
+		expect(result.timedOut).toBe(false);
+		expect(result.cancelled).toBe(false);
+	});
+
+	it("captures simultaneous stdout and stderr", async () => {
+		const result = await executeBash("printf 'out'; printf 'err' >&2");
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toBe("out");
+		expect(result.stderr).toBe("err");
+	});
+
+	it("captures stdout with non-zero exit", async () => {
+		const result = await executeBash("printf 'fail output' >&2; exit 3");
+		expect(result.exitCode).toBe(3);
+		expect(result.stderr).toContain("fail output");
+	});
+
+	it("does not treat stderr as failure when exit 0", async () => {
+		const result = await executeBash("printf 'just noise' >&2; exit 0");
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toContain("just noise");
+		expect(result.stdout).toBe("");
+	});
+
+	it("timestamps are present in all result states", async () => {
+		const result = await executeBash("true");
+		expect(result.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+		expect(result.finishedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+		expect(result.startedAt <= result.finishedAt).toBe(true);
+	});
+
+	it("timedOut is false on normal completion", async () => {
+		const result = await executeBash("true");
+		expect(result.timedOut).toBe(false);
+	});
+
+	it("spawnError is undefined on normal completion", async () => {
+		const result = await executeBash("true");
+		expect(result.spawnError).toBeUndefined();
+	});
+});
+
+// ============================================================================
+// Pipeline evidence tests
+// ============================================================================
+
+describe("pipeline evidence", () => {
+	it("detects simple pipeline and marks non-authoritative", async () => {
+		const result = await executeBash("false | tail");
+		expect(result.pipeline).toBeDefined();
+		expect(result.pipeline!.isPipeline).toBe(true);
+		expect(result.pipeline!.evidenceAuthoritative).toBe(false);
+	});
+
+	it("detects pipeline with grep", async () => {
+		const result = await executeBash("printf 'ok\n' | grep ok");
+		expect(result.pipeline).toBeDefined();
+		expect(result.pipeline!.isPipeline).toBe(true);
+		expect(result.exitCode).toBe(0);
+	});
+
+	it("does not flag non-pipeline commands", async () => {
+		const result = await executeBash("echo hello");
+		expect(result.pipeline).toBeUndefined();
+	});
+
+	it("non-pipeline command evidence is authoritative by absence of pipeline flag", async () => {
+		const result = await executeBash("true");
+		expect(result.pipeline).toBeUndefined();
+		expect(result.exitCode).toBe(0);
+	});
+
+	it("pipeline exit code reflects last stage", async () => {
+		const result = await executeBash("false | grep anything");
+		expect(result.pipeline).toBeDefined();
+		expect(result.exitCode).toBe(1);
+	});
+});
+
+// ============================================================================
 // system prompt content tests
 // ============================================================================
 
