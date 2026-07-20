@@ -3,6 +3,7 @@
  */
 
 import { APP_NAME, getDocsPath, getExamplesPath, getReadmePath } from "../config.js";
+import { buildExecutionEnvironment } from "./footer-data-provider.js";
 import { formatSkillsForPrompt, type Skill } from "./skills.js";
 import { getToolDescription } from "./tools/tools-prompt-data.js";
 
@@ -143,6 +144,37 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 		);
 	}
 
+	// Evidence discipline (when bash or powershell is available)
+	if (hasBash) {
+		addGuideline(
+			"Never declare a command succeeded without inspecting its exit code or structured result. A non-zero exit code is a failure even if stdout looks positive. Text on stderr alone does not mean failure when exit code is 0.",
+		);
+		addGuideline(
+			"Treat stdout, stderr, exit code, timeout, cancellation, and truncation as separate pieces of evidence. Do not conflate a proposed command with an executed one, or a started command with a completed one.",
+		);
+	}
+
+	// Command classification (when bash or powershell is available)
+	if (hasBash) {
+		addGuideline(
+			"Classify commands before execution: SHORT (foreground, immediate result), LONG_RUNNING (needs explicit timeout, preserve full log), or PERSISTENT (servers/watchers — use start/stop scripts or process_manager, never run in foreground).",
+		);
+	}
+
+	// Platform policies
+	if (hasBash) {
+		const isWindows = process.platform === "win32";
+		if (isWindows) {
+			addGuideline(
+				"You are on Windows. Use the powershell tool for Windows-native workflows. Use bash only for Git Bash or cross-platform operations. Prefer PowerShell cmdlets and proper path quoting with spaces.",
+			);
+		} else {
+			addGuideline(
+				"You are on Linux. Use the bash tool for all shell operations. Do not use PowerShell syntax even if pwsh is installed — it is not the correct shell for this environment.",
+			);
+		}
+	}
+
 	for (const guideline of promptGuidelines ?? []) {
 		const normalized = guideline.trim();
 		if (normalized.length > 0) {
@@ -155,6 +187,26 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 	addGuideline("Show file paths clearly when working with files");
 
 	const guidelines = guidelinesList.map((g) => `- ${g}`).join("\n");
+
+	// Build execution environment block
+	const env = buildExecutionEnvironment(resolvedCwd);
+	let envBlock = "";
+	envBlock += `\nExecution environment:\n`;
+	envBlock += `- host: ${env.host}\n`;
+	envBlock += `- operating system: ${env.os}\n`;
+	envBlock += `- shell: ${env.shell}\n`;
+	envBlock += `- working directory: ${env.initialCwd}\n`;
+	if (env.effectiveCwd !== env.initialCwd) {
+		envBlock += `- effective working directory: ${env.effectiveCwd}\n`;
+	}
+	envBlock += `- git repository: ${env.gitRoot || "none"}\n`;
+	if (env.gitRoot) {
+		const branchLabel = env.isDetachedHead ? "detached HEAD" : env.gitBranch || "unknown";
+		envBlock += `- git branch: ${branchLabel}\n`;
+		if (env.worktreeCount > 1) {
+			envBlock += `- git worktrees: ${env.worktreeCount} total (this worktree: ${env.gitWorktree || "unknown"})\n`;
+		}
+	}
 
 	let prompt = `You are Jensen, the orchestration intelligence operating inside ${APP_NAME}, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
 
@@ -175,7 +227,7 @@ Operator State Discipline:
 - If you have active delegated work, there should be corresponding task or todo entries visible to the operator.
 
 Available tools:
-${toolsList}
+${toolsList}${envBlock}
 
 In addition to the tools above, you may have access to other custom tools depending on the project.
 
@@ -208,9 +260,8 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 		prompt += formatSkillsForPrompt(skills);
 	}
 
-	// Add date and working directory last
+	// Add date
 	prompt += `\nCurrent date: ${date}`;
-	prompt += `\nCurrent working directory: ${promptCwd}`;
 
 	return prompt;
 }

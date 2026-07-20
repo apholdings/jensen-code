@@ -70,8 +70,12 @@ Best practices:
 - Use absolute paths to avoid working directory issues
 - Chain dependent commands with \`&&\` or \`;\`
 - Run independent commands in parallel when possible
-- Check command exit status when operations depend on success
-- Use appropriate timeouts for long-running operations`,
+- Check command exit status when operations depend on success — a non-zero exit code means the command failed
+- Use appropriate timeouts for long-running operations
+- Classify commands before execution: SHORT (fast, foreground), LONG_RUNNING (needs timeout), PERSISTENT (servers/watchers — use start/stop scripts, never run indefinitely in foreground)
+- On Linux: use native Bash syntax, POSIX paths, and Bourne-shell-compatible quoting
+- On Windows via Git Bash: prefer the powershell tool for Windows-native operations; use bash for cross-platform git/script commands
+- Do NOT use \`nohup\`, bare \`&\`, or unowned background processes`,
 
 	/**
 	 * PowerShell tool - Windows-first command execution
@@ -117,7 +121,9 @@ Best practices:
 - For port checking: use Get-NetTCPConnection with $_.LocalPort, not $.LocalPort
 - For process details (CommandLine): use Get-CimInstance Win32_Process, not Get-Process ... CommandLine
 - Apply timeouts to HTTP requests, tests, and polling loops
-- Use the process_manager tool for persistent servers, not nohup, &, or Git Bash backgrounding`,
+- Use the process_manager tool for persistent servers, not nohup, &, or Git Bash backgrounding
+- When executing PowerShell remotely via SSH: the controller command is in Bash, but the payload runs in PowerShell. Do not send Bash syntax as the PowerShell payload. Use single quotes around the SSH command and double quotes inside the PowerShell -Command argument.
+- For \`-EncodedCommand\`, encode the PowerShell script as UTF-16LE before Base64 encoding. Do NOT use UTF-8 for -EncodedCommand.`,
 
 	/**
 	 * Edit tool - surgical file modifications

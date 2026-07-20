@@ -37,6 +37,10 @@ export interface BashResult {
 	truncated: boolean;
 	/** Path to temp file containing full output (if output exceeded truncation threshold) */
 	fullOutputPath?: string;
+	/** ISO timestamp when command execution started */
+	startedAt: string;
+	/** ISO timestamp when command execution finished */
+	finishedAt: string;
 }
 
 // ============================================================================
@@ -70,6 +74,7 @@ export async function executeBashWithOperations(
 	operations: BashOperations,
 	options?: BashExecutorOptions,
 ): Promise<BashResult> {
+	const startedAt = new Date().toISOString();
 	const outputChunks: string[] = [];
 	let outputBytes = 0;
 	const maxOutputBytes = DEFAULT_MAX_BYTES * 2;
@@ -127,6 +132,7 @@ export async function executeBashWithOperations(
 		const fullOutput = outputChunks.join("");
 		const truncationResult = truncateTail(fullOutput);
 		const cancelled = options?.signal?.aborted ?? false;
+		const finishedAt = new Date().toISOString();
 
 		return {
 			output: truncationResult.truncated ? truncationResult.content : fullOutput,
@@ -134,6 +140,8 @@ export async function executeBashWithOperations(
 			cancelled,
 			truncated: truncationResult.truncated,
 			fullOutputPath: tempFilePath,
+			startedAt,
+			finishedAt,
 		};
 	} catch (err) {
 		if (tempFileStream) {
@@ -144,12 +152,15 @@ export async function executeBashWithOperations(
 		if (options?.signal?.aborted) {
 			const fullOutput = outputChunks.join("");
 			const truncationResult = truncateTail(fullOutput);
+			const finishedAt = new Date().toISOString();
 			return {
 				output: truncationResult.truncated ? truncationResult.content : fullOutput,
 				exitCode: undefined,
 				cancelled: true,
 				truncated: truncationResult.truncated,
 				fullOutputPath: tempFilePath,
+				startedAt,
+				finishedAt,
 			};
 		}
 

@@ -1,5 +1,6 @@
 import { spawnSync } from "child_process";
 import { existsSync, type FSWatcher, readFileSync, statSync, watch } from "fs";
+import { hostname } from "os";
 import { basename, dirname, join, resolve } from "path";
 
 type GitPaths = {
@@ -7,6 +8,36 @@ type GitPaths = {
 	commonGitDir: string;
 	headPath: string;
 };
+
+/** Structured worktree entry from git worktree list --porcelain */
+export interface WorktreeEntry {
+	/** Absolute path to worktree root */
+	path: string;
+	/** HEAD commit hash */
+	head: string;
+	/** Branch name, null if detached HEAD */
+	branch: string | null;
+	/** Whether this worktree is locked */
+	locked: boolean;
+	/** Lock reason if locked */
+	lockReason?: string;
+	/** Whether this worktree is prunable */
+	prunable: boolean;
+}
+
+/** Structured execution environment for agent context */
+export interface ExecutionEnvironment {
+	host: string;
+	os: string;
+	shell: string;
+	initialCwd: string;
+	effectiveCwd: string;
+	gitRoot: string | null;
+	gitBranch: string | null;
+	gitWorktree: string | null;
+	worktreeCount: number;
+	isDetachedHead: boolean;
+}
 
 /**
  * Find git metadata paths by walking up from cwd.
@@ -55,6 +86,165 @@ function resolveBranchWithGit(repoDir: string): string | null {
 	});
 	const branch = result.status === 0 ? result.stdout.trim() : "";
 	return branch || null;
+}
+
+/**
+ * Parse git worktree list --porcelain output into structured entries.
+ * Returns empty array if git is unavailable or the repo has no worktrees.
+ */
+export function parseWorktreeList(cwd: string): WorktreeEntry[] {
+	try {
+		const result = spawnSync("git", ["worktree", "list", "--porcelain"], {
+			cwd,
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		if (result.status !== 0) return [];
+		return parseWorktreePorcelain(result.stdout);
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * Parse porcelain worktree output into structured entries.
+ * Format: https://git-scm.com/docs/git-worktree#_porcelain_format
+ */
+function parseWorktreePorcelain(output: string): WorktreeEntry[] {
+	const entries: WorktreeEntry[] = [];
+	let current: Partial<WorktreeEntry> = {};
+
+	for (const line of output.split("\n")) {
+		if (line === "") {
+			// Empty line = end of entry
+			if (current.path && current.head) {
+				entries.push({
+					path: current.path,
+					head: current.head,
+					branch: current.branch ?? null,
+					locked: current.locked ?? false,
+					lockReason: current.lockReason,
+					prunable: current.prunable ?? false,
+				});
+			}
+			current = {};
+			continue;
+		}
+
+		if (line.startsWith("worktree ")) {
+			current.path = line.slice(9);
+		} else if (line.startsWith("HEAD ")) {
+			current.head = line.slice(5);
+		} else if (line.startsWith("branch ")) {
+			const branchRef = line.slice(7);
+			current.branch = branchRef.startsWith("refs/heads/") ? branchRef.slice(11) : branchRef;
+		} else if (line.startsWith("detached")) {
+			current.branch = null;
+		} else if (line.startsWith("locked")) {
+			current.locked = true;
+			const spaceIdx = line.indexOf(" ", 7);
+			if (spaceIdx > 0) {
+				current.lockReason = line.slice(spaceIdx + 1);
+			}
+		} else if (line.startsWith("prunable ")) {
+			current.prunable = true;
+		}
+	}
+
+	return entries;
+}
+
+/**
+ * Build a concise execution environment summary for the agent prompt.
+ *
+ * Sources:
+ * - os.hostname() for host
+ * - process.platform for OS (linux, darwin, win32)
+ * - process.env.SHELL or platform default for shell
+ * - initialCwd must be captured at session start and passed in
+ * - process.cwd() for effective cwd
+ * - git rev-parse for repo root
+ * - git worktree list for worktree info
+ *
+ * Never includes secrets, full env vars, or sensitive data.
+ */
+export function buildExecutionEnvironment(initialCwd: string): ExecutionEnvironment {
+	const osPlatform = process.platform;
+	const osName = osPlatform === "win32" ? "Windows" : osPlatform === "darwin" ? "macOS" : "Linux";
+
+	const shell = process.env.SHELL || (osPlatform === "win32" ? "powershell" : "/bin/sh");
+
+	const effectiveCwd = process.cwd();
+
+	let gitRoot: string | null = null;
+	let gitBranch: string | null = null;
+	let gitWorktree: string | null = null;
+	let worktreeCount = 0;
+	let isDetachedHead = false;
+
+	try {
+		const topLevel = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+			cwd: effectiveCwd,
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		if (topLevel.status === 0) {
+			gitRoot = topLevel.stdout.trim();
+		}
+
+		const branch = spawnSync("git", ["branch", "--show-current"], {
+			cwd: effectiveCwd,
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		if (branch.status === 0) {
+			const branchName = branch.stdout.trim();
+			gitBranch = branchName || null;
+			if (!branchName) isDetachedHead = true;
+		}
+
+		if (gitRoot) {
+			const worktrees = parseWorktreeList(effectiveCwd);
+			worktreeCount = worktrees.length;
+			gitWorktree = findCurrentWorktree(effectiveCwd, worktrees);
+		}
+	} catch {
+		// Not a git repo or git unavailable
+	}
+
+	return {
+		host: hostname(),
+		os: osName,
+		shell,
+		initialCwd,
+		effectiveCwd,
+		gitRoot,
+		gitBranch,
+		gitWorktree,
+		worktreeCount,
+		isDetachedHead,
+	};
+}
+
+/**
+ * Find which worktree entry corresponds to the current directory.
+ */
+function findCurrentWorktree(cwd: string, worktrees: WorktreeEntry[]): string | null {
+	// Normalize cwd for comparison (no trailing slash)
+	const normalizedCwd = cwd.replace(/[/\\]$/, "");
+	for (const wt of worktrees) {
+		const normalizedPath = wt.path.replace(/[/\\]$/, "");
+		if (normalizedCwd === normalizedPath) {
+			return wt.path;
+		}
+	}
+	// If no exact match, check if cwd is a subdirectory of a worktree
+	for (const wt of worktrees) {
+		if (cwd.startsWith(`${wt.path}/`) || cwd.startsWith(`${wt.path}\\`)) {
+			return wt.path;
+		}
+	}
+	return null;
 }
 
 /**

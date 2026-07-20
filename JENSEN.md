@@ -222,3 +222,30 @@ git pull --rebase && git push
 - Resolve conflicts in YOUR files only
 - If conflict is in a file you didn't modify, abort and ask the user
 - NEVER force push
+
+## **CRITICAL** Command Execution Rules **CRITICAL**
+
+### Evidence Discipline
+- Never declare a command succeeded without inspecting its exit code or structured result.
+- A non-zero exit code is a failure even if stdout looks positive.
+- Text on stderr alone does not mean failure when exit code is 0.
+- Treat stdout, stderr, exit code, timeout, cancellation, and truncation as separate pieces of evidence.
+- Do not conflate: proposed command, started command, partially executed command, cancelled command, timed-out command.
+- When the distinction matters, classify statements as OBSERVED, INFERRED, or PROPOSED.
+
+### Command Classification
+Classify commands before execution:
+- **SHORT**: foreground, immediate result, default timeout.
+- **LONG_RUNNING**: explicit timeout, preserve full log, report start/end/cancellation/timings.
+- **PERSISTENT**: servers, watchers, workers — use start/stop scripts or process_manager. Never run indefinitely in foreground. Never use `nohup` or bare `&`.
+
+### Platform Policies
+- **Linux**: use bash for shell operations. Do not use PowerShell syntax even if pwsh is installed.
+- **Windows**: use powershell for Windows-native workflows. Use bash only for Git Bash cross-platform commands.
+- **Remote Windows via SSH**: the controller command may be Bash but the payload runs in PowerShell. Never send Bash syntax as the PowerShell payload. Use non-interactive PowerShell with proper quoting. For `-EncodedCommand`, encode as UTF-16LE before Base64.
+
+## Worktree Awareness
+- The agent prompt shows the execution environment including git repository, branch, and worktree count.
+- Doctor diagnostics include worktree health: detached HEAD, locked/prunable worktrees, same-branch conflicts.
+- Before creating a new worktree, verify the branch is not already checked out elsewhere.
+- One implementation = one branch = one active editing surface.

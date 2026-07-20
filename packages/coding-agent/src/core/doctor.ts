@@ -5,6 +5,7 @@
 import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { parseWorktreeList } from "./footer-data-provider.js";
 
 /** Status levels for doctor checks */
 export type DoctorStatus = "ok" | "warn" | "error";
@@ -214,6 +215,96 @@ async function checkModel(options: DoctorOptions): Promise<DoctorCheckResult> {
 }
 
 /**
+ * Check git worktrees for potential conflicts or issues.
+ */
+function checkWorktrees(cwd: string): DoctorCheckResult {
+	try {
+		// Verify we're in a git repo first
+		execSync("git rev-parse --git-dir", { cwd, stdio: "ignore" });
+	} catch {
+		return {
+			name: "worktrees",
+			status: "ok",
+			message: "Not a git repository — worktree check skipped",
+		};
+	}
+
+	const worktrees = parseWorktreeList(cwd);
+
+	if (worktrees.length === 0) {
+		return {
+			name: "worktrees",
+			status: "ok",
+			message: "1 worktree (no additional worktrees)",
+		};
+	}
+
+	const currentBranch = (() => {
+		try {
+			return execSync("git branch --show-current", { cwd, encoding: "utf-8" }).trim() || null;
+		} catch {
+			return null;
+		}
+	})();
+
+	const warnings: string[] = [];
+
+	// Multiple worktrees
+	if (worktrees.length > 1) {
+		warnings.push(`${worktrees.length} worktrees total`);
+	}
+
+	// Detached HEAD
+	const currentWt = worktrees.find((wt) => {
+		const normCwd = cwd.replace(/[/\\]$/, "");
+		const normPath = wt.path.replace(/[/\\]$/, "");
+		return normCwd === normPath || cwd.startsWith(`${wt.path}/`) || cwd.startsWith(`${wt.path}\\`);
+	});
+
+	if (currentWt && currentWt.branch === null) {
+		warnings.push("current worktree is detached HEAD");
+	}
+
+	// Locked worktrees
+	for (const wt of worktrees) {
+		if (wt.locked) {
+			warnings.push(`worktree ${path.basename(wt.path)} is locked${wt.lockReason ? `: ${wt.lockReason}` : ""}`);
+		}
+	}
+
+	// Prunable worktrees
+	for (const wt of worktrees) {
+		if (wt.prunable) {
+			warnings.push(`worktree ${path.basename(wt.path)} is prunable`);
+		}
+	}
+
+	// Same branch in multiple worktrees
+	if (currentBranch) {
+		const sameBranchWorktrees = worktrees.filter((wt) => wt.branch === currentBranch);
+		if (sameBranchWorktrees.length > 1) {
+			warnings.push(
+				`branch "${currentBranch}" is checked out in ${sameBranchWorktrees.length} worktrees — potential for conflicting edits`,
+			);
+		}
+	}
+
+	if (warnings.length > 0) {
+		return {
+			name: "worktrees",
+			status: "warn",
+			message: warnings.join("; "),
+		};
+	}
+
+	return {
+		name: "worktrees",
+		status: "ok",
+		message: `${worktrees.length} worktree${worktrees.length !== 1 ? "s" : ""}, no issues detected`,
+	};
+}
+
+/**
  * Check git repository status.
  */
 function checkGit(cwd: string): DoctorCheckResult {
@@ -299,7 +390,11 @@ export async function runDoctorChecks(options: DoctorOptions = {}): Promise<Doct
 	const gitCheck = checkGit(cwd);
 	checks.push(gitCheck);
 
-	// 6. Shell check
+	// 6. Worktree check
+	const worktreeCheck = checkWorktrees(cwd);
+	checks.push(worktreeCheck);
+
+	// 7. Shell check
 	const shellCheck = checkShell();
 	checks.push(shellCheck);
 
