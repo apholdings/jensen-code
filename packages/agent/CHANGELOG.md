@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.6
+
+### Patch Changes
+
+- Updated dependencies
+  - @apholdings/jensen-ai@1.1.6
+
 ## 1.1.5
 
 ### Patch Changes
