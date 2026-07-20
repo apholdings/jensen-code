@@ -27,7 +27,7 @@ describe("encodePowerShellCommand", () => {
 
 	it("handles empty string", () => {
 		const result = encodePowerShellCommand("");
-		expect(result.length).toBeGreaterThan(0); // BOM still present
+		expect(result).toBe(""); // No BOM, empty source → empty buffer
 	});
 
 	it("handles Unicode characters (cafe, Chinese, emoji)", () => {
@@ -37,11 +37,8 @@ describe("encodePowerShellCommand", () => {
 		expect(result.length).toBeGreaterThan(0);
 		// Verify we can decode it back
 		const buf = Buffer.from(result, "base64");
-		// BOM: first 2 bytes are 0xFF 0xFE
-		expect(buf[0]).toBe(0xff);
-		expect(buf[1]).toBe(0xfe);
-		// Length: 2 (BOM) + source.length * 2
-		expect(buf.length).toBe(2 + source.length * 2);
+		// No BOM — length is exactly source.length * 2
+		expect(buf.length).toBe(source.length * 2);
 	});
 
 	it("handles special PowerShell characters ($, {, }, ;)", () => {
@@ -123,9 +120,9 @@ describe("buildRemotePowerShellArgs", () => {
 		const encoded = args[args.length - 1];
 		// Decode and verify preamble is present
 		const buf = Buffer.from(encoded, "base64");
-		const decoded = buf.toString("utf16le").slice(1); // Skip BOM
-		expect(decoded).toContain("$ErrorActionPreference");
-		expect(decoded).toContain("$ProgressPreference");
+		const decoded = buf.toString("utf16le");
+		expect(decoded).toContain("ErrorActionPreference");
+		expect(decoded).toContain("ProgressPreference");
 		expect(decoded).toContain("exit 0");
 	});
 
@@ -211,14 +208,12 @@ describe("encoder integration with shell config", () => {
 	});
 
 	it("encoded strings are valid for both pwsh and powershell.exe", () => {
-		// Both pwsh and Windows PowerShell accept UTF-16LE Base64 -EncodedCommand
+		// Both pwsh and Windows PowerShell accept UTF-16LE Base64 without BOM
 		const encoded = encodePowerShellCommand("Write-Output 'portable'");
 		expect(encoded).toBeTruthy();
 		// Verify the decoder doesn't throw
 		const buf = Buffer.from(encoded, "base64");
 		expect(buf.length).toBeGreaterThan(0);
-		// First two bytes are BOM
-		expect(buf[0]).toBe(0xff);
-		expect(buf[1]).toBe(0xfe);
+		// No BOM — first byte is part of first character
 	});
 });

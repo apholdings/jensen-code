@@ -278,19 +278,20 @@ export const REMOTE_POWERSHELL_PREAMBLE = [
  * Windows PowerShell and pwsh both require UTF-16LE encoding.
  * Using UTF-8 produces garbled output or parse errors.
  *
+ * No BOM is included — both PowerShell 7 and Windows PowerShell 5.1
+ * accept UTF-16LE without BOM. A BOM (U+FEFF) causes corruption of
+ * the first statement when used with -EncodedCommand.
+ *
  * This function is pure — it does not execute anything, does not shell-quote,
  * and is fully unit-testable.
  *
  * @param source - PowerShell source code (can contain Unicode)
- * @returns Base64-encoded UTF-16LE string
+ * @returns Base64-encoded UTF-16LE string (no BOM)
  */
 export function encodePowerShellCommand(source: string): string {
-	// Build UTF-16LE bytes. Each char becomes 2 bytes (little-endian),
-	// with a BOM (U+FEFF = 0xFF 0xFE) at the start.
-	const buf = Buffer.alloc(source.length * 2 + 2);
-	buf.writeUInt16LE(0xfeff, 0); // BOM
+	const buf = Buffer.alloc(source.length * 2);
 	for (let i = 0; i < source.length; i++) {
-		buf.writeUInt16LE(source.charCodeAt(i), 2 + i * 2);
+		buf.writeUInt16LE(source.charCodeAt(i), i * 2);
 	}
 	return buf.toString("base64");
 }

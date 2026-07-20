@@ -5,6 +5,7 @@
 import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { getPowerShellConfig, resetShellConfigCache } from "../utils/shell.js";
 import { parseWorktreeList } from "./footer-data-provider.js";
 
 /** Status levels for doctor checks */
@@ -357,6 +358,28 @@ function checkShell(): DoctorCheckResult {
 }
 
 /**
+ * Check PowerShell Core (pwsh) availability for cross-platform integration tests.
+ * Not a requirement for all Linux users — only for PowerShell Core integration.
+ */
+function checkPowerShell(): DoctorCheckResult {
+	try {
+		resetShellConfigCache();
+		const config = getPowerShellConfig();
+		return {
+			name: "pwsh",
+			status: "ok",
+			message: `pwsh ${config.flavor} available at ${config.shell}`,
+		};
+	} catch {
+		return {
+			name: "pwsh",
+			status: "warn",
+			message: "pwsh not found — PowerShell Core integration tests will be skipped",
+		};
+	}
+}
+
+/**
  * Run all doctor diagnostics checks.
  */
 export async function runDoctorChecks(options: DoctorOptions = {}): Promise<DoctorResult> {
@@ -397,6 +420,10 @@ export async function runDoctorChecks(options: DoctorOptions = {}): Promise<Doct
 	// 7. Shell check
 	const shellCheck = checkShell();
 	checks.push(shellCheck);
+
+	// 8. PowerShell Core check
+	const psCheck = checkPowerShell();
+	checks.push(psCheck);
 
 	// Generate summary
 	const okCount = checks.filter((c) => c.status === "ok").length;

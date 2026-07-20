@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { parseArgs } from "../../cli/args.js";
+import { getPowerShellConfig, resetShellConfigCache } from "../../utils/shell.js";
 import {
 	allTools,
 	createLocalPowerShellOperations,
@@ -429,11 +430,20 @@ describe("powershell windows integration", () => {
 		resetPowerShellHealthCheck();
 	});
 
-	const isWindows = process.platform === "win32";
+	// Run these tests when pwsh is available (Windows, or Linux/macOS with pwsh installed).
+	// They exercise the real PowerShell process, not mocked operations.
+	let pwshAvailable = false;
+	try {
+		resetShellConfigCache();
+		getPowerShellConfig();
+		pwshAvailable = true;
+	} catch {
+		// pwsh not available — skip real-process integration tests
+	}
 
-	const itWindows = isWindows ? it : it.skip;
+	const itPwsh = pwshAvailable ? it : it.skip;
 
-	itWindows("real pwsh produces stdout marker", async () => {
+	itPwsh("real pwsh produces stdout marker", async () => {
 		const ops = createLocalPowerShellOperations();
 		const chunks: string[] = [];
 
@@ -447,7 +457,7 @@ describe("powershell windows integration", () => {
 		expect(output).toContain("**JENSEN_IT_STDOUT**");
 	});
 
-	itWindows("real pwsh produces stderr marker", async () => {
+	itPwsh("real pwsh produces stderr marker", async () => {
 		const ops = createLocalPowerShellOperations();
 		const chunks: string[] = [];
 
@@ -461,7 +471,7 @@ describe("powershell windows integration", () => {
 		expect(output).toContain("**JENSEN_IT_STDERR**");
 	});
 
-	itWindows("real pwsh handles Unicode", async () => {
+	itPwsh("real pwsh handles Unicode", async () => {
 		const ops = createLocalPowerShellOperations();
 		const chunks: string[] = [];
 
@@ -478,7 +488,7 @@ describe("powershell windows integration", () => {
 		expect(output).toContain("✓");
 	});
 
-	itWindows("real pwsh health probe validates", async () => {
+	itPwsh("real pwsh health probe validates", async () => {
 		const ops = createLocalPowerShellOperations();
 		if (!ops.validate) throw new Error("validate not set");
 
@@ -486,7 +496,7 @@ describe("powershell windows integration", () => {
 		expect(result.valid).toBe(true);
 	});
 
-	itWindows(
+	itPwsh(
 		"real pwsh timeout is enforced",
 		async () => {
 			const ops = createLocalPowerShellOperations();
