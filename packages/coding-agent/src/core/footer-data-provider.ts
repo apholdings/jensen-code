@@ -29,10 +29,14 @@ export interface WorktreeEntry {
 export interface ExecutionEnvironment {
 	host: string;
 	os: string;
-	shell: string;
+	/** Login shell from $SHELL or platform default — may differ from the tool shell */
+	loginShell: string;
 	initialCwd: string;
 	effectiveCwd: string;
+	/** Git root of the effective working directory, or null */
 	gitRoot: string | null;
+	/** Git root of the initial working directory, only set when different from gitRoot */
+	controllerGitRoot: string | null;
 	gitBranch: string | null;
 	gitWorktree: string | null;
 	worktreeCount: number;
@@ -172,17 +176,19 @@ export function buildExecutionEnvironment(initialCwd: string): ExecutionEnvironm
 	const osPlatform = process.platform;
 	const osName = osPlatform === "win32" ? "Windows" : osPlatform === "darwin" ? "macOS" : "Linux";
 
-	const shell = process.env.SHELL || (osPlatform === "win32" ? "powershell" : "/bin/sh");
+	const loginShell = process.env.SHELL || (osPlatform === "win32" ? "powershell" : "/bin/sh");
 
 	const effectiveCwd = process.cwd();
 
 	let gitRoot: string | null = null;
+	let controllerGitRoot: string | null = null;
 	let gitBranch: string | null = null;
 	let gitWorktree: string | null = null;
 	let worktreeCount = 0;
 	let isDetachedHead = false;
 
 	try {
+		// Effective repository (where commands actually run)
 		const topLevel = spawnSync("git", ["rev-parse", "--show-toplevel"], {
 			cwd: effectiveCwd,
 			encoding: "utf8",
@@ -190,6 +196,21 @@ export function buildExecutionEnvironment(initialCwd: string): ExecutionEnvironm
 		});
 		if (topLevel.status === 0) {
 			gitRoot = topLevel.stdout.trim();
+		}
+
+		// Controller repository (where Jensen was started), only if different from effective
+		if (initialCwd !== effectiveCwd) {
+			const controllerTopLevel = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+				cwd: initialCwd,
+				encoding: "utf8",
+				stdio: ["ignore", "pipe", "pipe"],
+			});
+			if (controllerTopLevel.status === 0) {
+				const candidate = controllerTopLevel.stdout.trim();
+				if (candidate !== gitRoot) {
+					controllerGitRoot = candidate;
+				}
+			}
 		}
 
 		const branch = spawnSync("git", ["branch", "--show-current"], {
@@ -215,10 +236,11 @@ export function buildExecutionEnvironment(initialCwd: string): ExecutionEnvironm
 	return {
 		host: hostname(),
 		os: osName,
-		shell,
+		loginShell,
 		initialCwd,
 		effectiveCwd,
 		gitRoot,
+		controllerGitRoot,
 		gitBranch,
 		gitWorktree,
 		worktreeCount,

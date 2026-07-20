@@ -122,8 +122,10 @@ Best practices:
 - For process details (CommandLine): use Get-CimInstance Win32_Process, not Get-Process ... CommandLine
 - Apply timeouts to HTTP requests, tests, and polling loops
 - Use the process_manager tool for persistent servers, not nohup, &, or Git Bash backgrounding
-- When executing PowerShell remotely via SSH: the controller command is in Bash, but the payload runs in PowerShell. Do not send Bash syntax as the PowerShell payload. Use single quotes around the SSH command and double quotes inside the PowerShell -Command argument.
-- For \`-EncodedCommand\`, encode the PowerShell script as UTF-16LE before Base64 encoding. Do NOT use UTF-8 for -EncodedCommand.`,
+- When executing PowerShell remotely via SSH: the controller command is in Bash, but the payload runs in PowerShell. Do not send Bash syntax as the PowerShell payload.
+- For remote PowerShell via SSH, prefer: (1) simple single-command payloads with minimal quoting, (2) a temporary script file with controlled lifecycle, (3) -EncodedCommand only for complex payload. Avoid fragile multi-layer quoting.
+- For \`-EncodedCommand\`, encode the PowerShell script as UTF-16LE before Base64 encoding. Do NOT use UTF-8 for -EncodedCommand.
+- \`$LASTEXITCODE\` applies to native executables only. Cmdlet errors require try/catch or \`$ErrorActionPreference\`. Propagate the remote exit code back through the SSH process.`,
 
 	/**
 	 * Edit tool - surgical file modifications

@@ -194,12 +194,17 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 	envBlock += `\nExecution environment:\n`;
 	envBlock += `- host: ${env.host}\n`;
 	envBlock += `- operating system: ${env.os}\n`;
-	envBlock += `- shell: ${env.shell}\n`;
+	envBlock += `- login shell: ${env.loginShell}\n`;
+	// The bash tool uses its own shell (/bin/bash on Linux, Git Bash on Windows);
+	// the login shell may differ. The powershell tool uses pwsh or powershell.exe.
 	envBlock += `- working directory: ${env.initialCwd}\n`;
 	if (env.effectiveCwd !== env.initialCwd) {
 		envBlock += `- effective working directory: ${env.effectiveCwd}\n`;
 	}
 	envBlock += `- git repository: ${env.gitRoot || "none"}\n`;
+	if (env.controllerGitRoot) {
+		envBlock += `- controller repository: ${env.controllerGitRoot}\n`;
+	}
 	if (env.gitRoot) {
 		const branchLabel = env.isDetachedHead ? "detached HEAD" : env.gitBranch || "unknown";
 		envBlock += `- git branch: ${branchLabel}\n`;
