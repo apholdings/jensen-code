@@ -1,21 +1,11 @@
-import { randomBytes } from "node:crypto";
-import { createWriteStream, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
 import type { AgentTool } from "@apholdings/jensen-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
-import stripAnsi from "strip-ansi";
-import { getShellConfig, getShellEnv, killProcessTree, sanitizeBinaryOutput } from "../../utils/shell.js";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateTail } from "./truncate.js";
-
-/**
- * Generate a unique temp file path for bash output
- */
-function getTempFilePath(): string {
-	const id = randomBytes(8).toString("hex");
-	return join(tmpdir(), `pi-bash-${id}.log`);
-}
+import { getShellConfig, getShellEnv, killProcessTree } from "../../utils/shell.js";
+import type { BashResult, PipelineEvidence } from "../bash-executor.js";
+import { executeBashWithOperations } from "../bash-executor.js";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult, truncateTail } from "./truncate.js";
 
 const bashSchema = Type.Object({
 	command: Type.String({ description: "Bash command to execute" }),
@@ -25,22 +15,47 @@ const bashSchema = Type.Object({
 export type BashToolInput = Static<typeof bashSchema>;
 
 export interface BashToolDetails {
+	command: string;
+	cwd: string;
+
+	stdout: string;
+	stderr: string;
+
+	exitCode: number | undefined;
+
+	startedAt: string;
+	finishedAt: string;
+
+	timedOut: boolean;
+	cancelled: boolean;
+	truncated: boolean;
+
 	truncation?: TruncationResult;
 	fullOutputPath?: string;
-	cancelled?: boolean;
+	spawnError?: string;
+
+	pipeline?: PipelineEvidence;
 }
 
 /**
- * Pluggable operations for the bash tool.
- * Override these to delegate command execution to remote systems (e.g., SSH).
+ * Pipeline stage exit code metadata captured by the bash executor.
  */
+export interface PipelineStageData {
+	/** Per-stage exit codes from PIPESTATUS */
+	stageExitCodes: number[];
+	/** Whether PIPESTATUS was successfully captured */
+	stageExitCodesKnown: boolean;
+	/** Whether the evidence is authoritative (all stages captured) */
+	evidenceAuthoritative: boolean;
+}
+
 export interface BashOperations {
 	/**
 	 * Execute a command and stream output.
 	 * @param command - The command to execute
 	 * @param cwd - Working directory
 	 * @param options - Execution options
-	 * @returns Promise resolving to exit code (null if killed)
+	 * @returns Promise resolving to exit code (null if killed) and optional pipeline data
 	 */
 	exec: (
 		command: string,
@@ -56,16 +71,42 @@ export interface BashOperations {
 			timeout?: number;
 			env?: NodeJS.ProcessEnv;
 		},
-	) => Promise<{ exitCode: number | null }>;
+	) => Promise<{ exitCode: number | null; pipelineData?: PipelineStageData }>;
 }
 
 /**
- * Create bash operations using pi's built-in local shell execution backend.
+ * Bash command wrapper that captures PIPESTATUS to fd 3 without contaminating
+ * stdout or stderr. Writes stage exit codes as space-separated numbers to fd 3,
+ * then exits with the original last-stage exit code.
  *
- * This is useful for extensions that intercept user_bash and want to keep
- * pi's standard local shell behavior while still wrapping or rewriting
- * commands before execution.
+ * The wrapper is appended after the user command with a semicolon separator.
+ * User stdout/stderr are delivered normally via fd 1 and fd 2.
+ * Pipeline metadata arrives on fd 3.
  */
+const PIPESTATUS_CAPTURE_WRAPPER = `
+_PI_PIPE=("\${PIPESTATUS[@]}")
+_PI_RC=\${_PI_PIPE[-1]}
+printf '%s\\n' "\${_PI_PIPE[*]}" >&3
+exit $_PI_RC
+`;
+
+/**
+ * Parse PIPESTATUS output from fd 3 into structured pipeline data.
+ * Input format: space-separated integers like "1 0" or "0".
+ * Returns parsed stage exit codes or undefined if parsing fails.
+ */
+function parsePipelineData(raw: string): PipelineStageData | undefined {
+	const trimmed = raw.trim();
+	if (!trimmed) return undefined;
+	const codes = trimmed.split(/\s+/).map(Number);
+	if (codes.some(Number.isNaN)) return undefined;
+	return {
+		stageExitCodes: codes,
+		stageExitCodesKnown: true,
+		evidenceAuthoritative: true,
+	};
+}
+
 export function createLocalBashOperations(): BashOperations {
 	return {
 		exec: (command, cwd, { onData, onStdout, onStderr, signal, timeout, env }) => {
@@ -77,11 +118,17 @@ export function createLocalBashOperations(): BashOperations {
 					return;
 				}
 
-				const child = spawn(shell, [...args, command], {
+				// Wrap command with PIPESTATUS capture. The wrapper uses fd 3 for
+				// pipeline metadata — it does not contaminate stdout (fd 1) or
+				// stderr (fd 2). The extra pipe (stdio[3]) is only used internally.
+				const wrappedCommand = `${command};${PIPESTATUS_CAPTURE_WRAPPER}`;
+				const pipelineChunks: Buffer[] = [];
+
+				const child = spawn(shell, [...args, wrappedCommand], {
 					cwd,
 					detached: true,
 					env: env ?? getShellEnv(),
-					stdio: ["ignore", "pipe", "pipe"],
+					stdio: ["ignore", "pipe", "pipe", "pipe"],
 				});
 
 				let timedOut = false;
@@ -109,6 +156,13 @@ export function createLocalBashOperations(): BashOperations {
 					child.stderr.on("data", (data: Buffer) => {
 						onData(data);
 						onStderr?.(data);
+					});
+				}
+
+				// Collect pipeline metadata from fd 3 (PIPESTATUS)
+				if (child.stdio?.[3]) {
+					(child.stdio[3] as NodeJS.ReadableStream).on("data", (data: Buffer) => {
+						pipelineChunks.push(data);
 					});
 				}
 
@@ -149,7 +203,10 @@ export function createLocalBashOperations(): BashOperations {
 						return;
 					}
 
-					resolve({ exitCode: code });
+					const pipelineRaw = Buffer.concat(pipelineChunks).toString("utf-8");
+					const pipelineData = parsePipelineData(pipelineRaw);
+
+					resolve({ exitCode: code, pipelineData });
 				});
 			});
 		},
@@ -183,6 +240,88 @@ export interface BashToolOptions {
 	spawnHook?: BashSpawnHook;
 }
 
+/**
+ * Format BashResult into model-facing text content with structured evidence section.
+ * The model sees: command, exit code, stdout, stderr, timing, and pipeline metadata.
+ * TUI details carry the full BashResult for rendering.
+ */
+function formatBashResultForModel(
+	result: BashResult,
+	command: string,
+	cwd: string,
+): { contentText: string; details: BashToolDetails } {
+	const lines: string[] = [];
+
+	// Structured evidence header
+	lines.push(`Command: \`${command}\``);
+	lines.push(`CWD: ${cwd}`);
+
+	const trimmedStdout = result.stdout.trimEnd();
+	const trimmedStderr = result.stderr.trimEnd();
+
+	if (trimmedStdout) {
+		lines.push("");
+		lines.push("stdout:");
+		lines.push(trimmedStdout);
+	}
+
+	if (trimmedStderr) {
+		lines.push("");
+		lines.push("stderr:");
+		lines.push(trimmedStderr);
+	}
+
+	if (!trimmedStdout && !trimmedStderr) {
+		lines.push("");
+		lines.push("(no output)");
+	}
+
+	const evidenceLines: string[] = [];
+	evidenceLines.push(`exit_code: ${result.exitCode !== undefined ? result.exitCode : "undefined"}`);
+	evidenceLines.push(`timed_out: ${result.timedOut}`);
+	evidenceLines.push(`cancelled: ${result.cancelled}`);
+	evidenceLines.push(`truncated: ${result.truncated}`);
+
+	if (result.spawnError) {
+		evidenceLines.push(`spawn_error: ${result.spawnError}`);
+	}
+
+	if (result.pipeline) {
+		evidenceLines.push(`pipeline: true`);
+		evidenceLines.push(`pipeline_last_exit_code: ${result.pipeline.lastStageExitCode ?? "null"}`);
+		evidenceLines.push(`pipeline_authoritative: ${result.pipeline.evidenceAuthoritative}`);
+		if (result.pipeline.stageExitCodesKnown && result.pipeline.stageExitCodes.length > 0) {
+			evidenceLines.push(`pipeline_stage_exit_codes: [${result.pipeline.stageExitCodes.join(", ")}]`);
+		}
+	}
+
+	if (result.fullOutputPath && result.truncated) {
+		evidenceLines.push(`full_output: ${result.fullOutputPath}`);
+	}
+
+	lines.push("");
+	lines.push("--- Evidence ---");
+	lines.push(evidenceLines.join("\n"));
+
+	const details: BashToolDetails = {
+		command,
+		cwd,
+		stdout: result.stdout,
+		stderr: result.stderr,
+		exitCode: result.exitCode,
+		startedAt: result.startedAt,
+		finishedAt: result.finishedAt,
+		timedOut: result.timedOut,
+		cancelled: result.cancelled,
+		truncated: result.truncated,
+		fullOutputPath: result.fullOutputPath,
+		spawnError: result.spawnError,
+		pipeline: result.pipeline,
+	};
+
+	return { contentText: lines.join("\n"), details };
+}
+
 export function createBashTool(cwd: string, options?: BashToolOptions): AgentTool<typeof bashSchema> {
 	const ops = options?.operations ?? createLocalBashOperations();
 	const commandPrefix = options?.commandPrefix;
@@ -195,152 +334,58 @@ export function createBashTool(cwd: string, options?: BashToolOptions): AgentToo
 		parameters: bashSchema,
 		execute: async (
 			_toolCallId: string,
-			{ command, timeout }: { command: string; timeout?: number },
+			{ command, timeout: _timeout }: { command: string; timeout?: number },
 			signal?: AbortSignal,
 			onUpdate?,
 		) => {
-			// Apply command prefix if configured (e.g., "shopt -s expand_aliases" for alias support)
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
 			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook);
 
-			return new Promise((resolve, reject) => {
-				// We'll stream to a temp file if output gets large
-				let tempFilePath: string | undefined;
-				let tempFileStream: ReturnType<typeof createWriteStream> | undefined;
-				let totalBytes = 0;
-
-				// Keep a rolling buffer of the last chunk for tail truncation
-				const chunks: string[] = [];
-				let chunksBytes = 0;
-				// Keep more than we need so we have enough for truncation
-				const maxChunksBytes = DEFAULT_MAX_BYTES * 2;
-				const decoder = new TextDecoder();
-
-				const handleData = (data: Buffer) => {
-					totalBytes += data.length;
-
-					const text = sanitizeBinaryOutput(stripAnsi(decoder.decode(data, { stream: true }))).replace(/\r/g, "");
-
-					// Start writing to temp file once we exceed the threshold
-					if (totalBytes > DEFAULT_MAX_BYTES && !tempFilePath) {
-						tempFilePath = getTempFilePath();
-						tempFileStream = createWriteStream(tempFilePath);
-						// Write all buffered chunks to the file
-						for (const chunk of chunks) {
-							tempFileStream.write(chunk);
-						}
-					}
-
-					// Write to temp file if we have one
-					if (tempFileStream) {
-						tempFileStream.write(text);
-					}
-
-					// Keep rolling buffer of recent data
-					chunks.push(text);
-					chunksBytes += text.length;
-
-					// Trim old chunks if buffer is too large
-					while (chunksBytes > maxChunksBytes && chunks.length > 1) {
-						const removed = chunks.shift()!;
-						chunksBytes -= removed.length;
-					}
-
-					// Stream partial output to callback (truncated rolling buffer)
-					if (onUpdate) {
-						const fullText = chunks.join("");
-						const truncation = truncateTail(fullText);
-						onUpdate({
-							content: [{ type: "text", text: truncation.content || "" }],
-							details: {
-								truncation: truncation.truncated ? truncation : undefined,
-								fullOutputPath: tempFilePath,
-							},
-						});
-					}
-				};
-
-				ops.exec(spawnContext.command, spawnContext.cwd, {
-					onData: handleData,
-					signal,
-					timeout,
-					env: spawnContext.env,
-				})
-					.then(({ exitCode }) => {
-						// Close temp file stream
-						if (tempFileStream) {
-							tempFileStream.end();
-						}
-
-						// Combine all buffered chunks
-						const fullOutput = chunks.join("");
-
-						// Apply tail truncation
-						const truncation = truncateTail(fullOutput);
-						let outputText = truncation.content || "(no output)";
-
-						// Build details with truncation info
-						let details: BashToolDetails | undefined;
-
-						if (truncation.truncated) {
-							details = {
-								truncation,
-								fullOutputPath: tempFilePath,
-							};
-
-							// Build actionable notice
-							const startLine = truncation.totalLines - truncation.outputLines + 1;
-							const endLine = truncation.totalLines;
-
-							if (truncation.lastLinePartial) {
-								// Edge case: last line alone > 30KB
-								const lastLineSize = formatSize(Buffer.byteLength(fullOutput.split("\n").pop() || "", "utf-8"));
-								outputText += `\n\n[Showing last ${formatSize(truncation.outputBytes)} of line ${endLine} (line is ${lastLineSize}). Full output: ${tempFilePath}]`;
-							} else if (truncation.truncatedBy === "lines") {
-								outputText += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines}. Full output: ${tempFilePath}]`;
-							} else {
-								outputText += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Full output: ${tempFilePath}]`;
-							}
-						}
-
-						if (exitCode !== 0 && exitCode !== null) {
-							outputText += `\n\nCommand exited with code ${exitCode}`;
-							reject(new Error(outputText));
-						} else {
-							resolve({ content: [{ type: "text", text: outputText }], details });
-						}
-					})
-					.catch((err: Error) => {
-						// Close temp file stream
-						if (tempFileStream) {
-							tempFileStream.end();
-						}
-
-						// Combine all buffered chunks for error output
-						let output = chunks.join("");
-
-						if (err.message === "aborted") {
-							if (output) output += "\n\n";
-							output += "Command aborted";
-							const truncation = truncateTail(output);
-							resolve({
-								content: [{ type: "text", text: truncation.content || "Command aborted" }],
-								details: {
-									truncation: truncation.truncated ? truncation : undefined,
-									fullOutputPath: tempFilePath,
-									cancelled: true,
-								},
-							});
-						} else if (err.message.startsWith("timeout:")) {
-							const timeoutSecs = err.message.split(":")[1];
-							if (output) output += "\n\n";
-							output += `Command timed out after ${timeoutSecs} seconds`;
-							reject(new Error(output));
-						} else {
-							reject(err);
-						}
+			// Stream partial updates via the executor's onChunk callback
+			const onChunk = (chunk: string) => {
+				if (onUpdate) {
+					const truncated = truncateTail(chunk);
+					const details: BashToolDetails = {
+						command: resolvedCommand,
+						cwd: spawnContext.cwd,
+						stdout: chunk,
+						stderr: "",
+						exitCode: undefined,
+						startedAt: "",
+						finishedAt: "",
+						timedOut: false,
+						cancelled: false,
+						truncated: truncated.truncated,
+						truncation: truncated.truncated ? truncated : undefined,
+					};
+					onUpdate({
+						content: [{ type: "text", text: truncated.content || "" }],
+						details,
 					});
+				}
+			};
+
+			const result = await executeBashWithOperations(spawnContext.command, spawnContext.cwd, ops, {
+				onChunk,
+				signal,
 			});
+
+			const { contentText, details } = formatBashResultForModel(result, resolvedCommand, spawnContext.cwd);
+
+			// Non-zero exit code, cancelled, timed out, or spawn error: reject so the
+			// agent loop marks it isError=true. The error message carries the full
+			// structured content so the model sees everything.
+			const isError =
+				(result.exitCode !== undefined && result.exitCode !== 0 && result.exitCode !== null) ||
+				result.cancelled ||
+				result.timedOut ||
+				result.spawnError !== undefined;
+
+			if (isError) {
+				throw new Error(contentText);
+			}
+
+			return { content: [{ type: "text", text: contentText }], details };
 		},
 	};
 }

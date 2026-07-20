@@ -204,15 +204,29 @@ export async function executeBashWithOperations(
 		const cancelled = options?.signal?.aborted ?? false;
 		const finishedAt = new Date().toISOString();
 
-		const pipelineMeta: PipelineEvidence | undefined = isPipeline
-			? {
-					isPipeline: true,
+		// Build pipeline evidence from real PIPESTATUS data when available.
+		// The backend (createLocalBashOperations) always captures PIPESTATUS
+		// via fd 3. When pipelineData is present, it is authoritative.
+		// When absent (e.g., remote operations), fall back to best-effort detection.
+		const pipelineMeta: PipelineEvidence | undefined = (() => {
+			if (result.pipelineData) {
+				return {
+					isPipeline: isPipeline,
 					lastStageExitCode: result.exitCode,
-					stageExitCodesKnown: false,
-					stageExitCodes: [],
-					evidenceAuthoritative: false,
-				}
-			: undefined;
+					stageExitCodesKnown: result.pipelineData.stageExitCodesKnown,
+					stageExitCodes: result.pipelineData.stageExitCodes,
+					evidenceAuthoritative: result.pipelineData.evidenceAuthoritative,
+				};
+			}
+			if (!isPipeline) return undefined;
+			return {
+				isPipeline: true,
+				lastStageExitCode: result.exitCode,
+				stageExitCodesKnown: false,
+				stageExitCodes: [],
+				evidenceAuthoritative: false,
+			};
+		})();
 
 		return {
 			output: truncationResult.truncated ? truncationResult.content : fullOutput,

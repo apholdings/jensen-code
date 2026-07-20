@@ -3,6 +3,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Configure local PowerShell for development (Bucephalus).
+# The production runtime does NOT scan arbitrary HOME paths.
+# This explicit env var is the supported way to point to a local pwsh installation.
+LOCAL_PWSH="$HOME/.local/powershell/pwsh"
+if [[ -x "$LOCAL_PWSH" && -z "${JENSEN_PWSH_PATH:-}" ]]; then
+  export JENSEN_PWSH_PATH="$LOCAL_PWSH"
+  echo "[jensen-test] Using local PowerShell: $LOCAL_PWSH"
+fi
+
 # Check for --no-env flag
 NO_ENV=false
 ARGS=()

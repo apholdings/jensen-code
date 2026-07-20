@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { delimiter } from "node:path";
 import { spawn, spawnSync } from "child_process";
 import { getBinDir, getSettingsPath } from "../config.js";
 import { SettingsManager } from "../core/settings-manager.js";
@@ -139,6 +139,17 @@ export function getPowerShellConfig(): PowerShellConfig {
 	const args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"];
 	const windowsHide = process.platform === "win32";
 
+	// Resolution order:
+	// 1. Explicit JENSEN_PWSH_PATH environment variable
+	const explicitPath = process.env.JENSEN_PWSH_PATH;
+	if (explicitPath) {
+		if (existsSync(explicitPath)) {
+			cachedPowerShellConfig = { shell: explicitPath, args, flavor: "pwsh", windowsHide };
+			return cachedPowerShellConfig;
+		}
+		throw new Error(`JENSEN_PWSH_PATH is set to "${explicitPath}" but the file does not exist or is not executable.`);
+	}
+
 	if (process.platform === "win32") {
 		const pwsh = findExecutableOnPath("pwsh.exe");
 		if (pwsh) {
@@ -160,14 +171,6 @@ export function getPowerShellConfig(): PowerShellConfig {
 	const pwsh = findExecutableOnPath("pwsh");
 	if (pwsh) {
 		cachedPowerShellConfig = { shell: pwsh, args, flavor: "pwsh", windowsHide: false };
-		return cachedPowerShellConfig;
-	}
-
-	// Check known static installation paths before giving up.
-	// Common for local/per-user PowerShell installs that aren't on PATH.
-	const homeLocalPwsh = join(process.env.HOME || process.env.USERPROFILE || "/tmp", ".local", "powershell", "pwsh");
-	if (existsSync(homeLocalPwsh)) {
-		cachedPowerShellConfig = { shell: homeLocalPwsh, args, flavor: "pwsh", windowsHide: false };
 		return cachedPowerShellConfig;
 	}
 

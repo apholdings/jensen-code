@@ -5,7 +5,7 @@
 import { execSync, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getPowerShellConfig, resetShellConfigCache } from "../utils/shell.js";
+import { getPowerShellConfig } from "../utils/shell.js";
 import { parseWorktreeList } from "./footer-data-provider.js";
 
 /** Status levels for doctor checks */
@@ -433,7 +433,8 @@ function checkPowerShell(): { result: DoctorCheckResult; details: PowerShellDoct
 	};
 
 	try {
-		resetShellConfigCache();
+		// Do NOT reset the shell config cache. Doctor must not alter global state.
+		// getPowerShellConfig() uses its own cache; we read it without invalidation.
 		const config = getPowerShellConfig();
 		details.configured = true;
 		details.executableFound = true;
