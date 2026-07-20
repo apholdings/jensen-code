@@ -340,9 +340,9 @@ describe("powershell tool prompt", () => {
 
 	it("includes tiered quoting guidance not simplistic rule", () => {
 		const prompt = getToolPrompt("powershell")!;
-		expect(prompt).toContain("Avoid fragile multi-layer quoting");
-		expect(prompt).toContain("simple single-command payloads");
-		// The outdated simplistic rule should be gone
+		expect(prompt).toContain("Avoid fragile multi-layer manual quoting");
+		expect(prompt).toContain("EncodedCommand");
+		// The outdated simplistic single/double quote rule should be gone
 		expect(prompt).not.toContain("single quotes around the SSH command and double quotes inside");
 	});
 

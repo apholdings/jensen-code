@@ -255,3 +255,73 @@ export function killProcessTree(pid: number): void {
 		}
 	}
 }
+
+// ============================================================================
+// PowerShell remote execution utilities
+// ============================================================================
+
+/**
+ * PowerShell preamble for remote execution via SSH.
+ * Sets up: error action preference, progress suppression, output encoding.
+ * Compatible with Windows PowerShell 5.1 and PowerShell 7+.
+ */
+export const REMOTE_POWERSHELL_PREAMBLE = [
+	"$ErrorActionPreference = 'Stop'",
+	"$ProgressPreference = 'SilentlyContinue'",
+	"[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()",
+].join("; ");
+
+/**
+ * Encode a PowerShell script as a UTF-16LE Base64 string suitable for
+ * powershell.exe -EncodedCommand.
+ *
+ * Windows PowerShell and pwsh both require UTF-16LE encoding.
+ * Using UTF-8 produces garbled output or parse errors.
+ *
+ * This function is pure — it does not execute anything, does not shell-quote,
+ * and is fully unit-testable.
+ *
+ * @param source - PowerShell source code (can contain Unicode)
+ * @returns Base64-encoded UTF-16LE string
+ */
+export function encodePowerShellCommand(source: string): string {
+	// Build UTF-16LE bytes. Each char becomes 2 bytes (little-endian),
+	// with a BOM (U+FEFF = 0xFF 0xFE) at the start.
+	const buf = Buffer.alloc(source.length * 2 + 2);
+	buf.writeUInt16LE(0xfeff, 0); // BOM
+	for (let i = 0; i < source.length; i++) {
+		buf.writeUInt16LE(source.charCodeAt(i), 2 + i * 2);
+	}
+	return buf.toString("base64");
+}
+
+/**
+ * Build argv for executing a PowerShell command on a remote Windows host via SSH.
+ *
+ * Produces a structured argv array suitable for spawn/exec with shell: false.
+ * Uses -EncodedCommand for reliable quoting, exit code propagation, and Unicode.
+ *
+ * @param host - SSH hostname (e.g., "blackpearl")
+ * @param command - PowerShell source code
+ * @returns Structured argv for the ssh process
+ */
+export function buildRemotePowerShellArgs(host: string, command: string): string[] {
+	const preamble = REMOTE_POWERSHELL_PREAMBLE;
+	const fullScript = `${preamble}; ${command}`;
+	const encoded = encodePowerShellCommand(fullScript);
+	return [host, "powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded];
+}
+
+/**
+ * Build argv for a simple PowerShell command on a remote Windows host via SSH.
+ *
+ * Uses -Command (not -EncodedCommand). Only appropriate for simple commands
+ * without pipes, complex quoting, multiline scripts, or untrusted data.
+ *
+ * @param host - SSH hostname
+ * @param command - Simple PowerShell command
+ * @returns Structured argv for the ssh process
+ */
+export function buildSimpleRemotePowerShellArgs(host: string, command: string): string[] {
+	return [host, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command];
+}

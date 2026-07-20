@@ -123,9 +123,13 @@ Best practices:
 - Apply timeouts to HTTP requests, tests, and polling loops
 - Use the process_manager tool for persistent servers, not nohup, &, or Git Bash backgrounding
 - When executing PowerShell remotely via SSH: the controller command is in Bash, but the payload runs in PowerShell. Do not send Bash syntax as the PowerShell payload.
-- For remote PowerShell via SSH, prefer: (1) simple single-command payloads with minimal quoting, (2) a temporary script file with controlled lifecycle, (3) -EncodedCommand only for complex payload. Avoid fragile multi-layer quoting.
-- For \`-EncodedCommand\`, encode the PowerShell script as UTF-16LE before Base64 encoding. Do NOT use UTF-8 for -EncodedCommand.
-- \`$LASTEXITCODE\` applies to native executables only. Cmdlet errors require try/catch or \`$ErrorActionPreference\`. Propagate the remote exit code back through the SSH process.`,
+- For remote PowerShell via SSH, prefer -EncodedCommand with UTF-16LE Base64 encoding for reliable quoting, exit code propagation, and Unicode. Use -Command only for trivial single-statements without pipes or special characters.
+- Use $ErrorActionPreference = 'Stop' in remote scripts to convert non-terminating cmdlet errors into catchable failures.
+- Use $ProgressPreference = 'SilentlyContinue' to suppress CLIXML progress noise in EncodedCommand output.
+- [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() helps preserve Unicode characters in pipeline output.
+- $LASTEXITCODE applies to native executables only (cmd.exe, .exe). Cmdlet errors use try/catch or $ErrorActionPreference. Propagate the remote exit code back through the SSH process with an explicit exit statement.
+- For complex payloads, prefer: (1) EncodedCommand with UTF-16LE Base64, (2) a temporary script file with controlled lifecycle. Avoid fragile multi-layer manual quoting.
+- Never interpolate untrusted data (paths, user input) directly into PowerShell source. Use EncodedCommand or parameterized scripts.`,
 
 	/**
 	 * Edit tool - surgical file modifications
