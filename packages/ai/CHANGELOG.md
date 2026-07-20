@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### Patch Changes
+
+- Refresh the built-in OpenRouter model catalog to match the current upstream model list and metadata.
+
 ## 1.1.2
 
 ### Patch Changes
