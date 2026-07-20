@@ -247,21 +247,18 @@ describe("pipeline evidence", () => {
 		expect(result.pipeline!.stageExitCodes).toEqual([0, 0]);
 	});
 
-	it("non-pipeline command still captures pipeline metadata", async () => {
+	it("non-pipeline command has no pipeline evidence", async () => {
 		const result = await executeBash("echo hello");
-		// PIPESTATUS capture always runs, but isPipeline flag reflects command detection
-		expect(result.pipeline).toBeDefined();
-		expect(result.pipeline!.isPipeline).toBe(false);
-		expect(result.pipeline!.evidenceAuthoritative).toBe(true);
-		expect(result.pipeline!.stageExitCodes).toEqual([0]);
+		// Corrected H03: simple (non-pipeline) commands have undefined pipeline.
+		// Pipeline evidence is only created for commands that syntactically contain a |.
+		expect(result.pipeline).toBeUndefined();
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("hello");
 	});
 
-	it("non-pipeline exit 0 has authoritative evidence", async () => {
+	it("non-pipeline exit 0 has no pipeline evidence", async () => {
 		const result = await executeBash("true");
-		expect(result.pipeline).toBeDefined();
-		expect(result.pipeline!.isPipeline).toBe(false);
-		expect(result.pipeline!.evidenceAuthoritative).toBe(true);
-		expect(result.pipeline!.stageExitCodes).toEqual([0]);
+		expect(result.pipeline).toBeUndefined();
 		expect(result.exitCode).toBe(0);
 	});
 

@@ -24,6 +24,8 @@ export interface BashExecutorOptions {
 	onChunk?: (chunk: string) => void;
 	/** AbortSignal for cancellation */
 	signal?: AbortSignal;
+	/** Timeout in seconds (optional). When exceeded, the process tree is killed. */
+	timeout?: number;
 }
 
 /**
@@ -100,6 +102,7 @@ export function executeBash(command: string, options?: BashExecutorOptions): Pro
  */
 function detectPipeline(command: string): boolean {
 	// Simple heuristic: count | characters not inside single or double quotes.
+	// Skips || (OR operator) — two consecutive pipes are not a pipeline.
 	let inSingle = false;
 	let inDouble = false;
 	for (let i = 0; i < command.length; i++) {
@@ -110,6 +113,11 @@ function detectPipeline(command: string): boolean {
 		} else if (ch === '"' && !inSingle && prev !== "\\") {
 			inDouble = !inDouble;
 		} else if (ch === "|" && !inSingle && !inDouble) {
+			// Skip || (OR operator)
+			if (i + 1 < command.length && command[i + 1] === "|") {
+				i++; // Skip the second pipe char
+				continue;
+			}
 			return true;
 		}
 	}
@@ -193,6 +201,7 @@ export async function executeBashWithOperations(
 			onStdout,
 			onStderr,
 			signal: options?.signal,
+			timeout: options?.timeout,
 		});
 
 		if (tempFileStream) {
@@ -204,21 +213,17 @@ export async function executeBashWithOperations(
 		const cancelled = options?.signal?.aborted ?? false;
 		const finishedAt = new Date().toISOString();
 
-		// Build pipeline evidence from real PIPESTATUS data when available.
-		// The backend (createLocalBashOperations) always captures PIPESTATUS
-		// via fd 3. When pipelineData is present, it is authoritative.
-		// When absent (e.g., remote operations), fall back to best-effort detection.
 		const pipelineMeta: PipelineEvidence | undefined = (() => {
+			if (!isPipeline) return undefined;
 			if (result.pipelineData) {
 				return {
-					isPipeline: isPipeline,
+					isPipeline: true,
 					lastStageExitCode: result.exitCode,
 					stageExitCodesKnown: result.pipelineData.stageExitCodesKnown,
 					stageExitCodes: result.pipelineData.stageExitCodes,
 					evidenceAuthoritative: result.pipelineData.evidenceAuthoritative,
 				};
 			}
-			if (!isPipeline) return undefined;
 			return {
 				isPipeline: true,
 				lastStageExitCode: result.exitCode,

@@ -75,19 +75,19 @@ export interface BashOperations {
 }
 
 /**
- * Bash command wrapper that captures PIPESTATUS to fd 3 without contaminating
- * stdout or stderr. Writes stage exit codes as space-separated numbers to fd 3,
- * then exits with the original last-stage exit code.
+ * Bash trap preamble that captures PIPESTATUS to fd 3 on shell exit.
+ * The EXIT trap fires even after `exit N`, so pipeline metadata is
+ * always captured. The preamble is prepended before the user command
+ * with a newline separator — no semicolon touches the user's source.
  *
- * The wrapper is appended after the user command with a semicolon separator.
  * User stdout/stderr are delivered normally via fd 1 and fd 2.
- * Pipeline metadata arrives on fd 3.
+ * Pipeline metadata arrives on fd 3 only after the trap fires.
+ *
+ * Note: If the user sets their own `trap ... EXIT`, it overrides this
+ * one and pipeline metadata will be missing (non-authoritative).
  */
-const PIPESTATUS_CAPTURE_WRAPPER = `
-_PI_PIPE=("\${PIPESTATUS[@]}")
-_PI_RC=\${_PI_PIPE[-1]}
-printf '%s\\n' "\${_PI_PIPE[*]}" >&3
-exit $_PI_RC
+const PIPESTATUS_CAPTURE_PREAMBLE = `__jensen_stages=()
+trap '__jensen_stages=("\${PIPESTATUS[@]}"); printf "%s\\n" "\${__jensen_stages[*]}" >&3' EXIT
 `;
 
 /**
@@ -118,10 +118,12 @@ export function createLocalBashOperations(): BashOperations {
 					return;
 				}
 
-				// Wrap command with PIPESTATUS capture. The wrapper uses fd 3 for
-				// pipeline metadata — it does not contaminate stdout (fd 1) or
-				// stderr (fd 2). The extra pipe (stdio[3]) is only used internally.
-				const wrappedCommand = `${command};${PIPESTATUS_CAPTURE_WRAPPER}`;
+				// Prepend trap preamble for PIPESTATUS capture on shell exit.
+				// The EXIT trap fires after the user command completes (even after
+				// `exit N`), capturing PIPESTATUS and writing to fd 3.
+				// No semicolon or operator touches the user's source — the preamble
+				// and command are separated only by a newline.
+				const wrappedCommand = `${PIPESTATUS_CAPTURE_PREAMBLE}\n${command}`;
 				const pipelineChunks: Buffer[] = [];
 
 				const child = spawn(shell, [...args, wrappedCommand], {
@@ -286,7 +288,7 @@ function formatBashResultForModel(
 		evidenceLines.push(`spawn_error: ${result.spawnError}`);
 	}
 
-	if (result.pipeline) {
+	if (result.pipeline?.isPipeline) {
 		evidenceLines.push(`pipeline: true`);
 		evidenceLines.push(`pipeline_last_exit_code: ${result.pipeline.lastStageExitCode ?? "null"}`);
 		evidenceLines.push(`pipeline_authoritative: ${result.pipeline.evidenceAuthoritative}`);
@@ -368,6 +370,7 @@ export function createBashTool(cwd: string, options?: BashToolOptions): AgentToo
 			const result = await executeBashWithOperations(spawnContext.command, spawnContext.cwd, ops, {
 				onChunk,
 				signal,
+				timeout: _timeout,
 			});
 
 			const { contentText, details } = formatBashResultForModel(result, resolvedCommand, spawnContext.cwd);
