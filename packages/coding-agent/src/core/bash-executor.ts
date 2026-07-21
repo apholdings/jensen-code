@@ -69,9 +69,6 @@ export interface BashEvidence {
 	warning?: string;
 }
 
-/** @deprecated Use BashEvidence instead. Kept for backward compatibility. */
-export type PipelineEvidence = BashEvidence;
-
 /**
  * Public result of a bash command execution.
  *

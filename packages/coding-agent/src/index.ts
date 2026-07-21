@@ -275,7 +275,6 @@ export {
 	type ReadToolDetails,
 	type ReadToolInput,
 	type ReadToolOptions,
-	type ResolvedBashToolDetails,
 	readTool,
 	type ToolsOptions,
 	type TruncationOptions,
