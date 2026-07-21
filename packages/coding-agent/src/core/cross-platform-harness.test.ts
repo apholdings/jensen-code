@@ -1,3 +1,7 @@
+import { spawnSync } from "child_process";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { describe, expect, it } from "vitest";
 import { getPowerShellConfig, resetShellConfigCache } from "../utils/shell.js";
 import { executeBash } from "./bash-executor.js";
@@ -72,10 +76,95 @@ describe("buildExecutionEnvironment", () => {
 		expect(env.controllerGitRoot).toBeNull();
 	});
 
-	it("returns git info from real repo", () => {
-		const env = buildExecutionEnvironment(process.cwd());
-		expect(env.gitRoot).toBeTruthy();
-		expect(typeof env.gitBranch).toBe("string");
+	it("G01: reports branch name and git root when on a real branch", () => {
+		const dir = mkdtempSync(join(tmpdir(), "jensen-git-branch-"));
+		try {
+			spawnSync("git", ["init", "--initial-branch=main"], { cwd: dir, stdio: "ignore" });
+			spawnSync(
+				"git",
+				[
+					"-c",
+					"user.name=Jensen Test",
+					"-c",
+					"user.email=jensen-test@example.invalid",
+					"commit",
+					"--allow-empty",
+					"-m",
+					"init",
+				],
+				{ cwd: dir, stdio: "ignore" },
+			);
+			const saved = process.cwd();
+			try {
+				process.chdir(dir);
+				const env = buildExecutionEnvironment(saved);
+				expect(env.gitRoot).toBeTruthy();
+				expect(typeof env.gitBranch).toBe("string");
+				expect(env.gitBranch).toBe("main");
+				expect(env.isDetachedHead).toBe(false);
+			} finally {
+				process.chdir(saved);
+			}
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("G02: reports detached HEAD with null branch and detached flag", () => {
+		const dir = mkdtempSync(join(tmpdir(), "jensen-git-detached-"));
+		try {
+			spawnSync("git", ["init", "--initial-branch=main"], { cwd: dir, stdio: "ignore" });
+			spawnSync(
+				"git",
+				[
+					"-c",
+					"user.name=Jensen Test",
+					"-c",
+					"user.email=jensen-test@example.invalid",
+					"commit",
+					"--allow-empty",
+					"-m",
+					"init",
+				],
+				{ cwd: dir, stdio: "ignore" },
+			);
+			const headSha = spawnSync("git", ["rev-parse", "HEAD"], {
+				cwd: dir,
+				encoding: "utf8",
+				stdio: ["ignore", "pipe", "ignore"],
+			}).stdout.trim();
+			spawnSync("git", ["checkout", "--detach", headSha], { cwd: dir, stdio: "ignore" });
+			const saved = process.cwd();
+			try {
+				process.chdir(dir);
+				const env = buildExecutionEnvironment(saved);
+				expect(env.gitRoot).toBeTruthy();
+				expect(env.gitBranch).toBeNull();
+				expect(env.isDetachedHead).toBe(true);
+			} finally {
+				process.chdir(saved);
+			}
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("G03: reports null git info when not inside a repository", () => {
+		const dir = mkdtempSync(join(tmpdir(), "jensen-non-git-"));
+		try {
+			const saved = process.cwd();
+			try {
+				process.chdir(dir);
+				const env = buildExecutionEnvironment(saved);
+				expect(env.gitRoot).toBeNull();
+				expect(env.gitBranch).toBeNull();
+				expect(env.isDetachedHead).toBe(false);
+			} finally {
+				process.chdir(saved);
+			}
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	it("never leaks sensitive data", () => {
