@@ -1,5 +1,7 @@
 # Changelog
 
+## [Unreleased]
+
 ## 1.1.6
 
 ### Patch Changes
@@ -21,8 +23,6 @@
 
 - @apholdings/jensen-ai@1.1.4
 - @apholdings/jensen-tui@1.1.4
-
-## [Unreleased]
 
 ## 1.1.2
 

@@ -51,9 +51,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install dependencies after versioning
-        run: npm install --no-package-lock
-
       - name: Detect unpublished package versions
         if: steps.changesets.outputs.hasChangesets == 'false'
         id: unpublished

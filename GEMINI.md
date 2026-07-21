@@ -159,23 +159,42 @@ For non-standard auth, create utility (e.g., `bedrock-utils.ts`) with credential
 
 ## Releasing
 
-**Lockstep versioning**: All packages always share the same version number. Every release updates all packages together.
+**Lockstep versioning**: All published packages always share the same version number. Every release updates all seven published packages together. The private root package version is independent metadata.
 
 **Version semantics** (no major releases):
-- `patch`: Bug fixes and new features
-- `minor`: API breaking changes
+- `patch`: Bug fixes and compatible features
+- `minor`: Public API breaking changes
 
-### Steps
+### During development
 
-1. **Update CHANGELOGs**: Ensure all changes since last release are documented in the `[Unreleased]` section of each affected package's CHANGELOG.md
+Create a changeset for public package changes:
+```bash
+npm run changeset    # Interactive prompt
+```
 
-2. **Run release script**:
-   ```bash
-   npm run release:patch    # Fixes and additions
-   npm run release:minor    # API breaking changes
-   ```
+Do not edit package versions manually. Do not run manual pre-merge version bumps.
 
-The script handles: version bump, CHANGELOG finalization, commit, tag, publish, and adding new `[Unreleased]` sections.
+### After merge to main
+
+Changesets CI opens or updates the version PR. The version PR:
+- Updates all published package versions to the target
+- Updates changelogs from changeset descriptions
+- Updates the lockfile
+- Updates internal dependency ranges
+
+Review and merge the version PR.
+
+### Publishing
+
+Changesets CI publishes packages that are not yet on the npm registry after the version PR is merged. Publishing happens exclusively through the CI workflow on the `main` branch.
+
+### Prohibited
+
+Do not run manual pre-merge version bumps.
+Do not combine Changesets with any manual release script.
+Do not manually create a release tag before Changesets publication.
+Do not run `npm publish` locally.
+Do not run `npm version`.
 
 ## **CRITICAL** Tool Usage Rules **CRITICAL**
 - NEVER use sed/cat to read a file or a range of a file. Always use the read tool (use offset + limit for ranged reads).

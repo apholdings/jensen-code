@@ -1,5 +1,7 @@
 # Changelog
 
+## [Unreleased]
+
 ## 1.1.6
 
 ### Patch Changes
@@ -9,8 +11,6 @@
 ## 1.1.5
 
 ## 1.1.4
-
-## [Unreleased]
 
 ## 1.1.2
 
