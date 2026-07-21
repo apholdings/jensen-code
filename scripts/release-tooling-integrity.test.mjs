@@ -317,3 +317,39 @@ test("publisher orchestration tests (P01-P10) pass", () => {
 	}
 	strictEqual(status, 0, "publisher orchestration tests must pass (exit 0)");
 });
+
+test("provider E2E preflight tests (E01-E06) pass", () => {
+	const { status, stdout, stderr } = spawnSync(
+		process.execPath,
+		["--test", "scripts/check-provider-e2e-credentials.test.mjs"],
+		{
+			cwd: ROOT,
+			encoding: "utf8",
+			stdio: "pipe",
+		},
+	);
+
+	if (status !== 0) {
+		console.log("stdout:", stdout);
+		console.log("stderr:", stderr);
+	}
+	strictEqual(status, 0, "preflight tests must pass (exit 0)");
+});
+
+test("test:e2e:providers includes preflight before vitest", () => {
+	const agentPkg = readJson("packages/agent/package.json");
+	const script = agentPkg.scripts["test:e2e:providers"];
+	ok(typeof script === "string", "test:e2e:providers script must exist");
+	ok(script.includes("check-provider-e2e-credentials.mjs"), "must include preflight script");
+	ok(script.includes("&&"), "must use && for short-circuit");
+	const preflightIdx = script.indexOf("check-provider-e2e-credentials.mjs");
+	const vitestIdx = script.indexOf("vitest");
+	ok(preflightIdx < vitestIdx, "preflight must run before vitest");
+});
+
+test("npm run validate does not select provider E2E", () => {
+	const rootPkg = readJson("package.json");
+	const validateScript = rootPkg.scripts.validate;
+	ok(!validateScript.includes("test:e2e:providers"), "validate must not run provider E2E");
+	ok(!validateScript.includes("e2e"), "validate must not reference e2e");
+});
