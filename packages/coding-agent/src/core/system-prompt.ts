@@ -152,6 +152,15 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 		addGuideline(
 			"Treat stdout, stderr, exit code, timeout, cancellation, and truncation as separate pieces of evidence. Do not conflate a proposed command with an executed one, or a started command with a completed one.",
 		);
+		addGuideline(
+			"A Bash exit code represents the final status returned by Bash for the supplied source. For compound shell source (sequences, functions, subshells), exit code 0 does not prove every internal command succeeded. When internal_command_statuses_known is false, describe only the final shell status — do not claim all internal commands passed.",
+		);
+		addGuideline(
+			'Prefer direct single-command validation. Avoid combining setup, validation, filtering, cleanup, and status persistence into one command. When later commands are required after the target process, preserve its exit code with an explicit final `exit "$RC"`.',
+		);
+		addGuideline(
+			"When validation_evidence_authoritative is false, do not declare validation success, do not infer earlier stage status, and rerun the check without a pipeline. Filter retained output in a separate execution.",
+		);
 	}
 
 	// Command classification (when bash or powershell is available)

@@ -225,51 +225,111 @@ describe("BashResult stream separation", () => {
 });
 
 // ============================================================================
-// Pipeline evidence tests
+// Bash evidence tests
 // ============================================================================
 
-describe("pipeline evidence", () => {
+describe("bash evidence", () => {
 	it("detects simple pipeline as non-authoritative", async () => {
 		const result = await executeBash("false | tail");
-		expect(result.pipeline).toBeDefined();
-		expect(result.pipeline!.pipelineSuspected).toBe(true);
+		expect(result.evidence.pipelineSuspected).toBe(true);
 		// No fd 3 control channel — stage codes are never known from untrusted channels
-		expect(result.pipeline!.stageExitCodesKnown).toBe(false);
-		expect(result.pipeline!.evidenceAuthoritative).toBe(false);
-		expect(result.pipeline!.authorityScope).toBe("final_pipeline_stage_only");
-		expect(result.pipeline!.warning).toBeDefined();
-		expect(result.pipeline!.warning).toContain("Do not use this result as authoritative validation");
+		expect(result.evidence.stageExitCodesKnown).toBe(false);
+		expect(result.evidence.validationEvidenceAuthoritative).toBe(false);
+		expect(result.evidence.authorityScope).toBe("final_pipeline_stage_only");
+		expect(result.evidence.warning).toBeDefined();
+		expect(result.evidence.warning).toContain("Do not use this result as authoritative validation");
 	});
 
 	it("detects pipeline with grep as non-authoritative", async () => {
 		const result = await executeBash("printf 'ok\n' | grep ok");
-		expect(result.pipeline).toBeDefined();
-		expect(result.pipeline!.pipelineSuspected).toBe(true);
+		expect(result.evidence.pipelineSuspected).toBe(true);
 		expect(result.exitCode).toBe(0);
-		expect(result.pipeline!.evidenceAuthoritative).toBe(false);
-		expect(result.pipeline!.authorityScope).toBe("final_pipeline_stage_only");
+		expect(result.evidence.validationEvidenceAuthoritative).toBe(false);
+		expect(result.evidence.authorityScope).toBe("final_pipeline_stage_only");
 	});
 
-	it("non-pipeline command has no pipeline evidence", async () => {
+	it("non-pipeline command has explicit authority scope", async () => {
 		const result = await executeBash("echo hello");
-		expect(result.pipeline).toBeUndefined();
+		expect(result.evidence.pipelineSuspected).toBe(false);
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toContain("hello");
+		expect(result.evidence.exitStatusKnown).toBe(true);
+		expect(result.evidence.authorityScope).toBe("final_shell_exit_status");
+		expect(result.evidence.validationEvidenceAuthoritative).toBe(true);
+		expect(result.evidence.internalCommandStatusesKnown).toBe(false);
 	});
 
-	it("non-pipeline exit 0 has no pipeline evidence", async () => {
+	it("non-pipeline exit 0 has explicit authority scope", async () => {
 		const result = await executeBash("true");
-		expect(result.pipeline).toBeUndefined();
+		expect(result.evidence.pipelineSuspected).toBe(false);
 		expect(result.exitCode).toBe(0);
+		expect(result.evidence.authorityScope).toBe("final_shell_exit_status");
 	});
 
 	it("pipeline exit code reflects last stage but is non-authoritative", async () => {
 		const result = await executeBash("false | grep anything");
-		expect(result.pipeline).toBeDefined();
+		expect(result.evidence.pipelineSuspected).toBe(true);
 		expect(result.exitCode).toBe(1);
-		expect(result.pipeline!.pipelineSuspected).toBe(true);
-		expect(result.pipeline!.evidenceAuthoritative).toBe(false);
-		expect(result.pipeline!.finalShellExitCode).toBe(1);
+		expect(result.evidence.validationEvidenceAuthoritative).toBe(false);
+		expect(result.evidence.finalShellExitCode).toBe(1);
+	});
+
+	it("compound command failure-then-success has final-shell-exit-status scope", async () => {
+		const result = await executeBash("false; true");
+		expect(result.exitCode).toBe(0);
+		expect(result.evidence.authorityScope).toBe("final_shell_exit_status");
+		// internal command status is not tracked
+		expect(result.evidence.internalCommandStatusesKnown).toBe(false);
+	});
+
+	it("command with explicit exit 17 has authoritative evidence", async () => {
+		const result = await executeBash("bash -c 'exit 17'");
+		expect(result.exitCode).toBe(17);
+		expect(result.evidence.exitStatusAuthoritative).toBe(true);
+		expect(result.evidence.authorityScope).toBe("final_shell_exit_status");
+		expect(result.evidence.validationEvidenceAuthoritative).toBe(true);
+	});
+
+	it("timeout has no_exit_status authority scope", async () => {
+		const result = await executeBash("sleep 5", { timeout: 1 });
+		expect(result.timedOut).toBe(true);
+		expect(result.exitCode).toBeUndefined();
+		expect(result.evidence.exitStatusKnown).toBe(false);
+		expect(result.evidence.authorityScope).toBe("no_exit_status");
+	});
+
+	it("function with internal failure has final-shell-exit-status scope", async () => {
+		const result = await executeBash("sample() { false; printf 'END\\n'; }; sample");
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("END");
+		expect(result.evidence.authorityScope).toBe("final_shell_exit_status");
+		expect(result.evidence.internalCommandStatusesKnown).toBe(false);
+	});
+
+	it("subshell with internal failure has final-shell-exit-status scope", async () => {
+		const result = await executeBash("(false; true)");
+		expect(result.exitCode).toBe(0);
+		expect(result.evidence.authorityScope).toBe("final_shell_exit_status");
+	});
+
+	it("recovery operator (||) has final-shell-exit-status scope", async () => {
+		const result = await executeBash("false || printf 'RECOVERED\\n'");
+		expect(result.exitCode).toBe(0);
+		expect(result.evidence.pipelineSuspected).toBe(false);
+		expect(result.evidence.authorityScope).toBe("final_shell_exit_status");
+	});
+
+	it("success-then-failure has non-zero exit with correct scope", async () => {
+		const result = await executeBash("true; false");
+		expect(result.exitCode).toBe(1);
+		expect(result.evidence.authorityScope).toBe("final_shell_exit_status");
+		expect(result.evidence.exitStatusAuthoritative).toBe(true);
+	});
+
+	it("set -e failure has final-shell-exit-status scope", async () => {
+		const result = await executeBash("set -e; false; printf 'UNREACHABLE\\n'");
+		expect(result.exitCode).toBe(1);
+		expect(result.evidence.authorityScope).toBe("final_shell_exit_status");
 	});
 });
 
@@ -343,6 +403,31 @@ describe("system prompt evidence discipline", () => {
 	it("warns against conflating proposed with executed", () => {
 		const prompt = buildSystemPrompt();
 		expect(prompt).toContain("Do not conflate a proposed command with an executed one");
+	});
+
+	it("distinguishes exit code from all internal commands succeeded", () => {
+		const prompt = buildSystemPrompt();
+		expect(prompt).toContain("exit code 0 does not prove every internal command succeeded");
+	});
+
+	it("instructs not to claim all commands passed when statuses unknown", () => {
+		const prompt = buildSystemPrompt();
+		expect(prompt).toContain("do not claim all internal commands passed");
+	});
+
+	it("instructs to preserve process exit code", () => {
+		const prompt = buildSystemPrompt();
+		expect(prompt).toContain('exit "$RC"');
+	});
+
+	it("instructs to rerun without pipeline for validation", () => {
+		const prompt = buildSystemPrompt();
+		expect(prompt).toContain("rerun the check without a pipeline");
+	});
+
+	it("recommends single-command validation", () => {
+		const prompt = buildSystemPrompt();
+		expect(prompt).toContain("Prefer direct single-command validation");
 	});
 });
 

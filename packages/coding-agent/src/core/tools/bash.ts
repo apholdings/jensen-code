@@ -3,7 +3,7 @@ import type { AgentTool } from "@apholdings/jensen-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
 import { getShellConfig, getShellEnv, killProcessTree } from "../../utils/shell.js";
-import type { BashResult, PipelineEvidence } from "../bash-executor.js";
+import type { BashEvidence, BashResult } from "../bash-executor.js";
 import { executeBashWithOperations } from "../bash-executor.js";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult, truncateTail } from "./truncate.js";
 
@@ -40,7 +40,7 @@ export interface BashToolDetails {
 	fullOutputPath?: string;
 	spawnError?: string;
 
-	pipeline?: PipelineEvidence;
+	evidence?: BashEvidence;
 }
 
 export interface BashOperations {
@@ -235,13 +235,18 @@ function formatBashResultForModel(
 		evidenceLines.push(`spawn_error: ${result.spawnError}`);
 	}
 
-	if (result.pipeline?.pipelineSuspected) {
+	// Always render evidence metadata for every command
+	evidenceLines.push(`exit_status_known: ${result.evidence.exitStatusKnown}`);
+	evidenceLines.push(`exit_status_authoritative: ${result.evidence.exitStatusAuthoritative}`);
+	evidenceLines.push(`authority_scope: ${result.evidence.authorityScope}`);
+	evidenceLines.push(`internal_command_statuses_known: ${result.evidence.internalCommandStatusesKnown}`);
+	evidenceLines.push(`validation_evidence_authoritative: ${result.evidence.validationEvidenceAuthoritative}`);
+
+	if (result.evidence.pipelineSuspected) {
 		evidenceLines.push(`pipeline_suspected: true`);
 		evidenceLines.push(`stage_exit_codes_known: false`);
-		evidenceLines.push(`evidence_authoritative: false`);
-		evidenceLines.push(`authority_scope: final_pipeline_stage_only`);
-		if (result.pipeline.warning) {
-			evidenceLines.push(`warning: ${result.pipeline.warning}`);
+		if (result.evidence.warning) {
+			evidenceLines.push(`warning: ${result.evidence.warning}`);
 		}
 	}
 
@@ -266,7 +271,7 @@ function formatBashResultForModel(
 		truncated: result.truncated,
 		fullOutputPath: result.fullOutputPath,
 		spawnError: result.spawnError,
-		pipeline: result.pipeline,
+		evidence: result.evidence,
 	};
 
 	return { contentText: lines.join("\n"), details };

@@ -211,6 +211,8 @@ describe("bash tool — evidence integrity", () => {
 		expect(text).not.toContain("pipeline_suspected: true");
 		expect(text).not.toContain("pipeline_stage_exit_codes");
 		expect(text).toContain("exit_code: 0");
+		// Non-pipeline commands get explicit authority scope
+		expect(text).toContain("authority_scope: final_shell_exit_status");
 	});
 
 	it("E02: user trap does not affect Jensen evidence", async () => {
@@ -222,7 +224,7 @@ describe("bash tool — evidence integrity", () => {
 		// The user trap output appears in stderr (normal)
 		// But Jensen's evidence section is unaffected
 		expect(text).toContain("pipeline_suspected: true");
-		expect(text).toContain("evidence_authoritative: false");
+		expect(text).toContain("validation_evidence_authoritative: false");
 		expect(text).toContain("stage_exit_codes_known: false");
 	});
 
@@ -234,7 +236,7 @@ describe("bash tool — evidence integrity", () => {
 		const text = (result.content[0] as { type: "text"; text: string }).text;
 		// Evidence section must still be valid — non-authoritative pipeline
 		expect(text).toContain("pipeline_suspected: true");
-		expect(text).toContain("evidence_authoritative: false");
+		expect(text).toContain("validation_evidence_authoritative: false");
 	});
 
 	it("E04: exec captures exit code without invented metadata", async () => {
@@ -262,7 +264,7 @@ describe("bash tool — evidence integrity", () => {
 		});
 		const text = (result.content[0] as { type: "text"; text: string }).text;
 		expect(text).toContain("pipeline_suspected: true");
-		expect(text).toContain("evidence_authoritative: false");
+		expect(text).toContain("validation_evidence_authoritative: false");
 		expect(text).toContain("authority_scope: final_pipeline_stage_only");
 		expect(text).toContain("exit_code: 0");
 		expect(text).toContain("warning:");
@@ -278,7 +280,7 @@ describe("bash tool — evidence integrity", () => {
 		expect(text).toContain("SUCCESS");
 		expect(text).toContain("exit_code: 0");
 		expect(text).toContain("pipeline_suspected: true");
-		expect(text).toContain("evidence_authoritative: false");
+		expect(text).toContain("validation_evidence_authoritative: false");
 		expect(text).toContain("stage_exit_codes_known: false");
 	});
 
@@ -292,7 +294,7 @@ describe("bash tool — evidence integrity", () => {
 		expect(text).toContain("ok");
 		expect(text).toContain("exit_code: 0");
 		expect(text).toContain("pipeline_suspected: true");
-		expect(text).toContain("evidence_authoritative: false");
+		expect(text).toContain("validation_evidence_authoritative: false");
 		expect(text).not.toContain("pipeline_stage_exit_codes");
 	});
 });
@@ -399,17 +401,21 @@ describe("bash tool — pipeline risk detection", () => {
 		expect(text).not.toContain("pipeline_suspected: true");
 	});
 
-	it("simple command has authoritative evidence", async () => {
+	it("simple command has explicit authority scope", async () => {
 		const tool = createBashTool(process.cwd());
 		const result = await tool.execute("call_auth", {
 			command: "printf 'AUTHORITATIVE\\n'",
 		});
 		const text = (result.content[0] as { type: "text"; text: string }).text;
 		expect(text).toContain("AUTHORITATIVE");
-		expect(text).not.toContain("pipeline_suspected: true");
 		expect(text).toContain("exit_code: 0");
-		// Non-pipeline commands don't include pipeline evidence at all
-		expect(text).not.toContain("evidence_authoritative");
+		// Non-pipeline commands now get explicit authority metadata
+		expect(text).toContain("exit_status_known: true");
+		expect(text).toContain("exit_status_authoritative: true");
+		expect(text).toContain("authority_scope: final_shell_exit_status");
+		expect(text).toContain("internal_command_statuses_known: false");
+		expect(text).toContain("validation_evidence_authoritative: true");
+		expect(text).not.toContain("pipeline_suspected: true");
 	});
 
 	it("non-pipeline command with non-zero exit is authoritative", async () => {
@@ -424,7 +430,8 @@ describe("bash tool — pipeline risk detection", () => {
 			expect(msg).toContain("SUCCESS");
 			expect(msg).toContain("exit_code: 17");
 			expect(msg).not.toContain("pipeline_suspected: true");
-			expect(msg).not.toContain("evidence_authoritative: false");
+			expect(msg).toContain("exit_status_authoritative: true");
+			expect(msg).toContain("authority_scope: final_shell_exit_status");
 		}
 	});
 });
@@ -443,7 +450,7 @@ describe("bash tool — pipeline semantics (fail-closed)", () => {
 		const text = (result.content[0] as { type: "text"; text: string }).text;
 		expect(text).toContain("pipeline_suspected: true");
 		expect(text).toContain("stage_exit_codes_known: false");
-		expect(text).toContain("evidence_authoritative: false");
+		expect(text).toContain("validation_evidence_authoritative: false");
 		expect(text).toContain("authority_scope: final_pipeline_stage_only");
 		expect(text).toContain("warning:");
 		expect(text).toContain("Re-run the validation command without a pipeline");
@@ -459,7 +466,7 @@ describe("bash tool — pipeline semantics (fail-closed)", () => {
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
 			expect(msg).toContain("pipeline_suspected: true");
-			expect(msg).toContain("evidence_authoritative: false");
+			expect(msg).toContain("validation_evidence_authoritative: false");
 		}
 	});
 
@@ -471,7 +478,9 @@ describe("bash tool — pipeline semantics (fail-closed)", () => {
 		const text = (result.content[0] as { type: "text"; text: string }).text;
 		expect(text).toContain("SIMPLE");
 		expect(text).not.toContain("pipeline_suspected: true");
-		expect(text).not.toContain("evidence_authoritative");
+		// Simple commands now have explicit authority metadata
+		expect(text).toContain("exit_status_known: true");
+		expect(text).toContain("authority_scope: final_shell_exit_status");
 	});
 
 	it("operators that are not pipelines: ||", async () => {
@@ -977,7 +986,7 @@ describe("bash tool — agent tool path contract", () => {
 		});
 		const text = (result.content[0] as { type: "text"; text: string }).text;
 		expect(text).toContain("pipeline_suspected: true");
-		expect(text).toContain("evidence_authoritative: false");
+		expect(text).toContain("validation_evidence_authoritative: false");
 	});
 
 	it("no wrapper source leaks into stdout or stderr", async () => {
@@ -1017,5 +1026,186 @@ describe("bash tool — agent tool path contract", () => {
 		expect(text).toContain("cancelled:");
 		expect(text).toContain("truncated:");
 		expect(text).toContain("stdout:");
+	});
+});
+
+// ============================================================================
+// Model-facing authority scope tests (M01-M12)
+// ============================================================================
+
+describe("bash tool — model-facing authority scope", () => {
+	it("M01: simple success exposes explicit authority scope", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_m01", {
+			command: "printf 'M01\\n'",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("M01");
+		expect(text).toContain("exit_code: 0");
+		expect(text).toContain("exit_status_known: true");
+		expect(text).toContain("exit_status_authoritative: true");
+		expect(text).toContain("authority_scope: final_shell_exit_status");
+		expect(text).toContain("internal_command_statuses_known: false");
+		expect(text).toContain("validation_evidence_authoritative: true");
+	});
+
+	it("M02: simple failure exposes exit 17 with authority scope", async () => {
+		const tool = createBashTool(process.cwd());
+		try {
+			await tool.execute("call_m02", {
+				command: "bash -c 'exit 17'",
+			});
+			expect.fail("should have thrown for exit 17");
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			expect(msg).toContain("exit_code: 17");
+			expect(msg).toContain("exit_status_known: true");
+			expect(msg).toContain("exit_status_authoritative: true");
+			expect(msg).toContain("authority_scope: final_shell_exit_status");
+		}
+	});
+
+	it("M03: failure then success does not claim all commands passed", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_m03", {
+			command: "false; true",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("exit_code: 0");
+		expect(text).toContain("internal_command_statuses_known: false");
+		// The exit code is 0 but internal command statuses are unknown
+		// Model must not claim "all commands passed"
+	});
+
+	it("M04: success then failure has non-zero exit with correct scope", async () => {
+		const tool = createBashTool(process.cwd());
+		try {
+			await tool.execute("call_m04", {
+				command: "true; false",
+			});
+			expect.fail("should have thrown for exit 1");
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			expect(msg).toContain("exit_code: 1");
+			expect(msg).toContain("authority_scope: final_shell_exit_status");
+		}
+	});
+
+	it("M05: function with internal failure has limited scope", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_m05", {
+			command: "sample() {\n  false\n  printf 'FUNCTION-END\\n'\n}\nsample",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("FUNCTION-END");
+		expect(text).toContain("exit_code: 0");
+		expect(text).toContain("authority_scope: final_shell_exit_status");
+		expect(text).toContain("internal_command_statuses_known: false");
+	});
+
+	it("M06: subshell with internal failure has final_shell_exit_status scope", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_m06", {
+			command: "(false; true)",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("exit_code: 0");
+		expect(text).toContain("authority_scope: final_shell_exit_status");
+		expect(text).toContain("internal_command_statuses_known: false");
+	});
+
+	it("M07: set -e failure produces non-zero exit with correct scope", async () => {
+		const tool = createBashTool(process.cwd());
+		try {
+			await tool.execute("call_m07", {
+				command: "set -e\nfalse\nprintf 'UNREACHABLE\\n'",
+			});
+			expect.fail("should have thrown");
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			expect(msg).toContain("exit_code: 1");
+			expect(msg).toContain("authority_scope: final_shell_exit_status");
+		}
+	});
+
+	it("M08: recovery operator || produces authoritative exit with limited scope", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_m08", {
+			command: "false || printf 'RECOVERED\\n'",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("RECOVERED");
+		expect(text).toContain("exit_code: 0");
+		expect(text).not.toContain("pipeline_suspected: true");
+		expect(text).toContain("authority_scope: final_shell_exit_status");
+	});
+
+	it("M09: pipeline is non-authoritative for validation", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_m09", {
+			command: "false | tail",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("pipeline_suspected: true");
+		expect(text).toContain("validation_evidence_authoritative: false");
+		expect(text).toContain("authority_scope: final_pipeline_stage_only");
+		expect(text).toContain("internal_command_statuses_known: false");
+		// No fabricated stage codes
+		expect(text).not.toContain("pipeline_stage_exit_codes");
+	});
+
+	it("M10: pipeline with deceptive positive output is non-authoritative", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_m10", {
+			command: "bash -c 'printf \"SUCCESS\\n\"; exit 9' | cat",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("SUCCESS");
+		expect(text).toContain("exit_code: 0");
+		expect(text).toContain("validation_evidence_authoritative: false");
+		expect(text).toContain("pipeline_suspected: true");
+	});
+
+	it("M11: timeout produces no_exit_status authority scope", async () => {
+		const tool = createBashTool(process.cwd());
+		try {
+			await tool.execute("call_m11", {
+				command: "sleep 5",
+				timeout: 1,
+			});
+			expect.fail("should have thrown on timeout");
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			expect(msg).toContain("timed_out: true");
+			expect(msg).toContain("exit_status_known: false");
+			expect(msg).toContain("exit_status_authoritative: false");
+			expect(msg).toContain("authority_scope: no_exit_status");
+			expect(msg).toContain("internal_command_statuses_known: false");
+			expect(msg).toContain("validation_evidence_authoritative: false");
+		}
+	});
+
+	it("M12: spawn error produces no_process_started authority scope", async () => {
+		const operations: BashOperations = {
+			exec: async () => {
+				throw new Error("ENOENT: nonexistent command");
+			},
+		};
+
+		const tool = createBashTool(process.cwd(), { operations });
+		try {
+			await tool.execute("call_m12", {
+				command: "nonexistent_command",
+			});
+			expect.fail("should have thrown on spawn error");
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			expect(msg).toContain("spawn_error:");
+			expect(msg).toContain("exit_status_known: false");
+			expect(msg).toContain("exit_status_authoritative: false");
+			expect(msg).toContain("authority_scope: no_process_started");
+			expect(msg).toContain("internal_command_statuses_known: false");
+			expect(msg).toContain("validation_evidence_authoritative: false");
+		}
 	});
 });

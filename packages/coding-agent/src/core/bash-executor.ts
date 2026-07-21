@@ -29,35 +29,48 @@ export interface BashExecutorOptions {
 }
 
 /**
- * Pipeline evidence metadata for shell commands.
+ * Evidence metadata for every shell command execution.
  *
- * When a command is suspected to contain a pipeline (|), the final shell exit
- * code may represent only the last pipeline stage. This interface classifies
- * the result as authoritative (non-pipeline command) or non-authoritative
- * (pipeline suspected). Stage exit codes are never captured from shared file
- * descriptors because those channels are observable and writable by the
- * executed command itself.
+ * All commands receive this evidence block, not just pipelines. The exit code
+ * returned by Bash represents the final status of the supplied source, but for
+ * compound commands (sequences, functions, subshells, recovery operators) it
+ * does not prove that every internal command succeeded.
+ *
+ * Stage exit codes are never captured from shared file descriptors because
+ * those channels are observable and writable by the executed command itself.
  */
-export interface PipelineEvidence {
+export interface BashEvidence {
+	/** Whether the exit status is known. False for timeout, cancellation, and spawn errors. */
+	exitStatusKnown: boolean;
+	/** Whether the reported exit status faithfully reflects what Bash returned for the supplied source. */
+	exitStatusAuthoritative: boolean;
+	/**
+	 * Authority scope for the exit code.
+	 * - "final_shell_exit_status": command completed — exit code represents the final Bash status.
+	 * - "final_pipeline_stage_only": pipeline suspected — exit code may represent only the last stage.
+	 * - "no_exit_status": no exit code produced (timeout/cancellation).
+	 * - "no_process_started": shell never spawned (spawn error).
+	 */
+	authorityScope: "final_shell_exit_status" | "final_pipeline_stage_only" | "no_exit_status" | "no_process_started";
+	/** Always false: the internal status of each command within compound source is not tracked. */
+	internalCommandStatusesKnown: false;
+	/**
+	 * Whether the evidence can be used for validation decisions.
+	 * False for pipelines (stage exit codes unknown) and error states.
+	 */
+	validationEvidenceAuthoritative: boolean;
 	/** Whether the command is suspected to contain a pipeline (contains | outside of quoting) */
 	pipelineSuspected: boolean;
 	/** Always false: stage exit codes are never known from untrusted channels */
 	stageExitCodesKnown: false;
 	/** The final shell exit code */
 	finalShellExitCode: number | undefined;
-	/** Whether the exit code is authoritative for the full command */
-	evidenceAuthoritative: boolean;
-	/**
-	 * Authority scope for the exit code.
-	 * - "final_shell_exit_status": non-pipeline command — exit code represents the full source.
-	 * - "final_pipeline_stage_only": pipeline suspected — exit code may represent only the last stage.
-	 */
-	authorityScope: "final_shell_exit_status" | "final_pipeline_stage_only";
-	/**
-	 * Warning message for the model when evidence is non-authoritative.
-	 */
+	/** Warning message for the model when evidence is non-authoritative */
 	warning?: string;
 }
+
+/** @deprecated Use BashEvidence instead. Kept for backward compatibility. */
+export type PipelineEvidence = BashEvidence;
 
 export interface BashResult {
 	/** Combined stdout + stderr output (sanitized, possibly truncated) */
@@ -82,8 +95,8 @@ export interface BashResult {
 	finishedAt: string;
 	/** Spawn error message if the process failed to start (e.g., executable not found) */
 	spawnError?: string;
-	/** Pipeline evidence metadata (set when the command is a pipeline) */
-	pipeline?: PipelineEvidence;
+	/** Evidence metadata for every execution (exit status, authority scope, pipeline flag) */
+	evidence: BashEvidence;
 }
 
 // ============================================================================
@@ -178,6 +191,9 @@ export async function executeBashWithOperations(
 	const WARNING_TEXT =
 		"This command appears to contain a shell pipeline. The reported shell exit code may represent only the final pipeline stage. Do not use this result as authoritative validation. Re-run the validation command without a pipeline.";
 
+	const COMPOUND_WARNING_TEXT =
+		"The final Bash exit status is authoritative for its stated scope. It does not verify every internal command. For compound shell source (sequences, functions, subshells), exit code 0 does not prove all internal commands succeeded. Prefer direct single-command validation.";
+
 	const decoder = new TextDecoder();
 
 	const onData = (data: Buffer) => {
@@ -242,22 +258,37 @@ export async function executeBashWithOperations(
 		const cancelled = options?.signal?.aborted ?? false;
 		const finishedAt = new Date().toISOString();
 
-		const pipelineMeta: PipelineEvidence | undefined = pipelineSuspected
+		const exitCode = result.exitCode ?? undefined;
+
+		const evidence: BashEvidence = pipelineSuspected
 			? {
+					exitStatusKnown: true,
+					exitStatusAuthoritative: true,
+					authorityScope: "final_pipeline_stage_only",
+					internalCommandStatusesKnown: false,
+					validationEvidenceAuthoritative: false,
 					pipelineSuspected: true,
 					stageExitCodesKnown: false,
-					finalShellExitCode: result.exitCode ?? undefined,
-					evidenceAuthoritative: false,
-					authorityScope: "final_pipeline_stage_only",
+					finalShellExitCode: exitCode,
 					warning: WARNING_TEXT,
 				}
-			: undefined;
+			: {
+					exitStatusKnown: true,
+					exitStatusAuthoritative: true,
+					authorityScope: "final_shell_exit_status",
+					internalCommandStatusesKnown: false,
+					validationEvidenceAuthoritative: true,
+					pipelineSuspected: false,
+					stageExitCodesKnown: false,
+					finalShellExitCode: exitCode,
+					warning: COMPOUND_WARNING_TEXT,
+				};
 
 		return {
 			output: truncationResult.truncated ? truncationResult.content : fullOutput,
 			stdout: stdoutChunks.join(""),
 			stderr: stderrChunks.join(""),
-			exitCode: cancelled || timedOut ? undefined : (result.exitCode ?? undefined),
+			exitCode: cancelled || timedOut ? undefined : exitCode,
 			cancelled,
 			timedOut,
 			truncated: truncationResult.truncated,
@@ -265,7 +296,7 @@ export async function executeBashWithOperations(
 			startedAt,
 			finishedAt,
 			spawnError: spawnErr,
-			pipeline: pipelineMeta,
+			evidence,
 		};
 	} catch (err) {
 		if (tempFileStream) {
@@ -277,16 +308,16 @@ export async function executeBashWithOperations(
 			const fullOutput = outputChunks.join("");
 			const truncationResult = truncateTail(fullOutput);
 			const finishedAt = new Date().toISOString();
-			const pipelineMeta: PipelineEvidence | undefined = pipelineSuspected
-				? {
-						pipelineSuspected: true,
-						stageExitCodesKnown: false,
-						finalShellExitCode: undefined,
-						evidenceAuthoritative: false,
-						authorityScope: "final_pipeline_stage_only",
-						warning: WARNING_TEXT,
-					}
-				: undefined;
+			const evidence: BashEvidence = {
+				exitStatusKnown: false,
+				exitStatusAuthoritative: false,
+				authorityScope: "no_exit_status",
+				internalCommandStatusesKnown: false,
+				validationEvidenceAuthoritative: false,
+				pipelineSuspected,
+				stageExitCodesKnown: false,
+				finalShellExitCode: undefined,
+			};
 
 			return {
 				output: truncationResult.truncated ? truncationResult.content : fullOutput,
@@ -300,7 +331,7 @@ export async function executeBashWithOperations(
 				startedAt,
 				finishedAt,
 				spawnError: undefined,
-				pipeline: pipelineMeta,
+				evidence,
 			};
 		}
 
@@ -309,16 +340,16 @@ export async function executeBashWithOperations(
 			const fullOutput = outputChunks.join("");
 			const truncationResult = truncateTail(fullOutput);
 			const finishedAt = new Date().toISOString();
-			const pipelineMeta: PipelineEvidence | undefined = pipelineSuspected
-				? {
-						pipelineSuspected: true,
-						stageExitCodesKnown: false,
-						finalShellExitCode: undefined,
-						evidenceAuthoritative: false,
-						authorityScope: "final_pipeline_stage_only",
-						warning: WARNING_TEXT,
-					}
-				: undefined;
+			const evidence: BashEvidence = {
+				exitStatusKnown: false,
+				exitStatusAuthoritative: false,
+				authorityScope: "no_exit_status",
+				internalCommandStatusesKnown: false,
+				validationEvidenceAuthoritative: false,
+				pipelineSuspected,
+				stageExitCodesKnown: false,
+				finalShellExitCode: undefined,
+			};
 
 			return {
 				output: truncationResult.truncated ? truncationResult.content : fullOutput,
@@ -332,7 +363,7 @@ export async function executeBashWithOperations(
 				startedAt,
 				finishedAt,
 				spawnError: undefined,
-				pipeline: pipelineMeta,
+				evidence,
 			};
 		}
 
@@ -340,6 +371,17 @@ export async function executeBashWithOperations(
 		const finishedAt = new Date().toISOString();
 		const fullOutput = outputChunks.join("");
 		const truncationResult = truncateTail(fullOutput);
+		const spawnError = err instanceof Error ? err.message : String(err);
+		const evidence: BashEvidence = {
+			exitStatusKnown: false,
+			exitStatusAuthoritative: false,
+			authorityScope: "no_process_started",
+			internalCommandStatusesKnown: false,
+			validationEvidenceAuthoritative: false,
+			pipelineSuspected: false,
+			stageExitCodesKnown: false,
+			finalShellExitCode: undefined,
+		};
 
 		return {
 			output: truncationResult.truncated ? truncationResult.content : fullOutput,
@@ -352,8 +394,8 @@ export async function executeBashWithOperations(
 			fullOutputPath: tempFilePath,
 			startedAt,
 			finishedAt,
-			spawnError: err instanceof Error ? err.message : String(err),
-			pipeline: undefined,
+			spawnError,
+			evidence,
 		};
 	}
 }
