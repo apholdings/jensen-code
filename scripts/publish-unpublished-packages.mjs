@@ -6,6 +6,13 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
+// ============================================================================
+// Dependency-ordered package directories (dependents after their dependencies).
+// tui and ai have no internal deps, agent depends on ai,
+// coding-agent depends on agent+ai+tui, mom depends on coding-agent+ai+agent,
+// pods depends on agent, web-ui depends on tui+ai.
+// ============================================================================
+
 const packageDirs = [
 	"packages/tui",
 	"packages/ai",
@@ -15,6 +22,8 @@ const packageDirs = [
 	"packages/pods",
 	"packages/web-ui",
 ];
+
+const EXPECTED_PACKAGE_COUNT = 7;
 
 function readPackage(dir) {
 	const packageJsonPath = path.join(dir, "package.json");
@@ -249,9 +258,7 @@ function publishPackage(pkg, authMode, publishTag) {
 	const result = runWithOutput(
 		"npm",
 		publishArgs,
-		{
-		cwd: pkg.dir,
-		},
+		{ cwd: pkg.dir },
 	);
 
 	if (result.stdout) {
@@ -271,13 +278,13 @@ function publishPackage(pkg, authMode, publishTag) {
 			.map((line) => line.trim())
 			.filter(Boolean)
 			.filter(
-					(line) =>
-						line.includes("E404") ||
-						line.toLowerCase().includes("not found or you do not have permission") ||
-						line.toLowerCase().includes("could not be found or you do not have permission") ||
-						line.toLowerCase().includes("trusted publish") ||
-						line.toLowerCase().includes("permission") ||
-						line.toLowerCase().includes("authentication"),
+				(line) =>
+					line.includes("E404") ||
+					line.toLowerCase().includes("not found or you do not have permission") ||
+					line.toLowerCase().includes("could not be found or you do not have permission") ||
+					line.toLowerCase().includes("trusted publish") ||
+					line.toLowerCase().includes("permission") ||
+					line.toLowerCase().includes("authentication"),
 			);
 		const details = failureLines.length > 0 ? `\nRelevant npm output:\n${failureLines.join("\n")}` : "";
 		const tokenHint =
@@ -303,15 +310,13 @@ function publishPackage(pkg, authMode, publishTag) {
 	);
 }
 
-function createTagIfMissing(pkg) {
-	const tagName = `${pkg.name}@${pkg.version}`;
-	if (hasTag(tagName)) {
-		return;
-	}
+// ============================================================================
+// Lockstep Git tag
+// ============================================================================
 
-	run("git", ["tag", "-a", tagName, "-m", tagName]);
-}
-
+/**
+ * Check whether the lightweight tag `tagName` exists.
+ */
 function hasTag(tagName) {
 	try {
 		execFileSync("git", ["rev-parse", "--verify", "--quiet", `refs/tags/${tagName}`], {
@@ -323,7 +328,79 @@ function hasTag(tagName) {
 	}
 }
 
-export async function main() {
+/**
+ * Retrieve the commit SHA that `tagName` points to.
+ * Returns null if the tag does not exist.
+ */
+function getTagCommit(tagName) {
+	try {
+		return execFileSync("git", ["rev-parse", "--verify", "--quiet", `${tagName}^{commit}`], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+		}).trim();
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Get the HEAD commit SHA.
+ */
+function getHeadCommit() {
+	return execFileSync("git", ["rev-parse", "HEAD"], {
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "ignore"],
+	}).trim();
+}
+
+/**
+ * Create a single lockstep lightweight tag `v<version>`.
+ *
+ * If the tag already exists at the expected commit, it is left in place.
+ * If the tag exists at a different commit, the function throws.
+ */
+function createLockstepTag(version) {
+	const tagName = `v${version}`;
+
+	if (hasTag(tagName)) {
+		const tagCommit = getTagCommit(tagName);
+		const headCommit = getHeadCommit();
+		if (tagCommit === headCommit) {
+			console.log(`[tag] ${tagName} already exists at expected commit ${headCommit.slice(0, 7)}`);
+			return false; // not newly created
+		}
+		throw new Error(
+			`Tag ${tagName} already exists at commit ${tagCommit.slice(0, 7)} but HEAD is ${headCommit.slice(0, 7)}. ` +
+			`Will not move the existing tag.`,
+		);
+	}
+
+	run("git", ["tag", tagName]);
+	console.log(`[tag] Created lockstep tag ${tagName}`);
+	return true; // newly created
+}
+
+// ============================================================================
+// Structured output
+// ============================================================================
+
+function writeOutput(result) {
+	console.log("\n--- PUBLISH RESULT ---");
+	console.log(JSON.stringify(result, null, 2));
+}
+
+// ============================================================================
+// Main publish routine
+// ============================================================================
+
+export async function main(options = {}) {
+	const {
+		checkVersion = checkPublishedVersion,
+		waitForVersion = waitForPublishedVersion,
+		publishFn = publishPackage,
+	} = options;
+
+	// 1. Load package metadata
 	const packages = packageDirs
 		.map((dir) => {
 			const pkg = readPackage(dir);
@@ -339,8 +416,29 @@ export async function main() {
 		})
 		.filter((pkg) => pkg !== null);
 
-	const publishTag = getPublishTag();
+	if (packages.length !== EXPECTED_PACKAGE_COUNT) {
+		throw new Error(
+			`Expected ${EXPECTED_PACKAGE_COUNT} publishable packages but found ${packages.length}. ` +
+			`Aborting: the lockstep invariant is violated.`,
+		);
+	}
 
+	// 2. Verify all versions are equal (lockstep invariant)
+	const releaseVersion = packages[0].version;
+	for (const pkg of packages) {
+		if (pkg.version !== releaseVersion) {
+			throw new Error(
+				`Lockstep version mismatch: ${pkg.name} is at ${pkg.version} but expected ${releaseVersion} ` +
+				`(based on ${packages[0].name}). All seven packages must share the same version.`,
+			);
+		}
+	}
+
+	console.log(`Release version: ${releaseVersion}`);
+	const tagName = `v${releaseVersion}`;
+
+	// 3. Version regression check
+	const publishTag = getPublishTag();
 	for (const pkg of packages) {
 		const highestPublishedVersion = getHighestPublishedVersion(pkg.name);
 		if (!highestPublishedVersion) {
@@ -361,16 +459,21 @@ export async function main() {
 
 	const authMode = getPublishAuthMode();
 	const hasToken = Boolean(process.env.NODE_AUTH_TOKEN || process.env.NPM_TOKEN);
-	const publishedStatuses = new Map(
-		packages.map((pkg) => [`${pkg.name}@${pkg.version}`, checkPublishedVersion(pkg.name, pkg.version)]),
-	);
-	const unpublishedPackages = packages.filter(
-		(pkg) => !publishedStatuses.get(`${pkg.name}@${pkg.version}`)?.published,
-	);
 
 	console.log(`Publish auth mode: ${authMode}`);
 	console.log(`Token env present: ${hasToken}`);
 	console.log(`Publish dist-tag: ${publishTag}`);
+
+	// 4. Determine which packages need publishing
+	const publishedStatuses = new Map(
+		packages.map((pkg) => [`${pkg.name}@${pkg.version}`, checkVersion(pkg.name, pkg.version)]),
+	);
+	const unpublishedPackages = packages.filter(
+		(pkg) => !publishedStatuses.get(`${pkg.name}@${pkg.version}`)?.published,
+	);
+	const alreadyPublishedPackages = packages.filter(
+		(pkg) => publishedStatuses.get(`${pkg.name}@${pkg.version}`)?.published,
+	);
 
 	if (unpublishedPackages.length > 0) {
 		console.log("Unpublished packages detected:");
@@ -381,19 +484,71 @@ export async function main() {
 		console.log("No unpublished package versions detected.");
 	}
 
+	const publishedDuringRun = [];
+
+	// 5. Publish unpublished packages in topological order
 	for (const pkg of packages) {
 		const key = `${pkg.name}@${pkg.version}`;
-		const publishedStatus = publishedStatuses.get(key);
+		const status = publishedStatuses.get(key);
 
-		if (publishedStatus?.published) {
-			createTagIfMissing(pkg);
+		if (status?.published) {
+			console.log(`[skip] ${pkg.name}@${pkg.version} already published`);
 			continue;
 		}
 
-		publishPackage(pkg, authMode, publishTag);
-		await waitForPublishedVersion(pkg.name, pkg.version);
-		createTagIfMissing(pkg);
+		publishFn(pkg, authMode, publishTag);
+		await waitForVersion(pkg.name, pkg.version);
+		publishedDuringRun.push(pkg.name);
 	}
+
+	// 6. Verify all seven packages are on the registry
+	let allVerified = true;
+	const verificationResults = {};
+	for (const pkg of packages) {
+		const result = checkVersion(pkg.name, pkg.version);
+		verificationResults[pkg.name] = result.published;
+		if (!result.published) {
+			allVerified = false;
+			console.log(`[verify] FAILED: ${pkg.name}@${pkg.version} is NOT on npm after publish loop`);
+		}
+	}
+
+	if (!allVerified) {
+		const result = {
+			releaseVersion,
+			releaseTag: null,
+			publishedPackages: [...alreadyPublishedPackages.map((p) => p.name), ...publishedDuringRun],
+			alreadyPublishedPackages: alreadyPublishedPackages.map((p) => p.name),
+			allPackagesVerified: false,
+			tagCreated: false,
+		};
+		writeOutput(result);
+		throw new Error(
+			"Not all seven packages are verified on the npm registry. " +
+			`The lockstep tag ${tagName} was NOT created. ` +
+			"Re-run the workflow to retry.",
+		);
+	}
+
+	console.log("[verify] All seven packages confirmed on npm registry");
+
+	// 7. Create the single lockstep tag
+	const tagCreated = createLockstepTag(releaseVersion);
+
+	const result = {
+		releaseVersion,
+		releaseTag: tagName,
+		publishedPackages: [
+			...alreadyPublishedPackages.map((p) => p.name),
+			...publishedDuringRun,
+		],
+		alreadyPublishedPackages: alreadyPublishedPackages.map((p) => p.name),
+		allPackagesVerified: true,
+		tagCreated,
+	};
+
+	writeOutput(result);
+	return result;
 }
 
 const entrypoint = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;

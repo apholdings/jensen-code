@@ -184,9 +184,13 @@ Changesets CI opens or updates the version PR. The version PR:
 
 Review and merge the version PR.
 
+### Tags
+
+The seven published packages use fixed lockstep versions. A successful release creates one lightweight Git tag: `v<version>` (e.g., `v1.1.7`). The tag is created only after all seven packages are confirmed on npm. Per-package Git tags are not used. GitHub Releases are not currently generated.
+
 ### Publishing
 
-Changesets CI publishes packages that are not yet on the npm registry after the version PR is merged. Publishing happens exclusively through the CI workflow on the `main` branch.
+Publishing happens exclusively through the CI workflow on the `main` branch (`release.yml`). The custom publisher verifies all seven packages against the npm registry and creates the lockstep tag only after confirming all seven.
 
 ### Prohibited
 

@@ -40,6 +40,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Check (includes release-tooling gate)
+        run: npm run check
+
       - name: Test
         run: npm test
 
@@ -51,62 +54,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Detect unpublished package versions
-        if: steps.changesets.outputs.hasChangesets == 'false'
-        id: unpublished
-        shell: bash
-        run: |
-          node <<'NODE'
-          const { execSync } = require("node:child_process");
-          const fs = require("node:fs");
-          const path = require("node:path");
-
-          const packageDirs = [
-            "packages/coding-agent",
-            "packages/tui",
-            "packages/agent",
-            "packages/ai",
-            "packages/mom",
-            "packages/pods",
-            "packages/web-ui",
-          ];
-
-          const unpublished = [];
-
-          for (const dir of packageDirs) {
-            const pkgJsonPath = path.join(dir, "package.json");
-            if (!fs.existsSync(pkgJsonPath)) continue;
-
-            const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
-            if (pkg.private) continue;
-
-            try {
-              execSync(`npm view "${pkg.name}@${pkg.version}" version`, {
-                stdio: "ignore",
-              });
-            } catch {
-              unpublished.push(`${pkg.name}@${pkg.version}`);
-            }
-          }
-
-          const needsPublish = unpublished.length > 0 ? "true" : "false";
-
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `needs_publish=${needsPublish}\n`);
-          fs.appendFileSync(
-            process.env.GITHUB_OUTPUT,
-            `packages<<EOF\n${unpublished.join("\n")}\nEOF\n`
-          );
-
-          if (unpublished.length) {
-            console.log("Unpublished packages detected:");
-            for (const item of unpublished) console.log(`- ${item}`);
-          } else {
-            console.log("No unpublished package versions detected.");
-          }
-          NODE
-
       - name: Publish to npm
-        if: steps.changesets.outputs.hasChangesets == 'false' && steps.unpublished.outputs.needs_publish == 'true'
+        if: steps.changesets.outputs.hasChangesets == 'false'
+        id: publish
         env:
           NPM_CONFIG_PROVENANCE: "true"
           JENSEN_NPM_PUBLISH_AUTH_MODE: ${{ vars.JENSEN_NPM_PUBLISH_AUTH_MODE || 'auto' }}
@@ -118,8 +68,12 @@ jobs:
           if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
             printf '%s\n' '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' > "$HOME/.npmrc"
           fi
-          node scripts/publish-unpublished-packages.mjs
+          node scripts/publish-unpublished-packages.mjs 2>&1 | tee publish-output.txt
+          # Extract the JSON result block for downstream consumption
+          sed -n '/^--- PUBLISH RESULT ---$/,/^$/p' publish-output.txt | tail -n +2 | head -n -1 > publish-result.json
+          RELEASE_TAG=$(node -e "try { console.log(require('./publish-result.json').releaseTag || '') } catch { }")
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
 
-      - name: Push release tags
-        if: steps.changesets.outputs.hasChangesets == 'false' && steps.unpublished.outputs.needs_publish == 'true'
-        run: git push --follow-tags
+      - name: Push release tag
+        if: steps.publish.outputs.release_tag != ''
+        run: git push origin "${{ steps.publish.outputs.release_tag }}"

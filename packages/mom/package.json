@@ -6,8 +6,6 @@
 	"bin": {
 		"mom": "dist/main.js"
 	},
-	"main": "./dist/index.js",
-	"types": "./dist/index.d.ts",
 	"files": [
 		"dist",
 		"CHANGELOG.md"
@@ -15,8 +13,7 @@
 	"scripts": {
 		"clean": "shx rm -rf dist",
 		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/main.js",
-		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
-		"prepublishOnly": "npm run clean && npm run build -w @apholdings/jensen-ai -w @apholdings/jensen-agent-core -w @apholdings/jensen-code && npm run build"
+		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput"
 	},
 	"publishConfig": {
 		"access": "public",
