@@ -11,7 +11,15 @@ export {
 	type PromptOptions,
 	type SessionStats,
 } from "./agent-session.js";
-export { type BashExecutorOptions, type BashResult, executeBash, executeBashWithOperations } from "./bash-executor.js";
+export {
+	type BashEvidence,
+	type BashExecutorOptions,
+	type BashResult,
+	executeBash,
+	executeBashWithOperations,
+	type PipelineEvidence,
+	type ResolvedBashResult,
+} from "./bash-executor.js";
 export type { CompactionResult } from "./compaction/index.js";
 export {
 	applyDelegatedResult,

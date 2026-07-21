@@ -1209,3 +1209,177 @@ describe("bash tool — model-facing authority scope", () => {
 		}
 	});
 });
+
+// ============================================================================
+// Compile-compatibility fixture: consumers written against the 1.1.6 public
+// surface must continue to compile against the current types.
+// ============================================================================
+
+import type { BashResult } from "../bash-executor.js";
+import type { BashToolDetails } from "./bash.js";
+
+describe("compile-compatibility with 1.1.6 surface", () => {
+	it("accepts BashToolDetails constructed with only 1.1.6 fields", () => {
+		// Simulates a consumer that builds details from the 1.1.6 contract.
+		// Must not require any of the new fields.
+		const oldDetails: BashToolDetails = {
+			truncation: undefined,
+			fullOutputPath: undefined,
+		};
+
+		// Also accepts omitted cancelled (was optional in 1.1.6)
+		const oldDetailsNoCancel: BashToolDetails = {
+			truncation: undefined,
+			fullOutputPath: undefined,
+		};
+
+		expect(oldDetails.truncation).toBeUndefined();
+		expect(oldDetailsNoCancel.cancelled).toBeUndefined();
+	});
+
+	it("accepts BashResult constructed with only 1.1.6 fields", () => {
+		// Simulates a consumer that builds results from the 1.1.6 contract.
+		const oldResult: BashResult = {
+			output: "",
+			exitCode: 0,
+			cancelled: false,
+			truncated: false,
+		};
+
+		// Also accepts fullOutputPath omitted (was optional in 1.1.6)
+		const oldResultNoPath: BashResult = {
+			output: "hello",
+			exitCode: undefined,
+			cancelled: true,
+			truncated: true,
+		};
+
+		expect(oldResult.output).toBe("");
+		expect(oldResult.exitCode).toBe(0);
+		expect(oldResultNoPath.output).toBe("hello");
+		expect(oldResultNoPath.exitCode).toBeUndefined();
+	});
+
+	it("new consumers can access all new fields on BashResult", () => {
+		const fullResult: BashResult = {
+			output: "test",
+			exitCode: 0,
+			cancelled: false,
+			truncated: false,
+			stdout: "test",
+			stderr: "",
+			timedOut: false,
+			startedAt: "2024-01-01T00:00:00.000Z",
+			finishedAt: "2024-01-01T00:00:00.100Z",
+			evidence: {
+				exitStatusKnown: true,
+				exitStatusAuthoritative: true,
+				authorityScope: "final_shell_exit_status",
+				internalCommandStatusesKnown: false,
+				validationEvidenceAuthoritative: true,
+				pipelineSuspected: false,
+				stageExitCodesKnown: false,
+				finalShellExitCode: 0,
+			},
+		};
+
+		expect(fullResult.stdout).toBe("test");
+		expect(fullResult.timedOut).toBe(false);
+		expect(fullResult.evidence?.authorityScope).toBe("final_shell_exit_status");
+	});
+
+	it("new consumers can access all new fields on BashToolDetails", () => {
+		const fullDetails: BashToolDetails = {
+			command: "echo hello",
+			cwd: "/tmp",
+			stdout: "hello",
+			stderr: "",
+			exitCode: 0,
+			startedAt: "2024-01-01T00:00:00.000Z",
+			finishedAt: "2024-01-01T00:00:00.100Z",
+			timedOut: false,
+			cancelled: false,
+			truncated: false,
+			evidence: {
+				exitStatusKnown: true,
+				exitStatusAuthoritative: true,
+				authorityScope: "final_shell_exit_status",
+				internalCommandStatusesKnown: false,
+				validationEvidenceAuthoritative: true,
+				pipelineSuspected: false,
+				stageExitCodesKnown: false,
+				finalShellExitCode: 0,
+			},
+		};
+
+		expect(fullDetails.command).toBe("echo hello");
+		expect(fullDetails.cancelled).toBe(false);
+		expect(fullDetails.evidence?.exitStatusKnown).toBe(true);
+	});
+});
+
+// ============================================================================
+// Runtime compatibility: verify that real executions always produce every
+// new field even though they are optional in the public type.
+// ============================================================================
+
+import { executeBash, type ResolvedBashResult } from "../bash-executor.js";
+
+describe("runtime always produces all new BashResult fields", () => {
+	it("simple success", async () => {
+		const result = (await executeBash("echo hello")) as ResolvedBashResult;
+		expect(result.stdout).toBeDefined();
+		expect(result.stderr).toBeDefined();
+		expect(result.timedOut).toBe(false);
+		expect(result.startedAt).toBeDefined();
+		expect(result.finishedAt).toBeDefined();
+		expect(result.evidence).toBeDefined();
+		expect(result.evidence.exitStatusKnown).toBe(true);
+		expect(result.evidence.authorityScope).toBe("final_shell_exit_status");
+	});
+
+	it("simple failure", async () => {
+		const result = (await executeBash("exit 42")) as ResolvedBashResult;
+		expect(result.stdout).toBeDefined();
+		expect(result.stderr).toBeDefined();
+		expect(result.exitCode).toBe(42);
+		expect(result.timedOut).toBe(false);
+		expect(result.cancelled).toBe(false);
+		expect(result.evidence).toBeDefined();
+		expect(result.evidence.exitStatusKnown).toBe(true);
+		expect(result.evidence.authorityScope).toBe("final_shell_exit_status");
+	});
+
+	it("compound command", async () => {
+		const result = (await executeBash("echo a; echo b")) as ResolvedBashResult;
+		expect(result.stdout).toBeDefined();
+		expect(result.evidence).toBeDefined();
+		expect(result.evidence.authorityScope).toBe("final_shell_exit_status");
+		expect(result.evidence.validationEvidenceAuthoritative).toBe(true);
+	});
+
+	it("pipeline: evidence is non-authoritative", async () => {
+		const result = (await executeBash("echo hello | cat")) as ResolvedBashResult;
+		expect(result.stdout).toContain("hello");
+		expect(result.evidence).toBeDefined();
+		expect(result.evidence.pipelineSuspected).toBe(true);
+		expect(result.evidence.validationEvidenceAuthoritative).toBe(false);
+	});
+
+	it("timeout produces timedOut: true", async () => {
+		const result = (await executeBash("sleep 5", { timeout: 1 })) as ResolvedBashResult;
+		expect(result.timedOut).toBe(true);
+		expect(result.evidence).toBeDefined();
+		expect(result.evidence.exitStatusKnown).toBe(false);
+		expect(result.evidence.authorityScope).toBe("no_exit_status");
+	});
+
+	it("truncation", async () => {
+		// Produce enough output to trigger truncation
+		const lines = Array.from({ length: 1000 }, (_, i) => `line ${i}`).join("\n");
+		const result = (await executeBash(`printf '%s' "${lines}"`)) as ResolvedBashResult;
+		// Large output may or may not truncate depending on DEFAULT_MAX_BYTES/DEFAULT_MAX_LINES
+		expect(result.truncated).toBeDefined();
+		expect(result.evidence).toBeDefined();
+	});
+});

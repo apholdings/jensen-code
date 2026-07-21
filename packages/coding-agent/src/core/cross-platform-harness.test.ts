@@ -4,7 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { describe, expect, it } from "vitest";
 import { getPowerShellConfig, resetShellConfigCache } from "../utils/shell.js";
-import { executeBash } from "./bash-executor.js";
+import { executeBash, type ResolvedBashResult } from "./bash-executor.js";
 import { runDoctorChecks } from "./doctor.js";
 import { buildExecutionEnvironment, parseWorktreeList } from "./footer-data-provider.js";
 import { buildSystemPrompt } from "./system-prompt.js";
@@ -214,7 +214,7 @@ describe("buildExecutionEnvironment", () => {
 
 describe("BashResult timestamps", () => {
 	it("includes startedAt and finishedAt on success", async () => {
-		const result = await executeBash("echo hello");
+		const result = (await executeBash("echo hello")) as ResolvedBashResult;
 		expect(typeof result.startedAt).toBe("string");
 		expect(typeof result.finishedAt).toBe("string");
 		// ISO 8601 format: starts with YYYY-MM-DD
@@ -235,7 +235,7 @@ describe("BashResult timestamps", () => {
 	});
 
 	it("timestamps are ISO 8601 strings not Date objects", async () => {
-		const result = await executeBash("echo ts");
+		const result = (await executeBash("echo ts")) as ResolvedBashResult;
 		// Verify they're strings, not Date objects
 		expect(typeof result.startedAt).toBe("string");
 		expect(typeof result.finishedAt).toBe("string");
@@ -245,7 +245,7 @@ describe("BashResult timestamps", () => {
 	});
 
 	it("finishedAt >= startedAt", async () => {
-		const result = await executeBash("echo timing");
+		const result = (await executeBash("echo timing")) as ResolvedBashResult;
 		expect(result.startedAt <= result.finishedAt).toBe(true);
 	});
 });
@@ -256,7 +256,7 @@ describe("BashResult timestamps", () => {
 
 describe("BashResult stream separation", () => {
 	it("captures stdout only with exit 0", async () => {
-		const result = await executeBash("printf 'hello stdout'");
+		const result = (await executeBash("printf 'hello stdout'")) as ResolvedBashResult;
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toContain("hello stdout");
 		expect(result.stderr).toBe("");
@@ -267,7 +267,7 @@ describe("BashResult stream separation", () => {
 	});
 
 	it("captures stderr only with exit 0", async () => {
-		const result = await executeBash("printf 'error message' >&2");
+		const result = (await executeBash("printf 'error message' >&2")) as ResolvedBashResult;
 		expect(result.exitCode).toBe(0);
 		expect(result.stderr).toContain("error message");
 		expect(result.stdout).toBe("");
@@ -276,39 +276,39 @@ describe("BashResult stream separation", () => {
 	});
 
 	it("captures simultaneous stdout and stderr", async () => {
-		const result = await executeBash("printf 'out'; printf 'err' >&2");
+		const result = (await executeBash("printf 'out'; printf 'err' >&2")) as ResolvedBashResult;
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toBe("out");
 		expect(result.stderr).toBe("err");
 	});
 
 	it("captures stdout with non-zero exit", async () => {
-		const result = await executeBash("printf 'fail output' >&2; exit 3");
+		const result = (await executeBash("printf 'fail output' >&2; exit 3")) as ResolvedBashResult;
 		expect(result.exitCode).toBe(3);
 		expect(result.stderr).toContain("fail output");
 	});
 
 	it("does not treat stderr as failure when exit 0", async () => {
-		const result = await executeBash("printf 'just noise' >&2; exit 0");
+		const result = (await executeBash("printf 'just noise' >&2; exit 0")) as ResolvedBashResult;
 		expect(result.exitCode).toBe(0);
 		expect(result.stderr).toContain("just noise");
 		expect(result.stdout).toBe("");
 	});
 
 	it("timestamps are present in all result states", async () => {
-		const result = await executeBash("true");
+		const result = (await executeBash("true")) as ResolvedBashResult;
 		expect(result.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 		expect(result.finishedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 		expect(result.startedAt <= result.finishedAt).toBe(true);
 	});
 
 	it("timedOut is false on normal completion", async () => {
-		const result = await executeBash("true");
+		const result = (await executeBash("true")) as ResolvedBashResult;
 		expect(result.timedOut).toBe(false);
 	});
 
 	it("spawnError is undefined on normal completion", async () => {
-		const result = await executeBash("true");
+		const result = (await executeBash("true")) as ResolvedBashResult;
 		expect(result.spawnError).toBeUndefined();
 	});
 });
@@ -319,7 +319,7 @@ describe("BashResult stream separation", () => {
 
 describe("bash evidence", () => {
 	it("detects simple pipeline as non-authoritative", async () => {
-		const result = await executeBash("false | tail");
+		const result = (await executeBash("false | tail")) as ResolvedBashResult;
 		expect(result.evidence.pipelineSuspected).toBe(true);
 		// No fd 3 control channel — stage codes are never known from untrusted channels
 		expect(result.evidence.stageExitCodesKnown).toBe(false);
@@ -330,7 +330,7 @@ describe("bash evidence", () => {
 	});
 
 	it("detects pipeline with grep as non-authoritative", async () => {
-		const result = await executeBash("printf 'ok\n' | grep ok");
+		const result = (await executeBash("printf 'ok\n' | grep ok")) as ResolvedBashResult;
 		expect(result.evidence.pipelineSuspected).toBe(true);
 		expect(result.exitCode).toBe(0);
 		expect(result.evidence.validationEvidenceAuthoritative).toBe(false);
@@ -338,7 +338,7 @@ describe("bash evidence", () => {
 	});
 
 	it("non-pipeline command has explicit authority scope", async () => {
-		const result = await executeBash("echo hello");
+		const result = (await executeBash("echo hello")) as ResolvedBashResult;
 		expect(result.evidence.pipelineSuspected).toBe(false);
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toContain("hello");
@@ -349,14 +349,14 @@ describe("bash evidence", () => {
 	});
 
 	it("non-pipeline exit 0 has explicit authority scope", async () => {
-		const result = await executeBash("true");
+		const result = (await executeBash("true")) as ResolvedBashResult;
 		expect(result.evidence.pipelineSuspected).toBe(false);
 		expect(result.exitCode).toBe(0);
 		expect(result.evidence.authorityScope).toBe("final_shell_exit_status");
 	});
 
 	it("pipeline exit code reflects last stage but is non-authoritative", async () => {
-		const result = await executeBash("false | grep anything");
+		const result = (await executeBash("false | grep anything")) as ResolvedBashResult;
 		expect(result.evidence.pipelineSuspected).toBe(true);
 		expect(result.exitCode).toBe(1);
 		expect(result.evidence.validationEvidenceAuthoritative).toBe(false);
@@ -364,7 +364,7 @@ describe("bash evidence", () => {
 	});
 
 	it("compound command failure-then-success has final-shell-exit-status scope", async () => {
-		const result = await executeBash("false; true");
+		const result = (await executeBash("false; true")) as ResolvedBashResult;
 		expect(result.exitCode).toBe(0);
 		expect(result.evidence.authorityScope).toBe("final_shell_exit_status");
 		// internal command status is not tracked
@@ -372,7 +372,7 @@ describe("bash evidence", () => {
 	});
 
 	it("command with explicit exit 17 has authoritative evidence", async () => {
-		const result = await executeBash("bash -c 'exit 17'");
+		const result = (await executeBash("bash -c 'exit 17'")) as ResolvedBashResult;
 		expect(result.exitCode).toBe(17);
 		expect(result.evidence.exitStatusAuthoritative).toBe(true);
 		expect(result.evidence.authorityScope).toBe("final_shell_exit_status");
@@ -380,7 +380,7 @@ describe("bash evidence", () => {
 	});
 
 	it("timeout has no_exit_status authority scope", async () => {
-		const result = await executeBash("sleep 5", { timeout: 1 });
+		const result = (await executeBash("sleep 5", { timeout: 1 })) as ResolvedBashResult;
 		expect(result.timedOut).toBe(true);
 		expect(result.exitCode).toBeUndefined();
 		expect(result.evidence.exitStatusKnown).toBe(false);
@@ -388,7 +388,7 @@ describe("bash evidence", () => {
 	});
 
 	it("function with internal failure has final-shell-exit-status scope", async () => {
-		const result = await executeBash("sample() { false; printf 'END\\n'; }; sample");
+		const result = (await executeBash("sample() { false; printf 'END\\n'; }; sample")) as ResolvedBashResult;
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toContain("END");
 		expect(result.evidence.authorityScope).toBe("final_shell_exit_status");
@@ -396,27 +396,27 @@ describe("bash evidence", () => {
 	});
 
 	it("subshell with internal failure has final-shell-exit-status scope", async () => {
-		const result = await executeBash("(false; true)");
+		const result = (await executeBash("(false; true)")) as ResolvedBashResult;
 		expect(result.exitCode).toBe(0);
 		expect(result.evidence.authorityScope).toBe("final_shell_exit_status");
 	});
 
 	it("recovery operator (||) has final-shell-exit-status scope", async () => {
-		const result = await executeBash("false || printf 'RECOVERED\\n'");
+		const result = (await executeBash("false || printf 'RECOVERED\\n'")) as ResolvedBashResult;
 		expect(result.exitCode).toBe(0);
 		expect(result.evidence.pipelineSuspected).toBe(false);
 		expect(result.evidence.authorityScope).toBe("final_shell_exit_status");
 	});
 
 	it("success-then-failure has non-zero exit with correct scope", async () => {
-		const result = await executeBash("true; false");
+		const result = (await executeBash("true; false")) as ResolvedBashResult;
 		expect(result.exitCode).toBe(1);
 		expect(result.evidence.authorityScope).toBe("final_shell_exit_status");
 		expect(result.evidence.exitStatusAuthoritative).toBe(true);
 	});
 
 	it("set -e failure has final-shell-exit-status scope", async () => {
-		const result = await executeBash("set -e; false; printf 'UNREACHABLE\\n'");
+		const result = (await executeBash("set -e; false; printf 'UNREACHABLE\\n'")) as ResolvedBashResult;
 		expect(result.exitCode).toBe(1);
 		expect(result.evidence.authorityScope).toBe("final_shell_exit_status");
 	});

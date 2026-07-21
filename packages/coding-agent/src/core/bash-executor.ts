@@ -72,30 +72,55 @@ export interface BashEvidence {
 /** @deprecated Use BashEvidence instead. Kept for backward compatibility. */
 export type PipelineEvidence = BashEvidence;
 
+/**
+ * Public result of a bash command execution.
+ *
+ * All fields added after 1.1.6 are optional in the public type for backward
+ * compatibility with consumers that construct mocks, adapters, or fixtures
+ * using the 1.1.6 shape. The runtime always produces every field.
+ */
 export interface BashResult {
 	/** Combined stdout + stderr output (sanitized, possibly truncated) */
 	output: string;
-	/** Separate stdout stream (empty string if no stdout was produced) */
-	stdout: string;
-	/** Separate stderr stream (empty string if no stderr was produced) */
-	stderr: string;
 	/** Process exit code (undefined if killed/cancelled/timedOut/spawnError) */
 	exitCode: number | undefined;
 	/** Whether the command was cancelled via signal */
 	cancelled: boolean;
-	/** Whether the command timed out */
-	timedOut: boolean;
 	/** Whether the output was truncated */
 	truncated: boolean;
 	/** Path to temp file containing full output (if output exceeded truncation threshold) */
 	fullOutputPath?: string;
+
+	// --- Added in 1.1.7 (optional in public type; always present at runtime) ---
+
+	/** Separate stdout stream (empty string if no stdout was produced) */
+	stdout?: string;
+	/** Separate stderr stream (empty string if no stderr was produced) */
+	stderr?: string;
+	/** Whether the command timed out */
+	timedOut?: boolean;
 	/** ISO timestamp when command execution started */
-	startedAt: string;
+	startedAt?: string;
 	/** ISO timestamp when command execution finished */
-	finishedAt: string;
+	finishedAt?: string;
 	/** Spawn error message if the process failed to start (e.g., executable not found) */
 	spawnError?: string;
 	/** Evidence metadata for every execution (exit status, authority scope, pipeline flag) */
+	evidence?: BashEvidence;
+}
+
+/**
+ * Internal resolved type: every runtime-produced BashResult satisfies this
+ * contract. The formatter and other internal consumers use this type so they
+ * can rely on the fields being present without optional chaining, while the
+ * public BashResult remains backward-compatible with the 1.1.6 surface.
+ */
+export interface ResolvedBashResult extends BashResult {
+	stdout: string;
+	stderr: string;
+	timedOut: boolean;
+	startedAt: string;
+	finishedAt: string;
 	evidence: BashEvidence;
 }
 

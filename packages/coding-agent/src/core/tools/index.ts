@@ -8,6 +8,7 @@ export {
 	bashTool,
 	createBashTool,
 	createLocalBashOperations,
+	type ResolvedBashToolDetails,
 } from "./bash.js";
 export {
 	createEditTool,

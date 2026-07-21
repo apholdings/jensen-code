@@ -3,7 +3,7 @@ import type { AgentTool } from "@apholdings/jensen-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
 import { getShellConfig, getShellEnv, killProcessTree } from "../../utils/shell.js";
-import type { BashEvidence, BashResult } from "../bash-executor.js";
+import type { BashEvidence, ResolvedBashResult } from "../bash-executor.js";
 import { executeBashWithOperations } from "../bash-executor.js";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult, truncateTail } from "./truncate.js";
 
@@ -20,27 +20,49 @@ const bashSchema = Type.Object({
 
 export type BashToolInput = Static<typeof bashSchema>;
 
+/**
+ * Public details for the bash tool shown in the TUI and event stream.
+ *
+ * All fields added after 1.1.6 are optional in the public type for backward
+ * compatibility with consumers that construct mocks, adapters, or fixtures
+ * using the 1.1.6 shape. The runtime always produces every field.
+ */
 export interface BashToolDetails {
+	// 1.1.6 surface
+	truncation?: TruncationResult;
+	fullOutputPath?: string;
+	cancelled?: boolean;
+
+	// --- Added in 1.1.7 (optional in public type; always present at runtime) ---
+	command?: string;
+	cwd?: string;
+	stdout?: string;
+	stderr?: string;
+	exitCode?: number | undefined;
+	startedAt?: string;
+	finishedAt?: string;
+	timedOut?: boolean;
+	truncated?: boolean;
+	spawnError?: string;
+	evidence?: BashEvidence;
+}
+
+/**
+ * Internal resolved details type. Every runtime-produced BashToolDetails
+ * satisfies this contract. Internal consumers use this type so they can
+ * rely on fields being present without optional chaining.
+ */
+export interface ResolvedBashToolDetails extends BashToolDetails {
 	command: string;
 	cwd: string;
-
 	stdout: string;
 	stderr: string;
-
 	exitCode: number | undefined;
-
 	startedAt: string;
 	finishedAt: string;
-
 	timedOut: boolean;
 	cancelled: boolean;
 	truncated: boolean;
-
-	truncation?: TruncationResult;
-	fullOutputPath?: string;
-	spawnError?: string;
-
-	evidence?: BashEvidence;
 }
 
 export interface BashOperations {
@@ -195,10 +217,10 @@ export interface BashToolOptions {
  * TUI details carry the full BashResult for rendering.
  */
 function formatBashResultForModel(
-	result: BashResult,
+	result: ResolvedBashResult,
 	command: string,
 	cwd: string,
-): { contentText: string; details: BashToolDetails } {
+): { contentText: string; details: ResolvedBashToolDetails } {
 	const lines: string[] = [];
 
 	// Structured evidence header
@@ -258,7 +280,7 @@ function formatBashResultForModel(
 	lines.push("--- Evidence ---");
 	lines.push(evidenceLines.join("\n"));
 
-	const details: BashToolDetails = {
+	const details: ResolvedBashToolDetails = {
 		command,
 		cwd,
 		stdout: result.stdout,
@@ -342,11 +364,11 @@ export function createBashTool(cwd: string, options?: BashToolOptions): AgentToo
 				}
 			};
 
-			const result = await executeBashWithOperations(spawnContext.command, spawnContext.cwd, ops, {
+			const result = (await executeBashWithOperations(spawnContext.command, spawnContext.cwd, ops, {
 				onChunk,
 				signal,
 				timeout: _timeout,
-			});
+			})) as ResolvedBashResult;
 
 			const { contentText, details } = formatBashResultForModel(result, resolvedCommand, spawnContext.cwd);
 
