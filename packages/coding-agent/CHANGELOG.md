@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.7
+
+### Patch Changes
+
+- 0a60417: Improve shell execution (stdout/stderr separation, timeout control, structured exit-status evidence). Introduce conservative non-authoritative validation for suspected pipelines. Enable and diagnose PowerShell Core on Linux via `JENSEN_PWSH_PATH`. Harden remote PowerShell command construction. Restore `@apholdings/jensen-code/hooks` subpath export with backward-compatible re-exports from the unified extensions system.
+  - @apholdings/jensen-agent-core@1.1.7
+  - @apholdings/jensen-ai@1.1.7
+  - @apholdings/jensen-tui@1.1.7
+
 ## [Unreleased]
 
 ## 1.1.6
