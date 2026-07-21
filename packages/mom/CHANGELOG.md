@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.7
+
+### Patch Changes
+
+- c322b08: Fix packaging: remove broken `main` and `types` entrypoints that referenced non-existent `dist/index.js` and `dist/index.d.ts`. Mom is a CLI-only package (bin: `mom`).
+- Updated dependencies [0a60417]
+  - @apholdings/jensen-code@1.1.7
+  - @apholdings/jensen-agent-core@1.1.7
+  - @apholdings/jensen-ai@1.1.7
+
 ## [Unreleased]
 
 ## 1.1.6
