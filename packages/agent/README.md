@@ -407,6 +407,58 @@ for await (const event of agentLoopContinue(context, config)) {
 }
 ```
 
+## Provider E2E Testing
+
+Provider end-to-end tests validate real LLM streaming against live APIs. These tests require explicit provider selection and valid credentials.
+
+### Setup
+
+Set `JENSEN_E2E_PROVIDERS` to a comma-separated list of provider keys:
+
+```bash
+JENSEN_E2E_PROVIDERS=openai,anthropic
+```
+
+Supported keys: `google`, `openai`, `anthropic`, `xai`, `groq`, `cerebras`, `zai`, `bedrock`.
+
+Use `all` to select every provider:
+
+```bash
+JENSEN_E2E_PROVIDERS=all
+```
+
+### Credentials
+
+Set the required environment variables for each selected provider:
+
+| Provider | Required Variables |
+|---|---|
+| Google | `GEMINI_API_KEY` |
+| OpenAI | `OPENAI_API_KEY` |
+| Anthropic | `ANTHROPIC_API_KEY` |
+| xAI | `XAI_API_KEY` |
+| Groq | `GROQ_API_KEY` |
+| Cerebras | `CEREBRAS_API_KEY` |
+| zAI | `ZAI_API_KEY` |
+| Amazon Bedrock | `AWS_PROFILE` or `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` or `AWS_BEARER_TOKEN_BEDROCK` |
+
+### Running
+
+```bash
+# Single provider
+JENSEN_E2E_PROVIDERS=openai \
+OPENAI_API_KEY="<configured>" \
+npm run test:e2e:providers
+
+# Multiple providers (both credentials required)
+JENSEN_E2E_PROVIDERS=openai,anthropic \
+OPENAI_API_KEY="<configured>" \
+ANTHROPIC_API_KEY="<configured>" \
+npm run test:e2e:providers
+```
+
+The preflight validates credentials before Vitest starts. Missing or unknown providers cause an early exit with a diagnostic message. No provider tests run without explicit selection.
+
 ## License
 
 MIT

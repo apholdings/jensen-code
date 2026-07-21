@@ -318,7 +318,7 @@ test("publisher orchestration tests (P01-P10) pass", () => {
 	strictEqual(status, 0, "publisher orchestration tests must pass (exit 0)");
 });
 
-test("provider E2E preflight tests (E01-E06) pass", () => {
+test("provider E2E preflight tests (E01, S01-S10) pass", () => {
 	const { status, stdout, stderr } = spawnSync(
 		process.execPath,
 		["--test", "scripts/check-provider-e2e-credentials.test.mjs"],
@@ -352,4 +352,27 @@ test("npm run validate does not select provider E2E", () => {
 	const validateScript = rootPkg.scripts.validate;
 	ok(!validateScript.includes("test:e2e:providers"), "validate must not run provider E2E");
 	ok(!validateScript.includes("e2e"), "validate must not reference e2e");
+});
+
+test("npm run test:ci excludes E2E tests", () => {
+	const agentPkg = readJson("packages/agent/package.json");
+	const testCiScript = agentPkg.scripts["test:ci"];
+	ok(typeof testCiScript === "string", "test:ci script must exist");
+	ok(testCiScript.includes("--exclude"), "test:ci must use --exclude");
+	ok(testCiScript.includes("test/e2e"), "test:ci must exclude test/e2e directory");
+});
+
+test("test:e2e:providers references preflight with JENSEN_E2E_PROVIDERS requirement", () => {
+	const agentPkg = readJson("packages/agent/package.json");
+	const script = agentPkg.scripts["test:e2e:providers"];
+	ok(typeof script === "string", "test:e2e:providers script must exist");
+	ok(script.includes("check-provider-e2e-credentials.mjs"), "must include preflight script");
+	ok(script.includes("&&"), "must use && for short-circuit");
+	const preflightIdx = script.indexOf("check-provider-e2e-credentials.mjs");
+	const vitestIdx = script.indexOf("vitest");
+	ok(preflightIdx < vitestIdx, "preflight must run before vitest");
+
+	// Preflight script must reference JENSEN_E2E_PROVIDERS
+	const preflightContent = readText("scripts/check-provider-e2e-credentials.mjs");
+	ok(preflightContent.includes("JENSEN_E2E_PROVIDERS"), "preflight must reference JENSEN_E2E_PROVIDERS");
 });

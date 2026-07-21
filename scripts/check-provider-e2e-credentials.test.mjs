@@ -1,27 +1,29 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { strictEqual, ok, match } from "node:assert";
+import { deepStrictEqual, strictEqual, ok, match } from "node:assert";
 import { join } from "node:path";
 import { test } from "node:test";
 
 const PREFLIGHT = join(import.meta.dirname, "check-provider-e2e-credentials.mjs");
 
 /**
- * Build a clean environment with all known credential variables removed.
+ * Build a clean environment with all known credential variables removed,
+ * and JENSEN_E2E_PROVIDERS removed.
  */
 function cleanEnv() {
 	const env = {};
-	// Only copy non-credential variables
 	for (const [key, value] of Object.entries(process.env)) {
 		if (
-			!key.endsWith("_API_KEY") &&
-			key !== "AWS_PROFILE" &&
-			key !== "AWS_ACCESS_KEY_ID" &&
-			key !== "AWS_SECRET_ACCESS_KEY" &&
-			key !== "AWS_BEARER_TOKEN_BEDROCK"
+			key === "JENSEN_E2E_PROVIDERS" ||
+			key.endsWith("_API_KEY") ||
+			key === "AWS_PROFILE" ||
+			key === "AWS_ACCESS_KEY_ID" ||
+			key === "AWS_SECRET_ACCESS_KEY" ||
+			key === "AWS_BEARER_TOKEN_BEDROCK"
 		) {
-			env[key] = value;
+			continue;
 		}
+		env[key] = value;
 	}
 	return env;
 }
@@ -45,64 +47,165 @@ function runPreflight(extraEnv = {}) {
 }
 
 // ============================================================================
-// E01 — No credentials at all
+// E01 — No credentials at all, no selector
 // ============================================================================
 
-test("E01: no credentials — exit non-zero, lists every provider", () => {
+test("E01: no selector, no credentials — exit non-zero, usage diagnostic", () => {
 	const result = runPreflight();
 
 	strictEqual(result.exitCode, 1, "exit code must be 1");
-	match(result.stderr, /missing for all providers/);
-	match(result.stderr, /GEMINI_API_KEY/);
-	match(result.stderr, /OPENAI_API_KEY/);
-	match(result.stderr, /ANTHROPIC_API_KEY/);
-	match(result.stderr, /XAI_API_KEY/);
-	match(result.stderr, /GROQ_API_KEY/);
-	match(result.stderr, /CEREBRAS_API_KEY/);
-	match(result.stderr, /ZAI_API_KEY/);
-	match(result.stderr, /AWS_PROFILE/);
-	match(result.stderr, /AWS_ACCESS_KEY_ID/);
-	match(result.stderr, /AWS_SECRET_ACCESS_KEY/);
-	match(result.stderr, /AWS_BEARER_TOKEN_BEDROCK/);
-
-	// No secret values leaked
-	ok(!result.stderr.includes("dummy"), "must not contain dummy values");
-	ok(!result.stderr.includes("sk-"), "must not contain key-like patterns");
+	match(result.stderr, /JENSEN_E2E_PROVIDERS/);
+	match(result.stderr, /comma-separated/);
 });
 
 // ============================================================================
-// E02 — Partial credentials
+// S01 — Without selector
 // ============================================================================
 
-test("E02: partial credentials — exit 0 with one credential, lists missing without values", () => {
+test("S01: selector absent — exit non-zero, usage diagnostic", () => {
+	const result = runPreflight();
+
+	strictEqual(result.exitCode, 1, "selector absent → exit 1");
+	match(result.stderr, /Set JENSEN_E2E_PROVIDERS/);
+	match(result.stderr, /comma-separated/);
+	match(result.stderr, /Supported providers/);
+});
+
+test("S01b: selector absent even with credentials present — exit non-zero", () => {
 	const result = runPreflight({ GEMINI_API_KEY: "dummy-gemini-key" });
 
-	strictEqual(result.exitCode, 0, "at least one credential present → exit 0");
-	match(result.stdout, /present for: Google/);
+	strictEqual(result.exitCode, 1, "credentials present but no selector → exit 1");
+	match(result.stderr, /Set JENSEN_E2E_PROVIDERS/);
 
-	// The missing ones are listed in stdout as "without credentials"
-	ok(
-		result.stdout.includes("OpenAI") ||
-			result.stdout.includes("Anthropic") ||
-			result.stdout.includes("xAI") ||
-			result.stdout.includes("Groq") ||
-			result.stdout.includes("Cerebras") ||
-			result.stdout.includes("zAI") ||
-			result.stdout.includes("Amazon Bedrock"),
-		"should list providers without credentials",
-	);
-
-	// No secret values leaked — the dummy key must not appear in output
-	ok(!result.stdout.includes("dummy-gemini-key"), "must not print dummy key value");
-	ok(!result.stderr.includes("dummy-gemini-key"), "must not print dummy key value");
+	// Secret value must NOT be printed
+	ok(!result.stdout.includes("dummy-gemini-key"), "must not leak credential value");
+	ok(!result.stderr.includes("dummy-gemini-key"), "must not leak credential value");
 });
 
 // ============================================================================
-// E03 — All credentials present (dummy values)
+// S02 — Unknown provider selector
 // ============================================================================
 
-test("E03: all credentials present with dummy values — exit 0, no values leaked", () => {
+test("S02: unknown provider — exit non-zero, lists unknown and supported", () => {
 	const result = runPreflight({
+		JENSEN_E2E_PROVIDERS: "openai,unknown",
+	});
+
+	strictEqual(result.exitCode, 1, "unknown provider → exit 1");
+	match(result.stderr, /Unknown provider/);
+	match(result.stderr, /unknown/);
+	match(result.stderr, /Supported:/);
+	match(result.stderr, /openai/);
+});
+
+// ============================================================================
+// S03 — Selected provider without credentials
+// ============================================================================
+
+test("S03: selected provider missing credentials — exit non-zero", () => {
+	const result = runPreflight({
+		JENSEN_E2E_PROVIDERS: "openai",
+	});
+
+	strictEqual(result.exitCode, 1, "openai selected without creds → exit 1");
+	match(result.stdout, /Selected provider E2E: OpenAI/);
+	match(result.stderr, /Missing credentials for selected provider/);
+	match(result.stderr, /OpenAI/);
+	match(result.stderr, /OPENAI_API_KEY/);
+});
+
+// ============================================================================
+// S04 — Selected provider with credentials
+// ============================================================================
+
+test("S04: selected provider with credentials — preflight exit 0, secret not printed", () => {
+	const result = runPreflight({
+		JENSEN_E2E_PROVIDERS: "openai",
+		OPENAI_API_KEY: "dummy-openai-key",
+	});
+
+	strictEqual(result.exitCode, 0, "openai selected + cred → exit 0");
+	match(result.stdout, /Selected provider E2E: OpenAI/);
+
+	// Secret value must NOT appear in output
+	ok(!result.stdout.includes("dummy-openai-key"), "must not leak credential value");
+	ok(!result.stderr.includes("dummy-openai-key"), "must not leak credential value");
+
+	// Only OpenAI is mentioned (no unrelated providers)
+	ok(!result.stdout.includes("Google"), "unrelated provider not listed");
+	ok(!result.stderr.includes("ANTHROPIC_API_KEY"), "unrelated env var not listed");
+});
+
+// ============================================================================
+// S05 — Multiple providers, one missing credentials
+// ============================================================================
+
+test("S05: multiple providers, one missing — exit non-zero, only missing listed", () => {
+	const result = runPreflight({
+		JENSEN_E2E_PROVIDERS: "openai,anthropic",
+		OPENAI_API_KEY: "dummy-openai-key",
+	});
+
+	strictEqual(result.exitCode, 1, "one missing → exit 1");
+	match(result.stdout, /Selected provider E2E: Anthropic, OpenAI/);
+	match(result.stderr, /Missing credentials for selected provider/);
+	match(result.stderr, /Anthropic/);
+	match(result.stderr, /ANTHROPIC_API_KEY/);
+
+	// Only missing is listed
+	ok(!result.stderr.includes("OpenAI"), "present provider not in missing list");
+	// Unrelated providers not listed
+	ok(!result.stderr.includes("GEMINI_API_KEY"), "unrelated env var not listed");
+	ok(!result.stderr.includes("XAI_API_KEY"), "unrelated env var not listed");
+});
+
+// ============================================================================
+// S06 — Multiple providers, all with credentials
+// ============================================================================
+
+test("S06: multiple providers all with credentials — exit 0", () => {
+	const result = runPreflight({
+		JENSEN_E2E_PROVIDERS: "openai,anthropic",
+		OPENAI_API_KEY: "dummy-openai",
+		ANTHROPIC_API_KEY: "dummy-anthropic",
+	});
+
+	strictEqual(result.exitCode, 0, "both present → exit 0");
+	match(result.stdout, /Selected provider E2E: Anthropic, OpenAI/);
+
+	ok(!result.stdout.includes("dummy-openai"), "must not leak secret");
+	ok(!result.stdout.includes("dummy-anthropic"), "must not leak secret");
+});
+
+// ============================================================================
+// S07 — `all` incomplete
+// ============================================================================
+
+test("S07: all with one provider missing — exit non-zero, missing listed", () => {
+	const result = runPreflight({
+		JENSEN_E2E_PROVIDERS: "all",
+		OPENAI_API_KEY: "dummy-openai",
+		ANTHROPIC_API_KEY: "dummy-anthropic",
+		XAI_API_KEY: "dummy-xai",
+		GROQ_API_KEY: "dummy-groq",
+		CEREBRAS_API_KEY: "dummy-cerebras",
+		ZAI_API_KEY: "dummy-zai",
+		AWS_PROFILE: "dummy-profile",
+		// GEMINI_API_KEY intentionally missing
+	});
+
+	strictEqual(result.exitCode, 1, "all but one missing → exit 1");
+	match(result.stderr, /Missing credentials for selected provider/);
+	match(result.stderr, /Google/);
+	match(result.stderr, /GEMINI_API_KEY/);
+
+	// Present providers NOT listed as missing
+	ok(!result.stderr.includes("OpenAI"), "present provider not in missing list");
+});
+
+test("S07b: all complete — exit 0", () => {
+	const result = runPreflight({
+		JENSEN_E2E_PROVIDERS: "all",
 		GEMINI_API_KEY: "dummy-gemini",
 		OPENAI_API_KEY: "dummy-openai",
 		ANTHROPIC_API_KEY: "dummy-anthropic",
@@ -113,65 +216,121 @@ test("E03: all credentials present with dummy values — exit 0, no values leake
 		AWS_PROFILE: "dummy-profile",
 	});
 
-	strictEqual(result.exitCode, 0, "all credentials present → exit 0");
-
-	// No dummy values leaked
-	ok(!result.stdout.includes("dummy-gemini"), "must not print credential value");
-	ok(!result.stdout.includes("dummy-openai"), "must not print credential value");
-	ok(!result.stdout.includes("dummy-anthropic"), "must not print credential value");
+	strictEqual(result.exitCode, 0, "all present → exit 0");
+	// All 8 display names appear
+	match(result.stdout, /Google/);
+	match(result.stdout, /OpenAI/);
+	match(result.stdout, /Anthropic/);
+	match(result.stdout, /xAI/);
+	match(result.stdout, /Groq/);
+	match(result.stdout, /Cerebras/);
+	match(result.stdout, /zAI/);
+	match(result.stdout, /Amazon Bedrock/);
 });
 
 // ============================================================================
-// E04 — Empty/whitespace values treated as missing
+// S08 — Bedrock credential alternatives
 // ============================================================================
 
-test("E04: empty or whitespace values treated as missing", () => {
+test("S08a: bedrock with AWS_PROFILE alone — ok", () => {
 	const result = runPreflight({
-		GEMINI_API_KEY: "",
-		OPENAI_API_KEY: "   ",
-		ANTHROPIC_API_KEY: "\t",
+		JENSEN_E2E_PROVIDERS: "bedrock",
+		AWS_PROFILE: "my-profile",
 	});
 
-	strictEqual(result.exitCode, 1, "whitespace-only creds → exit 1");
-	match(result.stderr, /GEMINI_API_KEY/);
-	match(result.stderr, /OPENAI_API_KEY/);
-	match(result.stderr, /ANTHROPIC_API_KEY/);
+	strictEqual(result.exitCode, 0, "AWS_PROFILE → exit 0");
+});
+
+test("S08b: bedrock with AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY — ok", () => {
+	const result = runPreflight({
+		JENSEN_E2E_PROVIDERS: "bedrock",
+		AWS_ACCESS_KEY_ID: "AKIADUMMY",
+		AWS_SECRET_ACCESS_KEY: "dummy-secret",
+	});
+
+	strictEqual(result.exitCode, 0, "key pair → exit 0");
+});
+
+test("S08c: bedrock with AWS_BEARER_TOKEN_BEDROCK alone — ok", () => {
+	const result = runPreflight({
+		JENSEN_E2E_PROVIDERS: "bedrock",
+		AWS_BEARER_TOKEN_BEDROCK: "dummy-token",
+	});
+
+	strictEqual(result.exitCode, 0, "bearer token → exit 0");
+});
+
+test("S08d: bedrock with partial pair (key only) — fail", () => {
+	const result = runPreflight({
+		JENSEN_E2E_PROVIDERS: "bedrock",
+		AWS_ACCESS_KEY_ID: "AKIADUMMY",
+	});
+
+	strictEqual(result.exitCode, 1, "partial pair → exit 1");
+	match(result.stderr, /Amazon Bedrock/);
 });
 
 // ============================================================================
-// E05 — No secret leakage in missing-credential diagnostic
+// S09 — Normalization
 // ============================================================================
 
-test("E05: diagnostic never contains secret values", () => {
-	const result = runPreflight({ GEMINI_API_KEY: "AIzaSyDummyGoogleKey123456789" });
+test("S09a: whitespace stripped, case normalized", () => {
+	const result = runPreflight({
+		JENSEN_E2E_PROVIDERS: " OpenAI,anthropic,OPENAI ",
+		OPENAI_API_KEY: "dummy-openai",
+		ANTHROPIC_API_KEY: "dummy-anthropic",
+	});
 
-	strictEqual(result.exitCode, 0, "one present → exit 0");
+	strictEqual(result.exitCode, 0, "normalized selection → exit 0");
+	match(result.stdout, /Selected provider E2E: Anthropic, OpenAI/);
+});
 
-	// The actual value must never appear in output
-	ok(!result.stdout.includes("AIzaSyDummyGoogleKey123456789"), "must not leak google key");
-	ok(!result.stderr.includes("AIzaSyDummyGoogleKey123456789"), "must not leak google key");
+test("S09b: duplicates removed", () => {
+	const result = runPreflight({
+		JENSEN_E2E_PROVIDERS: "openai,openai,openai",
+		OPENAI_API_KEY: "dummy-openai",
+	});
 
-	// Generic patterns that could match real keys
-	ok(!result.stdout.includes("dummy"), "must not contain the dummy marker word in clean pass");
-
-	// Check that a non-secret provider name IS present (the "present" listing)
-	ok(result.stdout.includes("Google"), "should list Google as present");
+	strictEqual(result.exitCode, 0, "deduped → exit 0");
+	match(result.stdout, /Selected provider E2E: OpenAI/);
+	// Should only appear once
+	const matches = (result.stdout.match(/OpenAI/g) || []).length;
+	strictEqual(matches, 1, "OpenAI should appear exactly once in selected list");
 });
 
 // ============================================================================
-// E06 — Command short-circuit: preflight before vitest in npm script
+// S10 — Filter in tests (vitest helper unit test)
 // ============================================================================
 
-test("E06: test:e2e:providers script places preflight before vitest with short-circuit", () => {
-	const agentPkgPath = join(import.meta.dirname, "..", "packages", "agent", "package.json");
-	const agentPkg = JSON.parse(readFileSync(agentPkgPath, "utf8"));
-	const script = agentPkg.scripts["test:e2e:providers"];
+// S10 is a Vitest-level concern — the helper lives in
+// packages/agent/test/e2e/helpers/provider-selection.ts.
+// We verify the parse logic used by the helper here.
 
-	ok(typeof script === "string", "test:e2e:providers script must exist");
-	ok(script.includes("check-provider-e2e-credentials.mjs"), "script must include preflight");
-	ok(script.includes("&&"), "script must use && for short-circuit");
+test("S10: parseProviderSelection handles all edge cases", async () => {
+	// Dynamic ESM import to test the shared inventory parser
+	const { parseProviderSelection } = await import("./e2e-provider-inventory.mjs");
 
-	const preflightIdx = script.indexOf("check-provider-e2e-credentials.mjs");
-	const vitestIdx = script.indexOf("vitest");
-	ok(preflightIdx < vitestIdx, "preflight must appear before vitest for short-circuit");
+	// "all" selects all 8
+	const all = parseProviderSelection("all");
+	strictEqual(all.error, undefined);
+	strictEqual(all.selected.length, 8);
+
+	// Empty string → error
+	const empty = parseProviderSelection("");
+	ok(empty.error !== undefined);
+	strictEqual(empty.selected.length, 0);
+
+	// Undefined → error
+	const undef = parseProviderSelection(undefined);
+	ok(undef.error !== undefined);
+
+	// Unknown only → error, empty selected
+	const unknown = parseProviderSelection("unknown");
+	ok(unknown.error !== undefined);
+	strictEqual(unknown.selected.length, 0);
+
+	// Mixed known + unknown → error, selected has known
+	const mixed = parseProviderSelection("openai,unknown");
+	ok(mixed.error !== undefined);
+	deepStrictEqual(mixed.selected, ["openai"]);
 });

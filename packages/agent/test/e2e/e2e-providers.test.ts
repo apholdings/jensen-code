@@ -2,8 +2,8 @@ import type { AssistantMessage, Model, ToolResultMessage, UserMessage } from "@a
 import { getModel } from "@apholdings/jensen-ai";
 import { describe, expect, it } from "vitest";
 import { Agent } from "../../src/index.js";
-import { hasBedrockCredentials } from "../bedrock-utils.js";
 import { calculateTool } from "../utils/calculate.js";
+import { isProviderSelected } from "./helpers/provider-selection.js";
 
 async function basicPrompt(model: Model<any>) {
 	const agent = new Agent({
@@ -158,7 +158,7 @@ async function multiTurnConversation(model: Model<any>) {
 }
 
 describe("Agent E2E Tests", () => {
-	describe.skipIf(!process.env.GEMINI_API_KEY)("Google Provider (gemini-2.5-flash)", () => {
+	describe.skipIf(!isProviderSelected("Google"))("Google Provider (gemini-2.5-flash)", () => {
 		const model = getModel("google", "gemini-2.5-flash");
 
 		it("should handle basic text prompt", async () => {
@@ -182,7 +182,7 @@ describe("Agent E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.OPENAI_API_KEY)("OpenAI Provider (gpt-4o-mini)", () => {
+	describe.skipIf(!isProviderSelected("OpenAI"))("OpenAI Provider (gpt-4o-mini)", () => {
 		const model = getModel("openai", "gpt-4o-mini");
 
 		it("should handle basic text prompt", async () => {
@@ -206,7 +206,7 @@ describe("Agent E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.ANTHROPIC_API_KEY)("Anthropic Provider (claude-haiku-4-5)", () => {
+	describe.skipIf(!isProviderSelected("Anthropic"))("Anthropic Provider (claude-haiku-4-5)", () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
 
 		it("should handle basic text prompt", async () => {
@@ -230,7 +230,7 @@ describe("Agent E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.XAI_API_KEY)("xAI Provider (grok-4.3)", () => {
+	describe.skipIf(!isProviderSelected("xAI"))("xAI Provider (grok-4.3)", () => {
 		const model = getModel("xai", "grok-4.3");
 
 		it("should handle basic text prompt", async () => {
@@ -254,7 +254,7 @@ describe("Agent E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.GROQ_API_KEY)("Groq Provider (openai/gpt-oss-20b)", () => {
+	describe.skipIf(!isProviderSelected("Groq"))("Groq Provider (openai/gpt-oss-20b)", () => {
 		const model = getModel("groq", "openai/gpt-oss-20b");
 
 		it("should handle basic text prompt", async () => {
@@ -278,7 +278,7 @@ describe("Agent E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.CEREBRAS_API_KEY)("Cerebras Provider (gpt-oss-120b)", () => {
+	describe.skipIf(!isProviderSelected("Cerebras"))("Cerebras Provider (gpt-oss-120b)", () => {
 		const model = getModel("cerebras", "gpt-oss-120b");
 
 		it("should handle basic text prompt", async () => {
@@ -302,7 +302,7 @@ describe("Agent E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.ZAI_API_KEY)("zAI Provider (glm-4.5-air)", () => {
+	describe.skipIf(!isProviderSelected("zAI"))("zAI Provider (glm-4.5-air)", () => {
 		const model = getModel("zai", "glm-4.5-air");
 
 		it("should handle basic text prompt", async () => {
@@ -326,7 +326,7 @@ describe("Agent E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!hasBedrockCredentials())("Amazon Bedrock Provider (claude-sonnet-4-5)", () => {
+	describe.skipIf(!isProviderSelected("Amazon Bedrock"))("Amazon Bedrock Provider (claude-sonnet-4-5)", () => {
 		const model = getModel("amazon-bedrock", "global.anthropic.claude-sonnet-4-5-20250929-v1:0");
 
 		it("should handle basic text prompt", async () => {
@@ -395,7 +395,7 @@ describe("Agent.continue()", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.ANTHROPIC_API_KEY)("continue from user message", () => {
+	describe.skipIf(!isProviderSelected("Anthropic"))("continue from user message", () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
 
 		it("should continue and get response when last message is user", async () => {
@@ -433,7 +433,7 @@ describe("Agent.continue()", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.ANTHROPIC_API_KEY)("continue from tool result", () => {
+	describe.skipIf(!isProviderSelected("Anthropic"))("continue from tool result", () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
 
 		it("should continue and process tool results", async () => {
