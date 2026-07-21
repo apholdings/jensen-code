@@ -1,5 +1,19 @@
 import { Agent } from "@apholdings/jensen-agent-core";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+// Fixed time within 7 days of test fixture timestamps (2026-04-02) so
+// reviewMemoryItems produces staleCount: 0 deterministically.
+const FIXED_NOW = new Date("2026-04-03T00:00:00.000Z").getTime();
+
+beforeAll(() => {
+	vi.useFakeTimers();
+	vi.setSystemTime(FIXED_NOW);
+});
+
+afterAll(() => {
+	vi.useRealTimers();
+});
+
 import { AgentSession } from "./agent-session.js";
 import { AuthStorage } from "./auth-storage.js";
 import { SESSION_MEMORY_CUSTOM_TYPE, SESSION_TASKS_CUSTOM_TYPE, SESSION_TODOS_CUSTOM_TYPE } from "./memory.js";

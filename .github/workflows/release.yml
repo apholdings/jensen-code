@@ -37,14 +37,8 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
-      - name: Build
-        run: npm run build
-
-      - name: Check (includes release-tooling gate)
-        run: npm run check
-
-      - name: Test
-        run: npm test
+      - name: Validate (build + check + deterministic tests)
+        run: npm run validate
 
       - name: Create Release Pull Request or prepare release state
         id: changesets

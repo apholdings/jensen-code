@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent } from "@apholdings/jensen-agent-core";
 import type { Model } from "@apholdings/jensen-ai";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "./agent-session.js";
 import { AuthStorage } from "./auth-storage.js";
 import { SESSION_MEMORY_CUSTOM_TYPE, SESSION_TODOS_CUSTOM_TYPE } from "./memory.js";
@@ -11,6 +11,19 @@ import { ModelRegistry } from "./model-registry.js";
 import { DefaultResourceLoader } from "./resource-loader.js";
 import { SessionManager } from "./session-manager.js";
 import { SettingsManager } from "./settings-manager.js";
+
+// Fixed time so all Date.now() and new Date() calls return identical values,
+// eliminating 1-2ms timestamp drift in deep equality assertions.
+const FIXED_NOW = new Date("2026-04-03T00:00:00.000Z").getTime();
+
+beforeAll(() => {
+	vi.useFakeTimers();
+	vi.setSystemTime(FIXED_NOW);
+});
+
+afterAll(() => {
+	vi.useRealTimers();
+});
 
 function createTempDir(): string {
 	return mkdtempSync(join(tmpdir(), "jensen-compact-"));

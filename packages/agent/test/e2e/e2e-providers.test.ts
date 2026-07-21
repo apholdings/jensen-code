@@ -1,9 +1,9 @@
 import type { AssistantMessage, Model, ToolResultMessage, UserMessage } from "@apholdings/jensen-ai";
 import { getModel } from "@apholdings/jensen-ai";
 import { describe, expect, it } from "vitest";
-import { Agent } from "../src/index.js";
-import { hasBedrockCredentials } from "./bedrock-utils.js";
-import { calculateTool } from "./utils/calculate.js";
+import { Agent } from "../../src/index.js";
+import { hasBedrockCredentials } from "../bedrock-utils.js";
+import { calculateTool } from "../utils/calculate.js";
 
 async function basicPrompt(model: Model<any>) {
 	const agent = new Agent({

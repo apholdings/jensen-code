@@ -20,6 +20,8 @@
 		"build": "tsgo -p tsconfig.build.json",
 		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
 		"test": "vitest --run",
+		"test:ci": "vitest --run --exclude 'test/e2e/**'",
+		"test:e2e:providers": "vitest --run test/e2e/",
 		"prepublishOnly": "npm run clean && npm run build -w @apholdings/jensen-ai && npm run build"
 	},
 	"publishConfig": {

@@ -1,5 +1,5 @@
 import { deepStrictEqual, ok, strictEqual } from "node:assert";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -83,18 +83,18 @@ test("npm run check invokes test:release-tooling", () => {
 	ok(checkScript.includes("test:release-tooling"), "check script must invoke test:release-tooling");
 });
 
-test("CI workflow runs npm run check", () => {
+test("CI workflow runs npm run validate", () => {
 	const content = readText(".github/workflows/ci.yml");
-	ok(content.includes("npm run check"), "ci.yml must run npm run check");
+	ok(content.includes("npm run validate"), "ci.yml must run npm run validate");
 });
 
-test("release workflow runs npm run check before version/publish", () => {
+test("release workflow runs npm run validate before version/publish", () => {
 	const content = readText(".github/workflows/release.yml");
-	const checkIndex = content.indexOf("npm run check");
+	const validateIndex = content.indexOf("npm run validate");
 	const changesetsIndex = content.indexOf("changesets/action");
-	ok(checkIndex >= 0, "release.yml must run npm run check");
+	ok(validateIndex >= 0, "release.yml must run npm run validate");
 	ok(changesetsIndex >= 0, "release.yml must use changesets/action");
-	ok(checkIndex < changesetsIndex, "check must run before changesets/action in release.yml");
+	ok(validateIndex < changesetsIndex, "validate must run before changesets/action in release.yml");
 });
 
 // ============================================================================
@@ -298,4 +298,22 @@ test("no alternative publish script exists", () => {
 test("release workflow does not contain git push --follow-tags", () => {
 	const content = readText(".github/workflows/release.yml");
 	ok(!content.includes("--follow-tags"), "release.yml must not use git push --follow-tags");
+});
+
+test("publisher orchestration tests (P01-P10) pass", () => {
+	const { status, stdout, stderr } = spawnSync(
+		process.execPath,
+		["--test", "scripts/publish-orchestration.test.mjs"],
+		{
+			cwd: ROOT,
+			encoding: "utf8",
+			stdio: "pipe",
+		},
+	);
+
+	if (status !== 0) {
+		console.log("stdout:", stdout);
+		console.log("stderr:", stderr);
+	}
+	strictEqual(status, 0, "publisher orchestration tests must pass (exit 0)");
 });

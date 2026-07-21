@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { DelegatedTask, DelegatedWorkSummary } from "./delegated-work.js";
 import type { MemoryItem } from "./memory.js";
 import {
@@ -9,7 +9,20 @@ import {
 	type WorkingContext,
 } from "./working-context.js";
 
+// Fixed time within 7 days of test fixture timestamps (2026-04-02) so
+// reviewMemoryItems produces staleCount: 0 deterministically.
+const FIXED_NOW = new Date("2026-04-03T00:00:00.000Z").getTime();
+
 type TodoItem = { content: string; activeForm: string; status: "pending" | "in_progress" | "completed" };
+
+beforeAll(() => {
+	vi.useFakeTimers();
+	vi.setSystemTime(FIXED_NOW);
+});
+
+afterAll(() => {
+	vi.useRealTimers();
+});
 
 function makeMemoryItem(key: string, timestamp = "2026-04-01T12:00:00.000Z"): MemoryItem {
 	return { key, value: `${key} value`, timestamp };

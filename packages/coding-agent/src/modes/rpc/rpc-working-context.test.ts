@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { Agent, type AgentEvent } from "@apholdings/jensen-agent-core";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../../core/agent-session.js";
 import { AuthStorage } from "../../core/auth-storage.js";
 import { SESSION_MEMORY_CUSTOM_TYPE, SESSION_TASKS_CUSTOM_TYPE, SESSION_TODOS_CUSTOM_TYPE } from "../../core/memory.js";
@@ -15,6 +15,19 @@ import { buildWorkingContext } from "../../core/working-context.js";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.js";
 import { runRpcMode } from "./rpc-mode.js";
 import type { RpcCommand, RpcResponse } from "./rpc-types.js";
+
+// Fixed time within 7 days of test fixture timestamps (2026-04-02) so
+// reviewMemoryItems produces staleCount: 0 deterministically.
+const FIXED_NOW = new Date("2026-04-03T00:00:00.000Z").getTime();
+
+beforeAll(() => {
+	vi.useFakeTimers();
+	vi.setSystemTime(FIXED_NOW);
+});
+
+afterAll(() => {
+	vi.useRealTimers();
+});
 
 function createSession(sessionManager = SessionManager.inMemory("/tmp/project"), cwd = "/tmp/project"): AgentSession {
 	const settingsManager = SettingsManager.inMemory();

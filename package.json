@@ -24,11 +24,14 @@
     "check:web-ui": "cd packages/web-ui && npm run check",
     "check:browser-smoke": "esbuild scripts/browser-smoke-entry.ts --bundle --platform=browser --format=esm --log-limit=0 --outdir=.browser-smoke",
     "test": "npm run test --workspaces --if-present",
+    "test:ci": "npm run test:ci --workspaces --if-present",
+    "test:e2e:providers": "cd packages/agent && npm run test:e2e:providers",
     "changeset": "changeset",
     "test:release-tooling": "node --test scripts/release-tooling-integrity.test.mjs",
     "test:publish-script": "node --test scripts/publish-unpublished-packages.test.mjs",
     "test:smoke": "node scripts/smoke-test.mjs",
     "version:packages": "changeset version && npm install --package-lock-only",
+    "validate": "npm run build && npm run check && npm run test:ci",
     "prepare": "husky"
   },
   "devDependencies": {

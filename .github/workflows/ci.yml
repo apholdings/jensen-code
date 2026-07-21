@@ -32,11 +32,5 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
-        run: npm run build
-
-      - name: Check
-        run: npm run check
-
-      - name: Test
-        run: npm test
+      - name: Validate (build + check + deterministic tests)
+        run: npm run validate

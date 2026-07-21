@@ -25,6 +25,8 @@ const packageDirs = [
 
 const EXPECTED_PACKAGE_COUNT = 7;
 
+export { EXPECTED_PACKAGE_COUNT };
+
 function readPackage(dir) {
 	const packageJsonPath = path.join(dir, "package.json");
 	if (!existsSync(packageJsonPath)) {
@@ -390,8 +392,148 @@ function writeOutput(result) {
 }
 
 // ============================================================================
+// Testable orchestration — all dependencies injectable.
+// ============================================================================
+
+/**
+ * Execute the full publish-orchestration pipeline with injectable dependencies.
+ * This is the testable entrypoint; main() delegates to it after wiring real I/O.
+ *
+ * @param {object} options
+ * @param {Array<{dir: string, name: string, version: string}>} options.packages
+ * @param {string} options.publishTag
+ * @param {(name: string, version: string) => {published: boolean, summary: string}} options.checkVersion
+ * @param {(name: string, version: string, opts: object) => Promise<void>} options.waitForVersion
+ * @param {(pkg: object, authMode: string, publishTag: string) => void} options.publishFn
+ * @param {(version: string) => boolean} options.createTag
+ * @param {(result: object) => void} options.writeOutput
+ * @param {string} options.packageDirsModule — for topology assertion only
+ * @returns {Promise<object>} the result object
+ */
+export async function orchestratePublish(options) {
+	const {
+		packages,
+		publishTag,
+		checkVersion,
+		waitForVersion,
+		publishFn,
+		createTag,
+		writeOutput: outputFn,
+	} = options;
+
+	if (packages.length !== EXPECTED_PACKAGE_COUNT) {
+		throw new Error(
+			`Expected ${EXPECTED_PACKAGE_COUNT} publishable packages but found ${packages.length}. ` +
+			`Aborting: the lockstep invariant is violated.`,
+		);
+	}
+
+	// Verify all versions are equal (lockstep invariant)
+	const releaseVersion = packages[0].version;
+	for (const pkg of packages) {
+		if (pkg.version !== releaseVersion) {
+			throw new Error(
+				`Lockstep version mismatch: ${pkg.name} is at ${pkg.version} but expected ${releaseVersion} ` +
+				`(based on ${packages[0].name}). All seven packages must share the same version.`,
+			);
+		}
+	}
+
+	console.log(`Release version: ${releaseVersion}`);
+	const tagName = `v${releaseVersion}`;
+
+	// Determine which packages need publishing
+	const publishedStatuses = new Map(
+		packages.map((pkg) => [`${pkg.name}@${pkg.version}`, checkVersion(pkg.name, pkg.version)]),
+	);
+	const unpublishedPackages = packages.filter(
+		(pkg) => !publishedStatuses.get(`${pkg.name}@${pkg.version}`)?.published,
+	);
+	const alreadyPublishedPackages = packages.filter(
+		(pkg) => publishedStatuses.get(`${pkg.name}@${pkg.version}`)?.published,
+	);
+
+	if (unpublishedPackages.length > 0) {
+		console.log("Unpublished packages detected:");
+		for (const pkg of unpublishedPackages) {
+			console.log(`- ${pkg.name}@${pkg.version}`);
+		}
+	} else {
+		console.log("No unpublished package versions detected.");
+	}
+
+	const publishedDuringRun = [];
+
+	// Publish unpublished packages in topological order
+	for (const pkg of packages) {
+		const key = `${pkg.name}@${pkg.version}`;
+		const status = publishedStatuses.get(key);
+
+		if (status?.published) {
+			console.log(`[skip] ${pkg.name}@${pkg.version} already published`);
+			continue;
+		}
+
+		publishFn(pkg, "token", publishTag);
+		await waitForVersion(pkg.name, pkg.version);
+		publishedDuringRun.push(pkg.name);
+	}
+
+	// Verify all seven packages are on the registry
+	let allVerified = true;
+	const verificationResults = {};
+	for (const pkg of packages) {
+		const result = checkVersion(pkg.name, pkg.version);
+		verificationResults[pkg.name] = result.published;
+		if (!result.published) {
+			allVerified = false;
+			console.log(`[verify] FAILED: ${pkg.name}@${pkg.version} is NOT on npm after publish loop`);
+		}
+	}
+
+	if (!allVerified) {
+		const result = {
+			releaseVersion,
+			releaseTag: null,
+			publishedPackages: [...alreadyPublishedPackages.map((p) => p.name), ...publishedDuringRun],
+			alreadyPublishedPackages: alreadyPublishedPackages.map((p) => p.name),
+			allPackagesVerified: false,
+			tagCreated: false,
+		};
+		outputFn(result);
+		throw new Error(
+			"Not all seven packages are verified on the npm registry. " +
+			`The lockstep tag ${tagName} was NOT created. ` +
+			"Re-run the workflow to retry.",
+		);
+	}
+
+	console.log("[verify] All seven packages confirmed on npm registry");
+
+	// Create the single lockstep tag
+	const tagCreated = createTag(releaseVersion);
+
+	const result = {
+		releaseVersion,
+		releaseTag: tagName,
+		publishedPackages: [
+			...alreadyPublishedPackages.map((p) => p.name),
+			...publishedDuringRun,
+		],
+		alreadyPublishedPackages: alreadyPublishedPackages.map((p) => p.name),
+		allPackagesVerified: true,
+		tagCreated,
+	};
+
+	outputFn(result);
+	return result;
+}
+
+// ============================================================================
 // Main publish routine
 // ============================================================================
+
+export const TOPOLOGICAL_ORDER = packageDirs;
 
 export async function main(options = {}) {
 	const {
@@ -400,7 +542,7 @@ export async function main(options = {}) {
 		publishFn = publishPackage,
 	} = options;
 
-	// 1. Load package metadata
+	// Load package metadata
 	const packages = packageDirs
 		.map((dir) => {
 			const pkg = readPackage(dir);
@@ -416,28 +558,7 @@ export async function main(options = {}) {
 		})
 		.filter((pkg) => pkg !== null);
 
-	if (packages.length !== EXPECTED_PACKAGE_COUNT) {
-		throw new Error(
-			`Expected ${EXPECTED_PACKAGE_COUNT} publishable packages but found ${packages.length}. ` +
-			`Aborting: the lockstep invariant is violated.`,
-		);
-	}
-
-	// 2. Verify all versions are equal (lockstep invariant)
-	const releaseVersion = packages[0].version;
-	for (const pkg of packages) {
-		if (pkg.version !== releaseVersion) {
-			throw new Error(
-				`Lockstep version mismatch: ${pkg.name} is at ${pkg.version} but expected ${releaseVersion} ` +
-				`(based on ${packages[0].name}). All seven packages must share the same version.`,
-			);
-		}
-	}
-
-	console.log(`Release version: ${releaseVersion}`);
-	const tagName = `v${releaseVersion}`;
-
-	// 3. Version regression check
+	// Version regression check (needs registry access — done before orchestration)
 	const publishTag = getPublishTag();
 	for (const pkg of packages) {
 		const highestPublishedVersion = getHighestPublishedVersion(pkg.name);
@@ -464,91 +585,15 @@ export async function main(options = {}) {
 	console.log(`Token env present: ${hasToken}`);
 	console.log(`Publish dist-tag: ${publishTag}`);
 
-	// 4. Determine which packages need publishing
-	const publishedStatuses = new Map(
-		packages.map((pkg) => [`${pkg.name}@${pkg.version}`, checkVersion(pkg.name, pkg.version)]),
-	);
-	const unpublishedPackages = packages.filter(
-		(pkg) => !publishedStatuses.get(`${pkg.name}@${pkg.version}`)?.published,
-	);
-	const alreadyPublishedPackages = packages.filter(
-		(pkg) => publishedStatuses.get(`${pkg.name}@${pkg.version}`)?.published,
-	);
-
-	if (unpublishedPackages.length > 0) {
-		console.log("Unpublished packages detected:");
-		for (const pkg of unpublishedPackages) {
-			console.log(`- ${pkg.name}@${pkg.version}`);
-		}
-	} else {
-		console.log("No unpublished package versions detected.");
-	}
-
-	const publishedDuringRun = [];
-
-	// 5. Publish unpublished packages in topological order
-	for (const pkg of packages) {
-		const key = `${pkg.name}@${pkg.version}`;
-		const status = publishedStatuses.get(key);
-
-		if (status?.published) {
-			console.log(`[skip] ${pkg.name}@${pkg.version} already published`);
-			continue;
-		}
-
-		publishFn(pkg, authMode, publishTag);
-		await waitForVersion(pkg.name, pkg.version);
-		publishedDuringRun.push(pkg.name);
-	}
-
-	// 6. Verify all seven packages are on the registry
-	let allVerified = true;
-	const verificationResults = {};
-	for (const pkg of packages) {
-		const result = checkVersion(pkg.name, pkg.version);
-		verificationResults[pkg.name] = result.published;
-		if (!result.published) {
-			allVerified = false;
-			console.log(`[verify] FAILED: ${pkg.name}@${pkg.version} is NOT on npm after publish loop`);
-		}
-	}
-
-	if (!allVerified) {
-		const result = {
-			releaseVersion,
-			releaseTag: null,
-			publishedPackages: [...alreadyPublishedPackages.map((p) => p.name), ...publishedDuringRun],
-			alreadyPublishedPackages: alreadyPublishedPackages.map((p) => p.name),
-			allPackagesVerified: false,
-			tagCreated: false,
-		};
-		writeOutput(result);
-		throw new Error(
-			"Not all seven packages are verified on the npm registry. " +
-			`The lockstep tag ${tagName} was NOT created. ` +
-			"Re-run the workflow to retry.",
-		);
-	}
-
-	console.log("[verify] All seven packages confirmed on npm registry");
-
-	// 7. Create the single lockstep tag
-	const tagCreated = createLockstepTag(releaseVersion);
-
-	const result = {
-		releaseVersion,
-		releaseTag: tagName,
-		publishedPackages: [
-			...alreadyPublishedPackages.map((p) => p.name),
-			...publishedDuringRun,
-		],
-		alreadyPublishedPackages: alreadyPublishedPackages.map((p) => p.name),
-		allPackagesVerified: true,
-		tagCreated,
-	};
-
-	writeOutput(result);
-	return result;
+	return orchestratePublish({
+		packages,
+		publishTag,
+		checkVersion,
+		waitForVersion,
+		publishFn: (pkg, _authMode, tag) => publishFn(pkg, authMode, tag),
+		createTag: createLockstepTag,
+		writeOutput,
+	});
 }
 
 const entrypoint = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;
