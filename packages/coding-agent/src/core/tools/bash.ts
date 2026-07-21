@@ -7,6 +7,12 @@ import type { BashResult, PipelineEvidence } from "../bash-executor.js";
 import { executeBashWithOperations } from "../bash-executor.js";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult, truncateTail } from "./truncate.js";
 
+/**
+ * Maximum allowed timeout in seconds.
+ * Values above this are clamped. This prevents excessively large timeouts.
+ */
+const MAX_TIMEOUT_SECONDS = 86400; // 24 hours
+
 const bashSchema = Type.Object({
 	command: Type.String({ description: "Bash command to execute" }),
 	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
@@ -37,18 +43,6 @@ export interface BashToolDetails {
 	pipeline?: PipelineEvidence;
 }
 
-/**
- * Pipeline stage exit code metadata captured by the bash executor.
- */
-export interface PipelineStageData {
-	/** Per-stage exit codes from PIPESTATUS */
-	stageExitCodes: number[];
-	/** Whether PIPESTATUS was successfully captured */
-	stageExitCodesKnown: boolean;
-	/** Whether the evidence is authoritative (all stages captured) */
-	evidenceAuthoritative: boolean;
-}
-
 export interface BashOperations {
 	/**
 	 * Execute a command and stream output.
@@ -71,40 +65,7 @@ export interface BashOperations {
 			timeout?: number;
 			env?: NodeJS.ProcessEnv;
 		},
-	) => Promise<{ exitCode: number | null; pipelineData?: PipelineStageData }>;
-}
-
-/**
- * Bash trap preamble that captures PIPESTATUS to fd 3 on shell exit.
- * The EXIT trap fires even after `exit N`, so pipeline metadata is
- * always captured. The preamble is prepended before the user command
- * with a newline separator — no semicolon touches the user's source.
- *
- * User stdout/stderr are delivered normally via fd 1 and fd 2.
- * Pipeline metadata arrives on fd 3 only after the trap fires.
- *
- * Note: If the user sets their own `trap ... EXIT`, it overrides this
- * one and pipeline metadata will be missing (non-authoritative).
- */
-const PIPESTATUS_CAPTURE_PREAMBLE = `__jensen_stages=()
-trap '__jensen_stages=("\${PIPESTATUS[@]}"); printf "%s\\n" "\${__jensen_stages[*]}" >&3' EXIT
-`;
-
-/**
- * Parse PIPESTATUS output from fd 3 into structured pipeline data.
- * Input format: space-separated integers like "1 0" or "0".
- * Returns parsed stage exit codes or undefined if parsing fails.
- */
-function parsePipelineData(raw: string): PipelineStageData | undefined {
-	const trimmed = raw.trim();
-	if (!trimmed) return undefined;
-	const codes = trimmed.split(/\s+/).map(Number);
-	if (codes.some(Number.isNaN)) return undefined;
-	return {
-		stageExitCodes: codes,
-		stageExitCodesKnown: true,
-		evidenceAuthoritative: true,
-	};
+	) => Promise<{ exitCode: number | null }>;
 }
 
 export function createLocalBashOperations(): BashOperations {
@@ -118,32 +79,28 @@ export function createLocalBashOperations(): BashOperations {
 					return;
 				}
 
-				// Prepend trap preamble for PIPESTATUS capture on shell exit.
-				// The EXIT trap fires after the user command completes (even after
-				// `exit N`), capturing PIPESTATUS and writing to fd 3.
-				// No semicolon or operator touches the user's source — the preamble
-				// and command are separated only by a newline.
-				const wrappedCommand = `${PIPESTATUS_CAPTURE_PREAMBLE}\n${command}`;
-				const pipelineChunks: Buffer[] = [];
-
-				const child = spawn(shell, [...args, wrappedCommand], {
+				// Execute user command directly — no preamble, no trap, no wrapper.
+				// Pipeline detection is done heuristically at the call site
+				// (executeBashWithOperations), not via injected instrumentation.
+				const child = spawn(shell, [...args, command], {
 					cwd,
 					detached: true,
 					env: env ?? getShellEnv(),
-					stdio: ["ignore", "pipe", "pipe", "pipe"],
+					stdio: ["ignore", "pipe", "pipe"],
 				});
 
 				let timedOut = false;
 
 				// Set timeout if provided
 				let timeoutHandle: NodeJS.Timeout | undefined;
-				if (timeout !== undefined && timeout > 0) {
+				const timeoutSec = timeout !== undefined ? timeout : undefined;
+				if (timeoutSec !== undefined && timeoutSec > 0) {
 					timeoutHandle = setTimeout(() => {
 						timedOut = true;
 						if (child.pid) {
 							killProcessTree(child.pid);
 						}
-					}, timeout * 1000);
+					}, timeoutSec * 1000);
 				}
 
 				// Stream stdout and stderr — both go to onData for backward compat,
@@ -158,13 +115,6 @@ export function createLocalBashOperations(): BashOperations {
 					child.stderr.on("data", (data: Buffer) => {
 						onData(data);
 						onStderr?.(data);
-					});
-				}
-
-				// Collect pipeline metadata from fd 3 (PIPESTATUS)
-				if (child.stdio?.[3]) {
-					(child.stdio[3] as NodeJS.ReadableStream).on("data", (data: Buffer) => {
-						pipelineChunks.push(data);
 					});
 				}
 
@@ -201,14 +151,11 @@ export function createLocalBashOperations(): BashOperations {
 					}
 
 					if (timedOut) {
-						reject(new Error(`timeout:${timeout}`));
+						reject(new Error(`timeout:${timeoutSec}`));
 						return;
 					}
 
-					const pipelineRaw = Buffer.concat(pipelineChunks).toString("utf-8");
-					const pipelineData = parsePipelineData(pipelineRaw);
-
-					resolve({ exitCode: code, pipelineData });
+					resolve({ exitCode: code });
 				});
 			});
 		},
@@ -288,12 +235,13 @@ function formatBashResultForModel(
 		evidenceLines.push(`spawn_error: ${result.spawnError}`);
 	}
 
-	if (result.pipeline?.isPipeline) {
-		evidenceLines.push(`pipeline: true`);
-		evidenceLines.push(`pipeline_last_exit_code: ${result.pipeline.lastStageExitCode ?? "null"}`);
-		evidenceLines.push(`pipeline_authoritative: ${result.pipeline.evidenceAuthoritative}`);
-		if (result.pipeline.stageExitCodesKnown && result.pipeline.stageExitCodes.length > 0) {
-			evidenceLines.push(`pipeline_stage_exit_codes: [${result.pipeline.stageExitCodes.join(", ")}]`);
+	if (result.pipeline?.pipelineSuspected) {
+		evidenceLines.push(`pipeline_suspected: true`);
+		evidenceLines.push(`stage_exit_codes_known: false`);
+		evidenceLines.push(`evidence_authoritative: false`);
+		evidenceLines.push(`authority_scope: final_pipeline_stage_only`);
+		if (result.pipeline.warning) {
+			evidenceLines.push(`warning: ${result.pipeline.warning}`);
 		}
 	}
 
@@ -340,6 +288,28 @@ export function createBashTool(cwd: string, options?: BashToolOptions): AgentToo
 			signal?: AbortSignal,
 			onUpdate?,
 		) => {
+			// Validate timeout
+			if (_timeout !== undefined) {
+				if (typeof _timeout !== "number" || Number.isNaN(_timeout) || !Number.isFinite(_timeout)) {
+					throw new Error(
+						`Invalid timeout value: ${_timeout}. Timeout must be a finite positive number in seconds, or omitted for no timeout.`,
+					);
+				}
+				if (_timeout === 0) {
+					throw new Error("Timeout must be a positive number in seconds, or omitted for no timeout. Got 0.");
+				}
+				if (_timeout < 0) {
+					throw new Error(
+						`Timeout must be a positive number in seconds, or omitted for no timeout. Got ${_timeout}.`,
+					);
+				}
+				if (_timeout > MAX_TIMEOUT_SECONDS) {
+					throw new Error(
+						`Timeout value ${_timeout} exceeds maximum allowed timeout of ${MAX_TIMEOUT_SECONDS} seconds.`,
+					);
+				}
+			}
+
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
 			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook);
 

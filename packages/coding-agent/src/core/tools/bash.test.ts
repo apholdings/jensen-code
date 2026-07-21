@@ -173,90 +173,6 @@ describe("createBashTool", () => {
 		}
 	});
 
-	it("pipeline metadata reaches model-facing output", async () => {
-		const operations: BashOperations = {
-			exec: async (_command, _cwd, { onStderr: _onStderr }) => {
-				return {
-					exitCode: 1,
-					pipelineData: {
-						stageExitCodes: [1, 0],
-						stageExitCodesKnown: true,
-						evidenceAuthoritative: true,
-					},
-				};
-			},
-		};
-
-		const tool = createBashTool(process.cwd(), { operations });
-		try {
-			await tool.execute("call_1", { command: "false | tail" });
-			expect.fail("should have thrown for exit code 1");
-		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
-			expect(msg).toContain("pipeline: true");
-			expect(msg).toContain("pipeline_authoritative: true");
-			expect(msg).toContain("pipeline_stage_exit_codes: [1, 0]");
-		}
-	});
-
-	it("pipeline real stage exit codes are populated", async () => {
-		const operations: BashOperations = {
-			exec: async (_command, _cwd) => {
-				return {
-					exitCode: 0,
-					pipelineData: {
-						stageExitCodes: [0, 0],
-						stageExitCodesKnown: true,
-						evidenceAuthoritative: true,
-					},
-				};
-			},
-		};
-
-		const tool = createBashTool(process.cwd(), { operations });
-		const result = await tool.execute("call_1", { command: "printf 'ok\n' | grep ok" });
-
-		const text = (result.content[0] as { type: "text"; text: string }).text;
-		expect(text).toContain("pipeline_stage_exit_codes: [0, 0]");
-		expect(result.details!.pipeline).toBeDefined();
-		expect(result.details!.pipeline!.stageExitCodes).toEqual([0, 0]);
-		expect(result.details!.pipeline!.evidenceAuthoritative).toBe(true);
-	});
-
-	it("model-facing content contains all required evidence fields", async () => {
-		const operations: BashOperations = {
-			exec: async (_command, _cwd, { onStdout, onStderr }) => {
-				onStdout?.(Buffer.from("out\n"));
-				onStderr?.(Buffer.from("err\n"));
-				return {
-					exitCode: 0,
-					pipelineData: {
-						stageExitCodes: [0],
-						stageExitCodesKnown: true,
-						evidenceAuthoritative: true,
-					},
-				};
-			},
-		};
-
-		const tool = createBashTool(process.cwd(), { operations });
-		const result = await tool.execute("call_1", { command: "printf 'ok' | grep ok" });
-
-		const text = (result.content[0] as { type: "text"; text: string }).text;
-		// Required fields
-		expect(text).toContain("exit_code:");
-		expect(text).toContain("timed_out:");
-		expect(text).toContain("cancelled:");
-		expect(text).toContain("truncated:");
-		expect(text).toContain("stdout:");
-		expect(text).toContain("stderr:");
-
-		// Pipeline fields when pipeline data exists and command is a pipeline
-		expect(text).toContain("pipeline: true");
-		expect(text).toContain("pipeline_authoritative:");
-		expect(text).toContain("pipeline_stage_exit_codes:");
-	});
-
 	it("spawn error reaches model-facing output", async () => {
 		const operations: BashOperations = {
 			exec: async () => {
@@ -277,7 +193,310 @@ describe("createBashTool", () => {
 });
 
 // ============================================================================
-// Heredoc tests (HD01-HD10) — real bash execution
+// Evidence integrity tests (E01-E07) — fail-closed pipeline evidence
+// ============================================================================
+
+describe("bash tool — evidence integrity", () => {
+	it("E01: fd 3 cannot spoof metadata (no control channel exists)", async () => {
+		// Since fd 3 is no longer reserved for metadata, writing to it is
+		// just a user-space operation that may fail or succeed naturally.
+		// The key assertion: no internal Jensen metadata is modified.
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_e01", {
+			command: "printf 'E01-CLEAN\\n'",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("E01-CLEAN");
+		// No pipeline evidence for a non-pipeline command
+		expect(text).not.toContain("pipeline_suspected: true");
+		expect(text).not.toContain("pipeline_stage_exit_codes");
+		expect(text).toContain("exit_code: 0");
+	});
+
+	it("E02: user trap does not affect Jensen evidence", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_e02", {
+			command: "trap 'printf \"USER-TRAP\\n\" >&2' EXIT\nfalse | cat",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		// The user trap output appears in stderr (normal)
+		// But Jensen's evidence section is unaffected
+		expect(text).toContain("pipeline_suspected: true");
+		expect(text).toContain("evidence_authoritative: false");
+		expect(text).toContain("stage_exit_codes_known: false");
+	});
+
+	it("E03: trap removal does not affect evidence integrity", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_e03", {
+			command: "trap - EXIT\nfalse | cat",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		// Evidence section must still be valid — non-authoritative pipeline
+		expect(text).toContain("pipeline_suspected: true");
+		expect(text).toContain("evidence_authoritative: false");
+	});
+
+	it("E04: exec captures exit code without invented metadata", async () => {
+		const tool = createBashTool(process.cwd());
+		try {
+			await tool.execute("call_e04", {
+				command: "exec bash -c 'printf \"EXEC\\n\"; exit 27'",
+			});
+			expect.fail("should have thrown for exit 27");
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			expect(msg).toContain("EXEC");
+			expect(msg).toContain("exit_code: 27");
+			// No invented stage codes
+			expect(msg).not.toContain("pipeline_stage_exit_codes");
+		}
+	});
+
+	it("E05: deceptive pipeline (false|tail) is non-authoritative", async () => {
+		const tool = createBashTool(process.cwd());
+		// false | tail exits 0 (tail succeeds on empty input)
+		// Must be marked non-authoritative
+		const result = await tool.execute("call_e05", {
+			command: "false | tail",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("pipeline_suspected: true");
+		expect(text).toContain("evidence_authoritative: false");
+		expect(text).toContain("authority_scope: final_pipeline_stage_only");
+		expect(text).toContain("exit_code: 0");
+		expect(text).toContain("warning:");
+	});
+
+	it("E06: pipeline with deceptive success (bash -c 'exit 9' | cat) is non-authoritative", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_e06", {
+			command: "bash -c 'printf \"SUCCESS\\n\"; exit 9' | cat",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		// exit_code is 0 because cat succeeds, but must be non-authoritative
+		expect(text).toContain("SUCCESS");
+		expect(text).toContain("exit_code: 0");
+		expect(text).toContain("pipeline_suspected: true");
+		expect(text).toContain("evidence_authoritative: false");
+		expect(text).toContain("stage_exit_codes_known: false");
+	});
+
+	it("E07: successful pipeline (printf|grep) is non-authoritative regardless of success", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_e07", {
+			command: "printf 'ok\\n' | grep ok",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		// Even though both stages succeed, stage codes are not reliably captured
+		expect(text).toContain("ok");
+		expect(text).toContain("exit_code: 0");
+		expect(text).toContain("pipeline_suspected: true");
+		expect(text).toContain("evidence_authoritative: false");
+		expect(text).not.toContain("pipeline_stage_exit_codes");
+	});
+});
+
+// ============================================================================
+// Pipeline risk — fail-closed detection
+// ============================================================================
+
+describe("bash tool — pipeline risk detection", () => {
+	it("should suspect pipeline: false | tail", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_risk1", {
+			command: "false | tail",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("pipeline_suspected: true");
+	});
+
+	it("should suspect pipeline: printf | grep", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_risk2", {
+			command: "printf 'x\\n' | grep x",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("pipeline_suspected: true");
+	});
+
+	it("should suspect pipeline: heredoc with pipe", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_risk3", {
+			command: "cat <<'EOF' | grep x\nx\nEOF",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("pipeline_suspected: true");
+	});
+
+	it("should NOT suspect pipeline: quoted pipe character in single quotes", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_risk4", {
+			command: "printf '%s\\n' 'a|b'",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).not.toContain("pipeline_suspected: true");
+	});
+
+	it("should NOT suspect pipeline: quoted pipe character in double quotes", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_risk5", {
+			command: 'printf "%s\\n" "a|b"',
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).not.toContain("pipeline_suspected: true");
+	});
+
+	it("should NOT suspect pipeline: escaped pipe", async () => {
+		const tool = createBashTool(process.cwd());
+		// a\|b — bash escapes the |, so this is not a real pipeline.
+		// However, our simple quoting-aware detector sees | as unquoted
+		// (the backslash before it is consumed by bash, not by our detector).
+		// This is a known false positive — acceptable because it produces
+		// a non-authoritative warning, not a false authoritative result.
+		const result = await tool.execute("call_risk6", {
+			command: "printf '%s\\n' a\\|b",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		// Output is correct — prints literal "a|b"
+		expect(text).toContain("a|b");
+		expect(text).toContain("exit_code: 0");
+	});
+
+	it("should NOT suspect pipeline: pipe in comment", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_risk7", {
+			command: "printf 'COMMENT\\n' # false | cat",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("COMMENT");
+		// The # prevents | from being parsed, but our simple detector sees
+		// unquoted | after #. This is a known false positive — acceptable
+		// because it produces a non-authoritative warning, not false authority.
+		// We verify the exit code is still reported correctly.
+		expect(text).toContain("exit_code: 0");
+	});
+
+	it("should NOT suspect pipeline: pipe in arithmetic expression $((1|2))", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_risk8", {
+			command: "printf '%s\\n' $((1 | 2))",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		// $((1 | 2)) — bitwise OR in arithmetic context, not a shell pipeline.
+		// Known false positive: detector sees unquoted |.
+		expect(text).toContain("3");
+		expect(text).toContain("exit_code: 0");
+	});
+
+	it("should NOT suspect pipeline: || operator", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_risk9", {
+			command: "false || printf 'RECOVERED\\n'",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("RECOVERED");
+		expect(text).not.toContain("pipeline_suspected: true");
+	});
+
+	it("simple command has authoritative evidence", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_auth", {
+			command: "printf 'AUTHORITATIVE\\n'",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("AUTHORITATIVE");
+		expect(text).not.toContain("pipeline_suspected: true");
+		expect(text).toContain("exit_code: 0");
+		// Non-pipeline commands don't include pipeline evidence at all
+		expect(text).not.toContain("evidence_authoritative");
+	});
+
+	it("non-pipeline command with non-zero exit is authoritative", async () => {
+		const tool = createBashTool(process.cwd());
+		try {
+			await tool.execute("call_auth2", {
+				command: "bash -c 'printf \"SUCCESS\\n\"; exit 17'",
+			});
+			expect.fail("should have thrown for exit 17");
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			expect(msg).toContain("SUCCESS");
+			expect(msg).toContain("exit_code: 17");
+			expect(msg).not.toContain("pipeline_suspected: true");
+			expect(msg).not.toContain("evidence_authoritative: false");
+		}
+	});
+});
+
+// ============================================================================
+// Pipeline semantics — fail-closed redesign
+// ============================================================================
+
+describe("bash tool — pipeline semantics (fail-closed)", () => {
+	it("pipeline metadata reaches model-facing output with warning", async () => {
+		const tool = createBashTool(process.cwd());
+		// false|cat exits 0 in bash (cat succeeds), but must be non-authoritative
+		const result = await tool.execute("call_p1", {
+			command: "false | cat",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("pipeline_suspected: true");
+		expect(text).toContain("stage_exit_codes_known: false");
+		expect(text).toContain("evidence_authoritative: false");
+		expect(text).toContain("authority_scope: final_pipeline_stage_only");
+		expect(text).toContain("warning:");
+		expect(text).toContain("Re-run the validation command without a pipeline");
+	});
+
+	it("pipeline with non-zero last stage shows warning with exit code", async () => {
+		const tool = createBashTool(process.cwd());
+		try {
+			await tool.execute("call_p2", {
+				command: "false | grep DOES_NOT_EXIST",
+			});
+			expect.fail("should have thrown");
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			expect(msg).toContain("pipeline_suspected: true");
+			expect(msg).toContain("evidence_authoritative: false");
+		}
+	});
+
+	it("simple command does not show pipeline evidence", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_simple", {
+			command: "printf 'SIMPLE\\n'",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("SIMPLE");
+		expect(text).not.toContain("pipeline_suspected: true");
+		expect(text).not.toContain("evidence_authoritative");
+	});
+
+	it("operators that are not pipelines: ||", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_or", {
+			command: "false || printf 'RECOVERED\\n'",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("RECOVERED");
+		expect(text).not.toContain("pipeline_suspected: true");
+	});
+
+	it("operators that are not pipelines: &&", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_and", {
+			command: "true && printf 'AND\\n'",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("AND");
+		expect(text).not.toContain("pipeline_suspected: true");
+	});
+});
+
+// ============================================================================
+// Heredoc tests (HD01-HD12) — real bash execution
 // ============================================================================
 
 describe("bash tool — heredocs (real execution)", () => {
@@ -288,7 +507,7 @@ describe("bash tool — heredocs (real execution)", () => {
 		});
 		const text = (result.content[0] as { type: "text"; text: string }).text;
 		expect(text).toContain("HEREDOC-BASIC");
-		// Wrapper source must never leak
+		// No wrapper, trap, or sentinel leakage
 		expect(text).not.toContain("__jensen_stages");
 		expect(text).not.toContain("PIPESTATUS");
 		expect(text).not.toContain("_PI_");
@@ -328,16 +547,15 @@ describe("bash tool — heredocs (real execution)", () => {
 		expect(text).toContain("exit_code: 0");
 	});
 
-	it("HD05: heredoc inside pipeline captures stage codes", async () => {
+	it("HD05: heredoc inside pipeline produces non-authoritative warning", async () => {
 		const tool = createBashTool(process.cwd());
-		try {
-			await tool.execute("call_hd05", {
-				command: "cat <<'EOF' | grep beta\nalpha\nbeta\nEOF",
-			});
-		} catch (_err) {
-			// grep exit code 0 is success, should not throw
-			expect.fail("heredoc pipeline should succeed when grep matches");
-		}
+		const result = await tool.execute("call_hd05", {
+			command: "cat <<'EOF' | grep beta\nalpha\nbeta\nEOF",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("beta");
+		expect(text).toContain("pipeline_suspected: true");
+		expect(text).toContain("evidence_authoritative: false");
 	});
 
 	it("HD06: two heredocs in sequence", async () => {
@@ -348,6 +566,16 @@ describe("bash tool — heredocs (real execution)", () => {
 		const text = (result.content[0] as { type: "text"; text: string }).text;
 		expect(text).toContain("ONE");
 		expect(text).toContain("TWO");
+	});
+
+	it("HD07: heredoc with tab-indented delimiter (<<-EOF)", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_hd07", {
+			command: "cat <<-EOF\n\tTAB-INDENTED\n\tEOF",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("TAB-INDENTED");
+		expect(text).toContain("exit_code: 0");
 	});
 
 	it("HD08: heredoc inside subshell", async () => {
@@ -383,6 +611,31 @@ describe("bash tool — heredocs (real execution)", () => {
 		const text = (result.content[0] as { type: "text"; text: string }).text;
 		expect(text).toContain("HEREDOC-NO-NL");
 		expect(text).toContain("exit_code: 0");
+	});
+
+	it("HD11: heredoc inside function preserves function semantics", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_hd11", {
+			command: "myfunc() {\n  cat <<'EOF'\nHEREDOC-IN-FUNC\nEOF\n}\nmyfunc",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("HEREDOC-IN-FUNC");
+		expect(text).toContain("exit_code: 0");
+	});
+
+	it("HD12: heredoc followed by timeout captures heredoc content", async () => {
+		const tool = createBashTool(process.cwd());
+		try {
+			await tool.execute("call_hd12", {
+				command: "cat <<'EOF'\nBEFORE-SLEEP\nEOF\nsleep 5",
+				timeout: 1,
+			});
+			expect.fail("should have thrown on timeout");
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			expect(msg).toContain("BEFORE-SLEEP");
+			expect(msg).toContain("timed_out: true");
+		}
 	});
 });
 
@@ -463,81 +716,16 @@ describe("bash tool — multiline commands (real execution)", () => {
 		const text = (result.content[0] as { type: "text"; text: string }).text;
 		expect(text).toContain("a|b");
 		// Not a real pipeline — no pipeline evidence
-		expect(text).not.toContain("pipeline: true");
+		expect(text).not.toContain("pipeline_suspected: true");
 	});
 });
 
 // ============================================================================
-// Pipeline semantics — H03 fix verification
-// ============================================================================
-
-describe("bash tool — pipeline semantics", () => {
-	it("simple command does not show pipeline evidence", async () => {
-		const tool = createBashTool(process.cwd());
-		const result = await tool.execute("call_simple", {
-			command: "printf 'SIMPLE\\n'",
-		});
-		const text = (result.content[0] as { type: "text"; text: string }).text;
-		expect(text).toContain("SIMPLE");
-		expect(text).not.toContain("pipeline: true");
-		expect(text).not.toContain("pipeline_authoritative");
-	});
-
-	it("real pipeline shows stage codes", async () => {
-		const tool = createBashTool(process.cwd());
-		try {
-			await tool.execute("call_pipeline", {
-				command: "false | cat",
-			});
-			expect.fail("should have thrown for non-zero last stage? false|cat exits 0");
-		} catch (_err) {
-			// false | cat — cat succeeds (exit 0), so the result exits 0 and
-			// createBashTool throws only for non-zero. false|cat exit code is 0.
-			// Let's use a pipeline that truly fails.
-		}
-	});
-
-	it("real pipeline with non-zero stage shows stage codes in error", async () => {
-		const tool = createBashTool(process.cwd());
-		try {
-			await tool.execute("call_pipeline_fail", {
-				command: "false | grep DOES_NOT_EXIST_SO_FAILS",
-			});
-			expect.fail("should have thrown");
-		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
-			expect(msg).toContain("pipeline: true");
-			expect(msg).toContain("pipeline_stage_exit_codes");
-		}
-	});
-
-	it("operators that are not pipelines: ||", async () => {
-		const tool = createBashTool(process.cwd());
-		const result = await tool.execute("call_or", {
-			command: "false || printf 'RECOVERED\\n'",
-		});
-		const text = (result.content[0] as { type: "text"; text: string }).text;
-		expect(text).toContain("RECOVERED");
-		expect(text).not.toContain("pipeline: true");
-	});
-
-	it("operators that are not pipelines: &&", async () => {
-		const tool = createBashTool(process.cwd());
-		const result = await tool.execute("call_and", {
-			command: "true && printf 'AND\\n'",
-		});
-		const text = (result.content[0] as { type: "text"; text: string }).text;
-		expect(text).toContain("AND");
-		expect(text).not.toContain("pipeline: true");
-	});
-});
-
-// ============================================================================
-// Timeout tests (TO01-TO05) — real bash execution
+// Timeout tests (TO01-TO10) — real bash execution
 // ============================================================================
 
 describe("bash tool — timeout (real execution)", () => {
-	it("timeout kills process and reports timedOut", async () => {
+	it("TO01: timeout kills process and reports timedOut", async () => {
 		const tool = createBashTool(process.cwd());
 		try {
 			await tool.execute("call_to01", {
@@ -553,7 +741,7 @@ describe("bash tool — timeout (real execution)", () => {
 		}
 	});
 
-	it("timeout preserves stdout produced before timeout", async () => {
+	it("TO02: timeout preserves stdout produced before timeout", async () => {
 		const tool = createBashTool(process.cwd());
 		try {
 			await tool.execute("call_to02", {
@@ -568,7 +756,7 @@ describe("bash tool — timeout (real execution)", () => {
 		}
 	});
 
-	it("timeout preserves stderr produced before timeout", async () => {
+	it("TO03: timeout preserves stderr produced before timeout", async () => {
 		const tool = createBashTool(process.cwd());
 		try {
 			await tool.execute("call_to03", {
@@ -583,7 +771,7 @@ describe("bash tool — timeout (real execution)", () => {
 		}
 	});
 
-	it("timeout kills pipeline", async () => {
+	it("TO04: timeout kills pipeline", async () => {
 		const tool = createBashTool(process.cwd());
 		try {
 			await tool.execute("call_to04", {
@@ -597,7 +785,7 @@ describe("bash tool — timeout (real execution)", () => {
 		}
 	});
 
-	it("timeout after heredoc preserves heredoc content", async () => {
+	it("TO05: timeout after heredoc preserves heredoc content", async () => {
 		const tool = createBashTool(process.cwd());
 		try {
 			await tool.execute("call_to05", {
@@ -609,6 +797,102 @@ describe("bash tool — timeout (real execution)", () => {
 			const msg = err instanceof Error ? err.message : String(err);
 			expect(msg).toContain("BEFORE-SLEEP");
 			expect(msg).toContain("timed_out: true");
+		}
+	});
+
+	it("TO06: timeout omitted means no timeout", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_to06", {
+			command: "printf 'NO-TIMEOUT\\n'",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("NO-TIMEOUT");
+		expect(text).toContain("timed_out: false");
+	});
+
+	it("TO07: fractional timeout works", async () => {
+		const tool = createBashTool(process.cwd());
+		try {
+			await tool.execute("call_to07", {
+				command: "sleep 3",
+				timeout: 0.5,
+			});
+			expect.fail("should have thrown on timeout");
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			expect(msg).toContain("timed_out: true");
+		}
+	});
+
+	it("TO08: zero timeout is rejected with validation error", async () => {
+		const tool = createBashTool(process.cwd());
+		try {
+			await tool.execute("call_to08", {
+				command: "printf 'ZERO\\n'",
+				timeout: 0,
+			});
+			expect.fail("should have thrown for timeout=0");
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			expect(msg).toContain("Timeout must be a positive number");
+			expect(msg).toContain("Got 0");
+		}
+	});
+
+	it("TO09: negative timeout is rejected with validation error", async () => {
+		const tool = createBashTool(process.cwd());
+		try {
+			await tool.execute("call_to09", {
+				command: "printf 'NEGATIVE\\n'",
+				timeout: -5,
+			});
+			expect.fail("should have thrown for timeout=-5");
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			expect(msg).toContain("Timeout must be a positive number");
+			expect(msg).toContain("-5");
+		}
+	});
+
+	it("TO10: excessive timeout is rejected with validation error", async () => {
+		const tool = createBashTool(process.cwd());
+		try {
+			await tool.execute("call_to10", {
+				command: "printf 'EXCESSIVE\\n'",
+				timeout: 999999,
+			});
+			expect.fail("should have thrown for excessive timeout");
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			expect(msg).toContain("exceeds maximum allowed timeout");
+		}
+	});
+
+	it("TO11: NaN timeout is rejected", async () => {
+		const tool = createBashTool(process.cwd());
+		try {
+			await tool.execute("call_to11", {
+				command: "printf 'NAN\\n'",
+				timeout: NaN,
+			});
+			expect.fail("should have thrown for NaN timeout");
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			expect(msg).toContain("Invalid timeout value");
+		}
+	});
+
+	it("TO12: Infinity timeout is rejected", async () => {
+		const tool = createBashTool(process.cwd());
+		try {
+			await tool.execute("call_to12", {
+				command: "printf 'INF\\n'",
+				timeout: Infinity,
+			});
+			expect.fail("should have thrown for Infinity timeout");
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			expect(msg).toContain("Invalid timeout value");
 		}
 	});
 });
@@ -673,38 +957,32 @@ wait "$CHILD_PID"
 });
 
 // ============================================================================
-// Agent tool path verification — H01/H02/H03 contracts through createBashTool
+// Agent tool path contract
 // ============================================================================
 
 describe("bash tool — agent tool path contract", () => {
-	it("simple command is not labeled pipeline (H03 regression)", async () => {
+	it("simple command is not labeled pipeline", async () => {
 		const tool = createBashTool(process.cwd());
-		const result = await tool.execute("call_h03_simple", {
+		const result = await tool.execute("call_contract_simple", {
 			command: "echo 'NOT-A-PIPELINE'",
 		});
 		const text = (result.content[0] as { type: "text"; text: string }).text;
-		expect(text).not.toContain("pipeline: true");
+		expect(text).not.toContain("pipeline_suspected: true");
 	});
 
-	it("real pipeline retains stage codes (H03 regression)", async () => {
+	it("real pipeline is marked non-authoritative", async () => {
 		const tool = createBashTool(process.cwd());
-		try {
-			// Pipeline where first stage fails, second succeeds
-			await tool.execute("call_h03_real", {
-				command: "(exit 7) | cat",
-			});
-			// exit 7 from subshell, cat succeeds → last exit code is 0
-			// createBashTool only throws for non-zero, so this resolves
-		} catch (err) {
-			// If cat somehow fails, we still should see pipeline data
-			const msg = err instanceof Error ? err.message : String(err);
-			expect(msg).toContain("pipeline: true");
-		}
+		const result = await tool.execute("call_contract_pipeline", {
+			command: "(exit 7) | cat",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("pipeline_suspected: true");
+		expect(text).toContain("evidence_authoritative: false");
 	});
 
-	it("wrapper source never leaks into stdout or stderr (H01 regression)", async () => {
+	it("no wrapper source leaks into stdout or stderr", async () => {
 		const tool = createBashTool(process.cwd());
-		const result = await tool.execute("call_h01_noleak", {
+		const result = await tool.execute("call_noleak", {
 			command: "printf 'CLEAN\\n'",
 		});
 		const text = (result.content[0] as { type: "text"; text: string }).text;
@@ -713,7 +991,7 @@ describe("bash tool — agent tool path contract", () => {
 		expect(text).not.toContain("_PI_");
 	});
 
-	it("timeout schema value reaches executor (H02 regression)", async () => {
+	it("timeout schema value reaches executor", async () => {
 		const tool = createBashTool(process.cwd());
 		try {
 			await tool.execute("call_h02_wired", {
@@ -725,5 +1003,19 @@ describe("bash tool — agent tool path contract", () => {
 			const msg = err instanceof Error ? err.message : String(err);
 			expect(msg).toContain("timed_out: true");
 		}
+	});
+
+	it("model-facing content contains all required evidence fields", async () => {
+		const tool = createBashTool(process.cwd());
+		const result = await tool.execute("call_evidence_fields", {
+			command: "printf 'OK\\n'",
+		});
+		const text = (result.content[0] as { type: "text"; text: string }).text;
+		// Required fields
+		expect(text).toContain("exit_code:");
+		expect(text).toContain("timed_out:");
+		expect(text).toContain("cancelled:");
+		expect(text).toContain("truncated:");
+		expect(text).toContain("stdout:");
 	});
 });

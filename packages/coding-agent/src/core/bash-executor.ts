@@ -29,22 +29,34 @@ export interface BashExecutorOptions {
 }
 
 /**
- * Pipeline evidence metadata for commands executed as pipelines.
- * When a command uses pipes (|), the primary command's exit code may be
- * hidden by the last pipeline stage. This metadata preserves full pipeline
- * state so the agent can distinguish authoritative from non-authoritative results.
+ * Pipeline evidence metadata for shell commands.
+ *
+ * When a command is suspected to contain a pipeline (|), the final shell exit
+ * code may represent only the last pipeline stage. This interface classifies
+ * the result as authoritative (non-pipeline command) or non-authoritative
+ * (pipeline suspected). Stage exit codes are never captured from shared file
+ * descriptors because those channels are observable and writable by the
+ * executed command itself.
  */
 export interface PipelineEvidence {
-	/** Whether the command was a pipeline (contains | outside of quoting) */
-	isPipeline: boolean;
-	/** Exit code of the last pipeline stage (from the shell) */
-	lastStageExitCode: number | null;
-	/** Whether PIPESTATUS or equivalent was successfully captured */
-	stageExitCodesKnown: boolean;
-	/** Array of per-stage exit codes (empty if stageExitCodesKnown is false) */
-	stageExitCodes: number[];
-	/** Whether the overall exit code is authoritative for the primary command */
+	/** Whether the command is suspected to contain a pipeline (contains | outside of quoting) */
+	pipelineSuspected: boolean;
+	/** Always false: stage exit codes are never known from untrusted channels */
+	stageExitCodesKnown: false;
+	/** The final shell exit code */
+	finalShellExitCode: number | undefined;
+	/** Whether the exit code is authoritative for the full command */
 	evidenceAuthoritative: boolean;
+	/**
+	 * Authority scope for the exit code.
+	 * - "final_shell_exit_status": non-pipeline command — exit code represents the full source.
+	 * - "final_pipeline_stage_only": pipeline suspected — exit code may represent only the last stage.
+	 */
+	authorityScope: "final_shell_exit_status" | "final_pipeline_stage_only";
+	/**
+	 * Warning message for the model when evidence is non-authoritative.
+	 */
+	warning?: string;
 }
 
 export interface BashResult {
@@ -96,26 +108,40 @@ export function executeBash(command: string, options?: BashExecutorOptions): Pro
 }
 
 /**
- * Detect whether a command string is a pipeline (contains | outside of quoting).
- * This is a best-effort check; shell escaping can defeat it, but for the
- * overwhelming majority of tool-invoked commands it is accurate.
+ * Detect whether a command string is suspected to contain a pipeline.
+ * This is a conservative heuristic prioritizing recall over precision.
+ *
+ * A false positive (flagging a non-pipeline as a pipeline) only causes
+ * the model to see a non-authoritative warning — safe. A false negative
+ * (missing a real pipeline) would incorrectly present an authoritative
+ * exit code — dangerous.
+ *
+ * The detector checks for unquoted | characters, skipping || (OR operator).
+ * Known false positives: quoted pipe-like patterns in complex bash constructs.
+ * These are acceptable because they only produce non-authoritative warnings,
+ * never false authoritative results.
  */
-function detectPipeline(command: string): boolean {
-	// Simple heuristic: count | characters not inside single or double quotes.
-	// Skips || (OR operator) — two consecutive pipes are not a pipeline.
+function suspectPipeline(command: string): boolean {
+	// Two-pass detection:
+	// Pass 1: Quick check — does the command contain | at all?
+	// Pass 2: If yes, do quoting-aware scan to exclude quoted pipes.
+	// Both passes are conservative: pass 1 may catch edge cases that
+	// pass 2 would miss, so we run pass 1 first for recall.
+
+	// Scan for unquoted | not part of ||, &&, or within quotes
 	let inSingle = false;
 	let inDouble = false;
 	for (let i = 0; i < command.length; i++) {
 		const ch = command[i];
 		const prev = i > 0 ? command[i - 1] : null;
-		if (ch === "'" && !inDouble && prev !== "\\") {
+		if (ch === "'" && !inDouble) {
 			inSingle = !inSingle;
 		} else if (ch === '"' && !inSingle && prev !== "\\") {
 			inDouble = !inDouble;
 		} else if (ch === "|" && !inSingle && !inDouble) {
-			// Skip || (OR operator)
+			// Skip || (OR operator) — two consecutive pipes
 			if (i + 1 < command.length && command[i + 1] === "|") {
-				i++; // Skip the second pipe char
+				i++;
 				continue;
 			}
 			return true;
@@ -147,7 +173,10 @@ export async function executeBashWithOperations(
 
 	let spawnErr: string | undefined;
 	const timedOut = false;
-	const isPipeline = detectPipeline(command);
+	const pipelineSuspected = suspectPipeline(command);
+
+	const WARNING_TEXT =
+		"This command appears to contain a shell pipeline. The reported shell exit code may represent only the final pipeline stage. Do not use this result as authoritative validation. Re-run the validation command without a pipeline.";
 
 	const decoder = new TextDecoder();
 
@@ -213,25 +242,16 @@ export async function executeBashWithOperations(
 		const cancelled = options?.signal?.aborted ?? false;
 		const finishedAt = new Date().toISOString();
 
-		const pipelineMeta: PipelineEvidence | undefined = (() => {
-			if (!isPipeline) return undefined;
-			if (result.pipelineData) {
-				return {
-					isPipeline: true,
-					lastStageExitCode: result.exitCode,
-					stageExitCodesKnown: result.pipelineData.stageExitCodesKnown,
-					stageExitCodes: result.pipelineData.stageExitCodes,
-					evidenceAuthoritative: result.pipelineData.evidenceAuthoritative,
-				};
-			}
-			return {
-				isPipeline: true,
-				lastStageExitCode: result.exitCode,
-				stageExitCodesKnown: false,
-				stageExitCodes: [],
-				evidenceAuthoritative: false,
-			};
-		})();
+		const pipelineMeta: PipelineEvidence | undefined = pipelineSuspected
+			? {
+					pipelineSuspected: true,
+					stageExitCodesKnown: false,
+					finalShellExitCode: result.exitCode ?? undefined,
+					evidenceAuthoritative: false,
+					authorityScope: "final_pipeline_stage_only",
+					warning: WARNING_TEXT,
+				}
+			: undefined;
 
 		return {
 			output: truncationResult.truncated ? truncationResult.content : fullOutput,
@@ -257,13 +277,14 @@ export async function executeBashWithOperations(
 			const fullOutput = outputChunks.join("");
 			const truncationResult = truncateTail(fullOutput);
 			const finishedAt = new Date().toISOString();
-			const pipelineMeta: PipelineEvidence | undefined = isPipeline
+			const pipelineMeta: PipelineEvidence | undefined = pipelineSuspected
 				? {
-						isPipeline: true,
-						lastStageExitCode: null,
+						pipelineSuspected: true,
 						stageExitCodesKnown: false,
-						stageExitCodes: [],
+						finalShellExitCode: undefined,
 						evidenceAuthoritative: false,
+						authorityScope: "final_pipeline_stage_only",
+						warning: WARNING_TEXT,
 					}
 				: undefined;
 
@@ -288,13 +309,14 @@ export async function executeBashWithOperations(
 			const fullOutput = outputChunks.join("");
 			const truncationResult = truncateTail(fullOutput);
 			const finishedAt = new Date().toISOString();
-			const pipelineMeta: PipelineEvidence | undefined = isPipeline
+			const pipelineMeta: PipelineEvidence | undefined = pipelineSuspected
 				? {
-						isPipeline: true,
-						lastStageExitCode: null,
+						pipelineSuspected: true,
 						stageExitCodesKnown: false,
-						stageExitCodes: [],
+						finalShellExitCode: undefined,
 						evidenceAuthoritative: false,
+						authorityScope: "final_pipeline_stage_only",
+						warning: WARNING_TEXT,
 					}
 				: undefined;
 

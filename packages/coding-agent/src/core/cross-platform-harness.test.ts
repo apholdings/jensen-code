@@ -229,28 +229,29 @@ describe("BashResult stream separation", () => {
 // ============================================================================
 
 describe("pipeline evidence", () => {
-	it("detects simple pipeline with authoritative evidence", async () => {
+	it("detects simple pipeline as non-authoritative", async () => {
 		const result = await executeBash("false | tail");
 		expect(result.pipeline).toBeDefined();
-		expect(result.pipeline!.isPipeline).toBe(true);
-		// PIPESTATUS is now captured via fd 3, so evidence is authoritative
-		expect(result.pipeline!.evidenceAuthoritative).toBe(true);
-		expect(result.pipeline!.stageExitCodesKnown).toBe(true);
-		expect(result.pipeline!.stageExitCodes).toEqual([1, 0]);
+		expect(result.pipeline!.pipelineSuspected).toBe(true);
+		// No fd 3 control channel — stage codes are never known from untrusted channels
+		expect(result.pipeline!.stageExitCodesKnown).toBe(false);
+		expect(result.pipeline!.evidenceAuthoritative).toBe(false);
+		expect(result.pipeline!.authorityScope).toBe("final_pipeline_stage_only");
+		expect(result.pipeline!.warning).toBeDefined();
+		expect(result.pipeline!.warning).toContain("Do not use this result as authoritative validation");
 	});
 
-	it("detects pipeline with grep", async () => {
+	it("detects pipeline with grep as non-authoritative", async () => {
 		const result = await executeBash("printf 'ok\n' | grep ok");
 		expect(result.pipeline).toBeDefined();
-		expect(result.pipeline!.isPipeline).toBe(true);
+		expect(result.pipeline!.pipelineSuspected).toBe(true);
 		expect(result.exitCode).toBe(0);
-		expect(result.pipeline!.stageExitCodes).toEqual([0, 0]);
+		expect(result.pipeline!.evidenceAuthoritative).toBe(false);
+		expect(result.pipeline!.authorityScope).toBe("final_pipeline_stage_only");
 	});
 
 	it("non-pipeline command has no pipeline evidence", async () => {
 		const result = await executeBash("echo hello");
-		// Corrected H03: simple (non-pipeline) commands have undefined pipeline.
-		// Pipeline evidence is only created for commands that syntactically contain a |.
 		expect(result.pipeline).toBeUndefined();
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toContain("hello");
@@ -262,11 +263,13 @@ describe("pipeline evidence", () => {
 		expect(result.exitCode).toBe(0);
 	});
 
-	it("pipeline exit code reflects last stage", async () => {
+	it("pipeline exit code reflects last stage but is non-authoritative", async () => {
 		const result = await executeBash("false | grep anything");
 		expect(result.pipeline).toBeDefined();
 		expect(result.exitCode).toBe(1);
-		expect(result.pipeline!.stageExitCodes).toEqual([1, 1]);
+		expect(result.pipeline!.pipelineSuspected).toBe(true);
+		expect(result.pipeline!.evidenceAuthoritative).toBe(false);
+		expect(result.pipeline!.finalShellExitCode).toBe(1);
 	});
 });
 
