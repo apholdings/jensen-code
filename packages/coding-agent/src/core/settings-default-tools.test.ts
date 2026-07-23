@@ -163,12 +163,16 @@ describe("settings default tools", () => {
 					sessionManager,
 				});
 
-				// Legacy defaults: read, bash, edit, write
+				// Legacy defaults now include todo and memory tools
 				const activeTools = session.getActiveToolNames();
 				expect(activeTools).toContain("read");
 				expect(activeTools).toContain("bash");
 				expect(activeTools).toContain("edit");
 				expect(activeTools).toContain("write");
+				expect(activeTools).toContain("todo_write");
+				expect(activeTools).toContain("todo_read");
+				expect(activeTools).toContain("todo_update");
+				expect(activeTools).toContain("memory_write");
 			} finally {
 				require("fs").rmSync(rootDir, { recursive: true, force: true });
 			}
@@ -279,12 +283,16 @@ describe("settings default tools", () => {
 					sessionManager,
 				});
 
-				// Should fall back to legacy defaults
+				// Should fall back to legacy defaults (now includes todo and memory tools)
 				const activeTools = session.getActiveToolNames();
 				expect(activeTools).toContain("read");
 				expect(activeTools).toContain("bash");
 				expect(activeTools).toContain("edit");
 				expect(activeTools).toContain("write");
+				expect(activeTools).toContain("todo_write");
+				expect(activeTools).toContain("todo_read");
+				expect(activeTools).toContain("todo_update");
+				expect(activeTools).toContain("memory_write");
 			} finally {
 				require("fs").rmSync(rootDir, { recursive: true, force: true });
 			}
