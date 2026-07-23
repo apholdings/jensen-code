@@ -246,7 +246,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	// Determine initial active tools: explicit options.tools takes priority,
 	// then settings config, then legacy defaults
-	const legacyDefaultTools: ToolName[] = ["read", "bash", "edit", "write"];
+	const legacyDefaultTools: ToolName[] = [
+		"read",
+		"bash",
+		"edit",
+		"write",
+		"todo_write",
+		"todo_read",
+		"todo_update",
+		"memory_write",
+	];
 	const configuredTools = settingsManager.getDefaultActiveToolNames();
 	const initialActiveToolNames: ToolName[] = options.tools
 		? options.tools.map((t) => t.name).filter((n): n is ToolName => n in allTools)

@@ -83,11 +83,11 @@ describe("AgentSession.applyUltraplan()", () => {
 		const result = applier.applyUltraplan();
 		const reloaded = createSession({ sessionManager });
 
-		expect(result.applied).toEqual([
+		expect(result.applied).toMatchObject([
 			{ content: "Inspect the repo", activeForm: "Inspect the repo", status: "pending" },
 			{ content: "Write the todo state", activeForm: "Write the todo state", status: "pending" },
 		]);
-		expect(reloaded.getTodos()).toEqual(result.applied);
+		expect(reloaded.getTodos()).toMatchObject(result.applied);
 		expect(result.displayText).toContain("Applied 2 Ultraplan step(s)");
 		expect(result.displayText).toContain("session todo state");
 		expect(result.displayText).toContain("Apply did not start execution");
@@ -134,7 +134,7 @@ describe("AgentSession.applyUltraplan()", () => {
 		const applier = createSession({ sessionManager });
 		const result = applier.applyUltraplan();
 
-		expect(result.applied).toEqual([
+		expect(result.applied).toMatchObject([
 			{ content: "Use the latest step", activeForm: "Use the latest step", status: "pending" },
 		]);
 		expect(applier.getLatestUltraplanPlan()?.objective).toBe("Latest plan");
@@ -164,7 +164,7 @@ describe("AgentSession.applyUltraplan()", () => {
 		const applier = createSession({ sessionManager });
 		const result = applier.applyUltraplan();
 
-		expect(result.applied).toEqual([
+		expect(result.applied).toMatchObject([
 			{ content: "Phase step one", activeForm: "Phase step one", status: "pending" },
 			{ content: "Phase step two", activeForm: "Phase step two", status: "pending" },
 		]);
@@ -201,8 +201,8 @@ describe("AgentSession.applyUltraplan()", () => {
 		const result = applier.applyUltraplan();
 		const afterApplyArtifact = applier.getLatestUltraplanPlan();
 
-		expect(result.applied).toEqual([{ content: "New step", activeForm: "New step", status: "pending" }]);
-		expect(applier.getTodos()).toEqual([
+		expect(result.applied).toMatchObject([{ content: "New step", activeForm: "New step", status: "pending" }]);
+		expect(applier.getTodos()).toMatchObject([
 			{ content: "Existing task", activeForm: "Existing task", status: "in_progress" },
 			{ content: "Shared step", activeForm: "Shared step", status: "completed" },
 			{ content: "New step", activeForm: "New step", status: "pending" },

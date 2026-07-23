@@ -86,7 +86,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 		try {
 			const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
 			const client = createClient(model, context, apiKey, options?.headers);
-			let params = buildParams(model, context, options);
+			let params = buildOpenAICompletionsParams(model, context, options);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = nextParams as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
@@ -239,7 +239,14 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 
 							if (currentBlock.type === "toolCall") {
 								if (toolCall.id) currentBlock.id = toolCall.id;
-								if (toolCall.function?.name) currentBlock.name = toolCall.function.name;
+								if (toolCall.function?.name) {
+									if (currentBlock.name && currentBlock.name !== toolCall.function.name) {
+										throw new Error(
+											`Provider changed tool name within call ${currentBlock.id}: ${currentBlock.name} -> ${toolCall.function.name}`,
+										);
+									}
+									currentBlock.name = toolCall.function.name;
+								}
 								let delta = "";
 								if (toolCall.function?.arguments) {
 									delta = toolCall.function.arguments;
@@ -374,7 +381,11 @@ function createClient(
 	});
 }
 
-function buildParams(model: Model<"openai-completions">, context: Context, options?: OpenAICompletionsOptions) {
+export function buildOpenAICompletionsParams(
+	model: Model<"openai-completions">,
+	context: Context,
+	options?: OpenAICompletionsOptions,
+) {
 	const compat = getCompat(model);
 	const messages = convertMessages(model, context, compat);
 	maybeAddOpenRouterAnthropicCacheControl(model, messages);

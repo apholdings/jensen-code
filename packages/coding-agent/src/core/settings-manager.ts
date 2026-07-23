@@ -46,7 +46,16 @@ export interface MarkdownSettings {
 
 export interface ToolsSettings {
 	defaultActiveToolNames?: string[]; // Default active built-in tool names
+	/** Tool names intentionally disabled from the default active set. */
+	disabledToolNames?: string[];
 }
+
+/** Todo operations share state but must remain independently model-visible. */
+export const TODO_FAMILY_TOOL_NAMES = ["todo_write", "todo_read", "todo_update"] as const;
+
+/** Settings schema version for one-shot migrations. Increment when adding new migrations. */
+const CURRENT_SETTINGS_VERSION = 1;
+const SETTINGS_VERSION_KEY = "_settingsVersion";
 
 export interface EditorBackgroundSettings {
 	enabled?: boolean; // default: false
@@ -71,6 +80,7 @@ export type PackageSource =
 	  };
 
 export interface Settings {
+	_settingsVersion?: number;
 	lastChangelogVersion?: string;
 	defaultProvider?: string;
 	defaultModel?: string;
@@ -283,7 +293,7 @@ export class SettingsManager {
 			initialErrors.push({ scope: "project", error: projectLoad.error });
 		}
 
-		return new SettingsManager(
+		const manager = new SettingsManager(
 			storage,
 			globalLoad.settings,
 			projectLoad.settings,
@@ -291,6 +301,14 @@ export class SettingsManager {
 			projectLoad.error,
 			initialErrors,
 		);
+
+		// Auto-persist global settings if migration applied, so the
+		// marker survives reloads and the migration runs exactly once.
+		if (globalLoad.migrated) {
+			manager.save();
+		}
+
+		return manager;
 	}
 
 	/** Create an in-memory SettingsManager (no file I/O) */
@@ -299,7 +317,10 @@ export class SettingsManager {
 		return new SettingsManager(storage, settings, {});
 	}
 
-	private static loadFromStorage(storage: SettingsStorage, scope: SettingsScope): Settings {
+	private static tryLoadFromStorage(
+		storage: SettingsStorage,
+		scope: SettingsScope,
+	): { settings: Settings; error: Error | null; migrated: boolean } {
 		let content: string | undefined;
 		storage.withLock(scope, (current) => {
 			content = current;
@@ -307,25 +328,51 @@ export class SettingsManager {
 		});
 
 		if (!content) {
-			return {};
+			return { settings: {}, error: null, migrated: false };
 		}
-		const settings = JSON.parse(content);
-		return SettingsManager.migrateSettings(settings);
-	}
 
-	private static tryLoadFromStorage(
-		storage: SettingsStorage,
-		scope: SettingsScope,
-	): { settings: Settings; error: Error | null } {
 		try {
-			return { settings: SettingsManager.loadFromStorage(storage, scope), error: null };
+			const settings = JSON.parse(content);
+			const [result, migrated] = SettingsManager.migrateSettings(settings);
+			return { settings: result, error: null, migrated };
 		} catch (error) {
-			return { settings: {}, error: error as Error };
+			return { settings: {}, error: error as Error, migrated: false };
 		}
 	}
 
-	/** Migrate old settings format to new format */
-	private static migrateSettings(settings: Record<string, unknown>): Settings {
+	/** Migrate old settings format to new format. Returns [settings, wasMigrated]. */
+	private static migrateSettings(settings: Record<string, unknown>): [Settings, boolean] {
+		const version =
+			typeof settings[SETTINGS_VERSION_KEY] === "number" ? (settings[SETTINGS_VERSION_KEY] as number) : 0;
+		let migrated = false;
+
+		if (version < 1) {
+			// A saved default list that predates todo_read/todo_update is a legacy
+			// incomplete allowlist, not an explicit request to disable those operations.
+			// Explicit disabledToolNames always wins and is preserved.
+			const tools = settings.tools;
+			if (typeof tools === "object" && tools !== null && !Array.isArray(tools)) {
+				const toolSettings = tools as Record<string, unknown>;
+				const active = toolSettings.defaultActiveToolNames;
+				const disabled = Array.isArray(toolSettings.disabledToolNames)
+					? new Set(toolSettings.disabledToolNames.filter((name): name is string => typeof name === "string"))
+					: new Set<string>();
+				if (
+					Array.isArray(active) &&
+					active.includes("todo_write") &&
+					!active.includes("todo_read") &&
+					!active.includes("todo_update")
+				) {
+					toolSettings.defaultActiveToolNames = [
+						...active,
+						...TODO_FAMILY_TOOL_NAMES.filter((name) => name !== "todo_write" && !disabled.has(name)),
+					];
+					migrated = true;
+				}
+			}
+			settings[SETTINGS_VERSION_KEY] = CURRENT_SETTINGS_VERSION;
+		}
+
 		// Migrate queueMode -> steeringMode
 		if ("queueMode" in settings && !("steeringMode" in settings)) {
 			settings.steeringMode = settings.queueMode;
@@ -359,7 +406,7 @@ export class SettingsManager {
 			}
 		}
 
-		return settings as Settings;
+		return [settings as Settings, migrated];
 	}
 
 	getGlobalSettings(): Settings {
@@ -466,9 +513,9 @@ export class SettingsManager {
 		modifiedNestedFields: Map<keyof Settings, Set<string>>,
 	): void {
 		this.storage.withLock(scope, (current) => {
-			const currentFileSettings = current
+			const [currentFileSettings] = current
 				? SettingsManager.migrateSettings(JSON.parse(current) as Record<string, unknown>)
-				: {};
+				: [{} as Settings];
 			const mergedSettings: Settings = { ...currentFileSettings };
 			for (const field of modifiedFields) {
 				const value = snapshotSettings[field];
@@ -486,7 +533,11 @@ export class SettingsManager {
 				}
 			}
 
-			return JSON.stringify(mergedSettings, null, 2);
+			const output: Record<string, unknown> = {
+				...mergedSettings,
+				[SETTINGS_VERSION_KEY]: CURRENT_SETTINGS_VERSION,
+			};
+			return JSON.stringify(output, null, 2);
 		});
 	}
 
@@ -1015,9 +1066,12 @@ export class SettingsManager {
 		if (!configured || !Array.isArray(configured) || configured.length === 0) {
 			return undefined;
 		}
-		// Filter to valid tool names - unknown names are silently ignored
+		const disabled = new Set(
+			(this.settings.tools?.disabledToolNames ?? []).filter((name): name is string => typeof name === "string"),
+		);
+		// Filter to valid tool names and preserve explicitly disabled operations.
 		const validTools: ToolName[] = configured.filter(
-			(name): name is ToolName => typeof name === "string" && name in allToolNames,
+			(name): name is ToolName => typeof name === "string" && name in allToolNames && !disabled.has(name),
 		);
 		return validTools.length > 0 ? validTools : undefined;
 	}
@@ -1025,13 +1079,15 @@ export class SettingsManager {
 
 // Import allToolNames for validation
 // This is a module-level constant that maps valid tool names
-const allToolNames: Record<string, boolean> = {
+const allToolNames: Record<string, true> = {
 	read: true,
 	bash: true,
 	powershell: true,
 	edit: true,
 	write: true,
 	todo_write: true,
+	todo_read: true,
+	todo_update: true,
 	memory_write: true,
 	grep: true,
 	find: true,

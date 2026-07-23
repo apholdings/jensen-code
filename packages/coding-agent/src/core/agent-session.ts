@@ -118,6 +118,9 @@ import {
 	createTaskUpdateTool,
 	type Task,
 } from "./tools/task-tools.js";
+import { TodoLoopGuard } from "./tools/todo-loop-guard.js";
+import { createTodoReadTool } from "./tools/todo-read.js";
+import { createTodoUpdateTool } from "./tools/todo-update.js";
 import { createTodoWriteTool, type TodoItem } from "./tools/todo-write.js";
 import {
 	buildUltraplanPlannerTask,
@@ -365,6 +368,8 @@ export class AgentSession {
 
 	// Todo state
 	private _todos: TodoItem[] = [];
+	private _todoRevision = 0;
+	private _todoLoopGuard = new TodoLoopGuard();
 	private _memoryItems: MemoryItem[] = [];
 	private _delegatedTasks: DelegatedTask[] = [];
 	private _tasks: Task[] = [];
@@ -587,6 +592,9 @@ export class AgentSession {
 
 		// Handle session persistence
 		if (event.type === "message_end") {
+			if (event.message.role === "user") {
+				this._todoLoopGuard.resetOnNewUserMessage();
+			}
 			// Check if this is a custom message from extensions
 			if (event.message.role === "custom") {
 				// Persist as CustomMessageEntry
@@ -742,6 +750,9 @@ export class AgentSession {
 			};
 			await this._extensionRunner.emit(extensionEvent);
 		} else if (event.type === "tool_execution_end") {
+			if (!event.isError && event.toolName !== "todo_write" && event.toolName !== "todo_read") {
+				this._todoLoopGuard.resetOnNonTodoToolSuccess(event.toolName);
+			}
 			const extensionEvent: ToolExecutionEndEvent = {
 				type: "tool_execution_end",
 				toolCallId: event.toolCallId,
@@ -954,8 +965,16 @@ export class AgentSession {
 	 * Get the current todo list.
 	 * Returns the session's todo state for UI rendering.
 	 */
-	getTodos(): ReadonlyArray<{ content: string; activeForm: string; status: string }> {
+	getTodos(): ReadonlyArray<TodoItem> {
 		return this._todos;
+	}
+
+	/**
+	 * Get the current todo revision number.
+	 * Increments on every non-no-op todo_write or todo_update mutation.
+	 */
+	get todoRevision(): number {
+		return this._todoRevision;
 	}
 
 	getDelegatedTasks(): readonly DelegatedTask[] {
@@ -975,8 +994,21 @@ export class AgentSession {
 	 * Called by the todo_write tool to update session state.
 	 */
 	private _setTodos(todos: TodoItem[]): void {
-		this._todos = todos;
-		this.sessionManager.appendSessionTodos(todos);
+		// Ensure all todos have IDs before persisting
+		const withIds: {
+			id: string;
+			content: string;
+			activeForm: string;
+			status: "pending" | "in_progress" | "completed";
+		}[] = todos.map((t) => ({
+			id: t.id || crypto.randomUUID(),
+			content: t.content,
+			activeForm: t.activeForm,
+			status: t.status,
+		}));
+		this._todos = withIds;
+		this._todoRevision++;
+		this.sessionManager.appendSessionTodos(withIds);
 		this._emit({ type: "todo_update", todos: this._todos });
 	}
 
@@ -1323,6 +1355,7 @@ export class AgentSession {
 		const newTodos: TodoItem[] = selection.steps
 			.filter((step) => !existingTodoContents.has(step))
 			.map((step) => ({
+				id: crypto.randomUUID(),
 				content: step,
 				activeForm: step,
 				status: "pending" as const,
@@ -2095,6 +2128,7 @@ export class AgentSession {
 		this._followUpMessages = [];
 		this._pendingNextTurnMessages = [];
 		this._todos = [];
+		this._todoRevision = 0;
 		this._memoryItems = [];
 		this._delegatedTasks = [];
 		this._tasks = [];
@@ -3018,12 +3052,26 @@ export class AgentSession {
 
 		this._baseToolRegistry = new Map(Object.entries(baseTools).map(([name, tool]) => [name, tool as AgentTool]));
 
-		// Create todo_write tool with session callbacks
+		// Create todo_write, todo_read, and todo_update tools with session callbacks
 		const todoWriteTool = createTodoWriteTool(
 			() => this._todos,
 			(todos) => this._setTodos(todos),
+			this._todoLoopGuard,
+			() => this._todoRevision,
+		);
+		const todoReadTool = createTodoReadTool(
+			() => this._todos,
+			() => this._todoRevision,
+		);
+		const todoUpdateTool = createTodoUpdateTool(
+			() => this._todos,
+			(todos) => this._setTodos(todos),
+			() => this._todoRevision,
+			this._todoLoopGuard,
 		);
 		this._baseToolRegistry.set("todo_write", todoWriteTool as unknown as AgentTool);
+		this._baseToolRegistry.set("todo_read", todoReadTool as unknown as AgentTool);
+		this._baseToolRegistry.set("todo_update", todoUpdateTool as unknown as AgentTool);
 
 		const memoryWriteTool = createMemoryWriteTool({
 			set: (key, value) => this.setMemoryItem(key, value),
@@ -3082,7 +3130,7 @@ export class AgentSession {
 
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
-			: ["read", "bash", "edit", "write", "todo_write", "memory_write"];
+			: ["read", "bash", "edit", "write", "todo_write", "todo_read", "todo_update", "memory_write"];
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		this._refreshToolRegistry({
 			activeToolNames: baseActiveToolNames,
@@ -3449,6 +3497,7 @@ export class AgentSession {
 		// Reload messages
 		const sessionContext = this.sessionManager.buildSessionContext();
 		this._todos = sessionContext.todos as TodoItem[];
+		this._todoRevision = 0;
 		this._memoryItems = sessionContext.memoryItems;
 		this._delegatedTasks = [];
 		this._tasks = this.sessionManager.getLatestSessionTasks();

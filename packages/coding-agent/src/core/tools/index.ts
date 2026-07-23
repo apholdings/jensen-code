@@ -70,6 +70,9 @@ export {
 	type ReadToolOptions,
 	readTool,
 } from "./read.js";
+export { TodoLoopGuard } from "./todo-loop-guard.js";
+export { createTodoReadTool, type TodoReadInput, todoReadTool } from "./todo-read.js";
+export { createTodoUpdateTool, type TodoUpdateInput, todoUpdateTool } from "./todo-update.js";
 export { createTodoWriteTool, type TodoItem, todoWriteTool } from "./todo-write.js";
 export {
 	DEFAULT_MAX_BYTES,
@@ -107,6 +110,8 @@ import { memoryWriteTool } from "./memory-write.js";
 import { createPowerShellTool, type PowerShellToolOptions, powershellTool } from "./powershell.js";
 import { createProcessManagerTool, type ProcessManagerToolOptions, processManagerTool } from "./process-manager.js";
 import { createReadTool, type ReadToolOptions, readTool } from "./read.js";
+import { todoReadTool } from "./todo-read.js";
+import { todoUpdateTool } from "./todo-update.js";
 import { todoWriteTool } from "./todo-write.js";
 import { createWebSearchTool, webSearchTool } from "./web-search.js";
 import { createWriteTool, writeTool } from "./write.js";
@@ -122,12 +127,14 @@ export const codingTools: Tool[] = [
 	editTool,
 	writeTool,
 	todoWriteTool,
+	todoReadTool,
+	todoUpdateTool,
 	memoryWriteTool,
 	processManagerTool,
 ];
 
 // Read-only tools for exploration without modification (using process.cwd())
-export const readOnlyTools: Tool[] = [readTool, grepTool, findTool, lsTool];
+export const readOnlyTools: Tool[] = [readTool, grepTool, findTool, lsTool, todoReadTool];
 
 // All available tools (using process.cwd())
 export const allTools = {
@@ -137,6 +144,8 @@ export const allTools = {
 	edit: editTool,
 	write: writeTool,
 	todo_write: todoWriteTool,
+	todo_read: todoReadTool,
+	todo_update: todoUpdateTool,
 	memory_write: memoryWriteTool,
 	grep: grepTool,
 	find: findTool,
@@ -169,6 +178,8 @@ export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
 		createEditTool(cwd),
 		createWriteTool(cwd),
 		todoWriteTool,
+		todoReadTool,
+		todoUpdateTool,
 		memoryWriteTool,
 		createProcessManagerTool(cwd, options?.process_manager),
 	];
@@ -178,7 +189,13 @@ export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
  * Create read-only tools configured for a specific working directory.
  */
 export function createReadOnlyTools(cwd: string, options?: ToolsOptions): Tool[] {
-	return [createReadTool(cwd, options?.read), createGrepTool(cwd), createFindTool(cwd), createLsTool(cwd)];
+	return [
+		createReadTool(cwd, options?.read),
+		createGrepTool(cwd),
+		createFindTool(cwd),
+		createLsTool(cwd),
+		todoReadTool,
+	];
 }
 
 /**
@@ -192,6 +209,8 @@ export function createAllTools(cwd: string, options?: ToolsOptions): Record<Tool
 		edit: createEditTool(cwd),
 		write: createWriteTool(cwd),
 		todo_write: todoWriteTool,
+		todo_read: todoReadTool,
+		todo_update: todoUpdateTool,
 		memory_write: memoryWriteTool,
 		grep: createGrepTool(cwd),
 		find: createFindTool(cwd),
