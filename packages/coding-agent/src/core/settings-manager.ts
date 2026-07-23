@@ -1032,6 +1032,7 @@ const allToolNames: Record<string, boolean> = {
 	edit: true,
 	write: true,
 	todo_write: true,
+	todo_read: true,
 	memory_write: true,
 	grep: true,
 	find: true,

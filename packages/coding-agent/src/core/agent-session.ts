@@ -118,6 +118,8 @@ import {
 	createTaskUpdateTool,
 	type Task,
 } from "./tools/task-tools.js";
+import { TodoLoopGuard } from "./tools/todo-loop-guard.js";
+import { createTodoReadTool } from "./tools/todo-read.js";
 import { createTodoWriteTool, type TodoItem } from "./tools/todo-write.js";
 import {
 	buildUltraplanPlannerTask,
@@ -365,6 +367,7 @@ export class AgentSession {
 
 	// Todo state
 	private _todos: TodoItem[] = [];
+	private _todoLoopGuard = new TodoLoopGuard();
 	private _memoryItems: MemoryItem[] = [];
 	private _delegatedTasks: DelegatedTask[] = [];
 	private _tasks: Task[] = [];
@@ -587,6 +590,9 @@ export class AgentSession {
 
 		// Handle session persistence
 		if (event.type === "message_end") {
+			if (event.message.role === "user") {
+				this._todoLoopGuard.resetOnNewUserMessage();
+			}
 			// Check if this is a custom message from extensions
 			if (event.message.role === "custom") {
 				// Persist as CustomMessageEntry
@@ -742,6 +748,9 @@ export class AgentSession {
 			};
 			await this._extensionRunner.emit(extensionEvent);
 		} else if (event.type === "tool_execution_end") {
+			if (!event.isError && event.toolName !== "todo_write" && event.toolName !== "todo_read") {
+				this._todoLoopGuard.resetOnNonTodoToolSuccess(event.toolName);
+			}
 			const extensionEvent: ToolExecutionEndEvent = {
 				type: "tool_execution_end",
 				toolCallId: event.toolCallId,
@@ -3018,12 +3027,15 @@ export class AgentSession {
 
 		this._baseToolRegistry = new Map(Object.entries(baseTools).map(([name, tool]) => [name, tool as AgentTool]));
 
-		// Create todo_write tool with session callbacks
+		// Create todo_write and todo_read tools with session callbacks
 		const todoWriteTool = createTodoWriteTool(
 			() => this._todos,
 			(todos) => this._setTodos(todos),
+			this._todoLoopGuard,
 		);
+		const todoReadTool = createTodoReadTool(() => this._todos);
 		this._baseToolRegistry.set("todo_write", todoWriteTool as unknown as AgentTool);
+		this._baseToolRegistry.set("todo_read", todoReadTool as unknown as AgentTool);
 
 		const memoryWriteTool = createMemoryWriteTool({
 			set: (key, value) => this.setMemoryItem(key, value),
@@ -3082,7 +3094,7 @@ export class AgentSession {
 
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
-			: ["read", "bash", "edit", "write", "todo_write", "memory_write"];
+			: ["read", "bash", "edit", "write", "todo_write", "todo_read", "memory_write"];
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		this._refreshToolRegistry({
 			activeToolNames: baseActiveToolNames,
