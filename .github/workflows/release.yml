@@ -63,10 +63,9 @@ jobs:
             printf '%s\n' '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' > "$HOME/.npmrc"
           fi
           node scripts/publish-unpublished-packages.mjs 2>&1 | tee publish-output.txt
-          # Extract the JSON result block for downstream consumption
-          sed -n '/^--- PUBLISH RESULT ---$/,/^$/p' publish-output.txt | tail -n +2 | head -n -1 > publish-result.json
-          RELEASE_TAG=$(node -e "try { console.log(require('./publish-result.json').releaseTag || '') } catch { }")
-          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          # Extract the release tag from the structured output and propagate
+          # it to the downstream push step via GITHUB_OUTPUT.
+          node scripts/extract-publish-result.mjs
 
       - name: Push release tag
         if: steps.publish.outputs.release_tag != ''
