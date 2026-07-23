@@ -8,6 +8,7 @@ export interface MemoryItem {
 }
 
 export interface TodoSnapshotItem {
+	id: string;
 	content: string;
 	activeForm: string;
 	status: "pending" | "in_progress" | "completed";
@@ -115,13 +116,25 @@ export function parseTodoSnapshot(data: unknown): TodoSnapshotItem[] {
 		) {
 			continue;
 		}
+		const id = typeof candidate.id === "string" && candidate.id.length > 0 ? candidate.id : generateTodoId();
 		todos.push({
+			id,
 			content: candidate.content,
 			activeForm: candidate.activeForm,
 			status: candidate.status,
 		});
 	}
 	return todos;
+}
+
+let _todoIdCounter = 0;
+
+/** Generate a stable, unique todo ID. Not a secret, not content-derived. */
+export function generateTodoId(): string {
+	const timestamp = Date.now().toString(36);
+	const counter = (++_todoIdCounter).toString(36);
+	const random = Math.random().toString(36).slice(2, 8);
+	return `td_${timestamp}_${counter}_${random}`;
 }
 
 /**

@@ -72,6 +72,7 @@ export {
 } from "./read.js";
 export { TodoLoopGuard } from "./todo-loop-guard.js";
 export { createTodoReadTool, type TodoReadInput, todoReadTool } from "./todo-read.js";
+export { createTodoUpdateTool, type TodoUpdateInput, todoUpdateTool } from "./todo-update.js";
 export { createTodoWriteTool, type TodoItem, todoWriteTool } from "./todo-write.js";
 export {
 	DEFAULT_MAX_BYTES,
@@ -110,6 +111,7 @@ import { createPowerShellTool, type PowerShellToolOptions, powershellTool } from
 import { createProcessManagerTool, type ProcessManagerToolOptions, processManagerTool } from "./process-manager.js";
 import { createReadTool, type ReadToolOptions, readTool } from "./read.js";
 import { todoReadTool } from "./todo-read.js";
+import { todoUpdateTool } from "./todo-update.js";
 import { todoWriteTool } from "./todo-write.js";
 import { createWebSearchTool, webSearchTool } from "./web-search.js";
 import { createWriteTool, writeTool } from "./write.js";
@@ -126,6 +128,7 @@ export const codingTools: Tool[] = [
 	writeTool,
 	todoWriteTool,
 	todoReadTool,
+	todoUpdateTool,
 	memoryWriteTool,
 	processManagerTool,
 ];
@@ -142,6 +145,7 @@ export const allTools = {
 	write: writeTool,
 	todo_write: todoWriteTool,
 	todo_read: todoReadTool,
+	todo_update: todoUpdateTool,
 	memory_write: memoryWriteTool,
 	grep: grepTool,
 	find: findTool,
@@ -175,6 +179,7 @@ export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
 		createWriteTool(cwd),
 		todoWriteTool,
 		todoReadTool,
+		todoUpdateTool,
 		memoryWriteTool,
 		createProcessManagerTool(cwd, options?.process_manager),
 	];
@@ -205,6 +210,7 @@ export function createAllTools(cwd: string, options?: ToolsOptions): Record<Tool
 		write: createWriteTool(cwd),
 		todo_write: todoWriteTool,
 		todo_read: todoReadTool,
+		todo_update: todoUpdateTool,
 		memory_write: memoryWriteTool,
 		grep: createGrepTool(cwd),
 		find: createFindTool(cwd),

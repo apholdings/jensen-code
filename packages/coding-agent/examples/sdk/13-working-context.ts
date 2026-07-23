@@ -17,8 +17,18 @@ function printContext(label: string, context: WorkingContext): void {
 async function main(): Promise<void> {
 	const sessionManager = SessionManager.inMemory();
 	sessionManager.appendSessionTodos([
-		{ content: "Wire same-process helper", activeForm: "Wiring same-process helper", status: "in_progress" },
-		{ content: "Document SDK contract", activeForm: "Documenting SDK contract", status: "completed" },
+		{
+			id: "td_example_1",
+			content: "Wire same-process helper",
+			activeForm: "Wiring same-process helper",
+			status: "in_progress",
+		},
+		{
+			id: "td_example_2",
+			content: "Document SDK contract",
+			activeForm: "Documenting SDK contract",
+			status: "completed",
+		},
 	]);
 
 	const { session } = await createAgentSession({ sessionManager });

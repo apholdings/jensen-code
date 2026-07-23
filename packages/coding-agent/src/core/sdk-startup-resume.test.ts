@@ -124,7 +124,7 @@ describe("createAgentSession startup resume boundary", () => {
 			expect(session.getMemoryItems()).toEqual([
 				{ key: "project.goal", value: "restore startup state", timestamp: "2026-04-02T12:00:00.000Z" },
 			]);
-			expect(session.getTodos()).toEqual([
+			expect(session.getTodos()).toMatchObject([
 				{ content: "Resume startup test", activeForm: "Restoring startup test", status: "in_progress" },
 			]);
 			expect(session.getTasks()).toEqual([
@@ -286,7 +286,7 @@ describe("createAgentSession startup resume boundary", () => {
 			expect(session.model?.id).toBe(fallbackModel.id);
 			expect(session.thinkingLevel).toBe("high");
 			expect(session.getMemoryItems()).toEqual([]);
-			expect(session.getTodos()).toEqual([]);
+			expect(session.getTodos()).toMatchObject([]);
 			expect(session.messages).toHaveLength(0);
 			expect(session.messages).not.toEqual(
 				expect.arrayContaining([
@@ -362,7 +362,7 @@ describe("createAgentSession startup resume boundary", () => {
 			expect(session.model?.id).toBe(fallbackModel.id);
 			expect(session.thinkingLevel).toBe("high");
 			expect(session.getMemoryItems()).toEqual([]);
-			expect(session.getTodos()).toEqual([]);
+			expect(session.getTodos()).toMatchObject([]);
 			expect(session.messages).toHaveLength(0);
 			expect(existsSync(missingSessionFile)).toBe(false);
 		} finally {
@@ -508,7 +508,7 @@ describe("createAgentSession startup resume boundary", () => {
 			expect(session.model?.id).toBe(fallbackModel.id);
 			expect(session.thinkingLevel).toBe("high");
 			expect(session.getMemoryItems()).toEqual([]);
-			expect(session.getTodos()).toEqual([]);
+			expect(session.getTodos()).toMatchObject([]);
 			expect(session.messages).toHaveLength(0);
 			expect(session.messages).not.toEqual(
 				expect.arrayContaining([

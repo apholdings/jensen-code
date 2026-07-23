@@ -13,7 +13,6 @@ import {
 	type Model,
 	type ToolResultMessage,
 	type Usage,
-	validateToolArguments,
 } from "@apholdings/jensen-ai";
 import { describe, expect, it } from "vitest";
 import { convertToLlm } from "./messages.js";
@@ -165,7 +164,14 @@ function restoreFullArguments(request: Context, todos: TodoItem[]): Context {
 	return {
 		...request,
 		messages: request.messages.map((message) =>
-			message.role === "assistant" && message.content.some((block) => block.type === "toolCall")
+			message.role === "assistant" &&
+			message.content.some(
+				(block) =>
+					block.type === "toolCall" ||
+					(block.type === "text" &&
+						typeof block.text === "string" &&
+						block.text.includes("Todo snapshot omitted")),
+			)
 				? makeAssistant(todos)
 				: message,
 		),
@@ -179,8 +185,8 @@ describe("todo_write model context", () => {
 	])("%s while preserving full state for persistence and UI", async (_label, todos, initial) => {
 		const execution = await executeAndCapture(todos, initial);
 
-		expect(execution.persisted).toEqual(todos);
-		expect(execution.uiEvent).toEqual(todos);
+		expect(execution.persisted).toMatchObject(todos);
+		expect(execution.uiEvent).toMatchObject(todos);
 		expect(execution.toolResult.content).toEqual([
 			{
 				type: "text",
@@ -213,16 +219,11 @@ describe("todo_write model context", () => {
 		if (!compactedCall || compactedCall.role !== "assistant") {
 			throw new Error("Expected assistant message");
 		}
-		expect(compactedCall.content[0]).toMatchObject({
-			type: "toolCall",
-			name: "todo_write",
-			arguments: { todos: [], snapshotOmitted: true },
-		});
-		const compactedToolCall = compactedCall.content[0];
-		if (compactedToolCall.type !== "toolCall") throw new Error("Expected tool call");
-		const toolDefinition = largeRequest.tools?.[0];
-		if (!toolDefinition) throw new Error("Expected tool definition");
-		expect(() => validateToolArguments(toolDefinition, compactedToolCall)).not.toThrow();
+		const compactedBlock = compactedCall.content[0];
+		expect(compactedBlock.type).toBe("text");
+		if (compactedBlock.type === "text") {
+			expect(compactedBlock.text).toContain("Todo snapshot omitted");
+		}
 	});
 
 	it("keeps arguments for an unexecuted todo_write call", () => {
@@ -246,10 +247,17 @@ describe("todo_write model context", () => {
 		const converted = convertToLlm([orphan, completed, result]);
 
 		expect(converted[0]).toEqual(orphan);
-		expect(converted[1]).toMatchObject({
+		const compactedAssistant = converted[1];
+		expect(compactedAssistant).toMatchObject({
 			role: "assistant",
-			content: [{ type: "toolCall", arguments: { todos: [], snapshotOmitted: true } }],
+			content: [{ type: "text" }],
 		});
+		if (compactedAssistant.role === "assistant") {
+			const block = compactedAssistant.content[0];
+			if ("text" in block && typeof block.text === "string") {
+				expect(block.text).toContain("Todo snapshot omitted");
+			}
+		}
 	});
 
 	describe("todo_read mode", () => {
@@ -266,20 +274,22 @@ describe("todo_write model context", () => {
 				type: "text",
 			});
 			const text = (result.content[0] as { type: "text"; text: string }).text;
-			expect(text).toContain("Current todo list (3 total): 1 pending, 1 in progress, 1 completed");
+			expect(text).toContain("Current todo list (3 total");
+			expect(text).toContain("1 pending, 1 in progress, 1 completed");
 			expect(text).toContain("[ ] Task A");
 			expect(text).toContain("[>] Doing B");
 			expect(text).toContain("[x] Task C");
 			expect(persisted).toEqual(existing); // state unchanged
-			expect(result.details).toEqual({ todos: existing });
+			expect(result.details).toMatchObject({ todos: existing });
 		});
 
 		it("returns empty message when no todos exist", async () => {
 			const persisted: TodoItem[] = [];
 			const readTool = createTodoReadTool(() => persisted);
 			const result = await readTool.execute("read-call", {});
-			expect(result.content).toEqual([{ type: "text", text: "Todo list is empty." }]);
-			expect(result.details).toEqual({ todos: [] });
+			expect(result.content[0]).toMatchObject({ type: "text" });
+			expect((result.content[0] as { text: string }).text).toContain("Todo list is empty");
+			expect(result.details).toMatchObject({ todos: [] });
 		});
 	});
 
@@ -303,11 +313,11 @@ describe("todo_write model context", () => {
 				{ content: "Deploy", activeForm: "Deploying", status: "pending" },
 			];
 			await writeTool.execute("write-1", { todos: initialList });
-			expect(persisted).toEqual(initialList);
+			expect(persisted).toMatchObject(initialList);
 
 			// Step 2: Read back via todo_read
 			const readResult = await readTool.execute("read-1", {});
-			expect(readResult.details).toEqual({ todos: initialList });
+			expect(readResult.details).toMatchObject({ todos: initialList });
 
 			// Step 3: Update: mark first as in_progress
 			const updatedList: TodoItem[] = [
@@ -318,11 +328,11 @@ describe("todo_write model context", () => {
 				{ content: "Deploy", activeForm: "Deploying", status: "pending" },
 			];
 			await writeTool.execute("write-2", { todos: updatedList });
-			expect(persisted).toEqual(updatedList);
+			expect(persisted).toMatchObject(updatedList);
 
 			// Step 4: Read again
 			const readResult2 = await readTool.execute("read-2", {});
-			expect(readResult2.details).toEqual({ todos: updatedList });
+			expect(readResult2.details).toMatchObject({ todos: updatedList });
 		});
 
 		it("adding a task preserves all existing tasks", async () => {
@@ -342,11 +352,11 @@ describe("todo_write model context", () => {
 			await writeTool.execute("write-1", { todos: initial });
 
 			const readResult = await readTool.execute("read-1", {});
-			expect(readResult.details).toEqual({ todos: initial });
+			expect(readResult.details).toMatchObject({ todos: initial });
 
 			const withNew: TodoItem[] = [...initial, { content: "Task 3", activeForm: "Doing 3", status: "pending" }];
 			await writeTool.execute("write-2", { todos: withNew });
-			expect(persisted).toEqual(withNew);
+			expect(persisted).toMatchObject(withNew);
 			expect(persisted.length).toBe(3);
 		});
 
@@ -366,7 +376,7 @@ describe("todo_write model context", () => {
 			const res2 = await writeTool.execute("write-2", { todos: list });
 			expect((res2.details as { changed?: boolean }).changed).toBe(false);
 
-			expect(persisted).toEqual(list);
+			expect(persisted).toMatchObject(list);
 			expect(persisted.length).toBe(1);
 		});
 
@@ -382,21 +392,22 @@ describe("todo_write model context", () => {
 
 			const list: TodoItem[] = [{ content: "Task A", activeForm: "Doing A", status: "pending" }];
 			await writeTool.execute("write-1", { todos: list });
-			expect(persisted).toEqual(list);
+			expect(persisted).toMatchObject(list);
 
 			// Unconfirmed clear returns error
 			const errRes = await writeTool.execute("write-2", { todos: [] });
 			expect((errRes.content[0] as { text: string }).text).toContain(
 				"Clearing all todos requires explicit confirmation",
 			);
-			expect(persisted).toEqual(list);
+			expect(persisted).toMatchObject(list);
 
 			// Confirmed clear succeeds
 			await writeTool.execute("write-3", { todos: [], confirmClear: true });
 			expect(persisted).toEqual([]);
 
 			const readResult = await readTool.execute("read-1", {});
-			expect(readResult.content).toEqual([{ type: "text", text: "Todo list is empty." }]);
+			expect(readResult.content[0]).toMatchObject({ type: "text" });
+			expect((readResult.content[0] as { text: string }).text).toContain("Todo list is empty");
 		});
 	});
 });

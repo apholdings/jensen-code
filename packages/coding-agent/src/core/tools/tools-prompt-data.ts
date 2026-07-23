@@ -333,11 +333,10 @@ When to use proactively:
 - The user provides a list of things to do (treat each as a todo item)
 - Work spans multiple files or distinct phases
 - Starting complex work without a clear plan (create todos as your plan)
-- After completing a task, create/update todos for next steps
-- During active work, at least one todo should be in_progress
 
 Parameters:
 - todos: Array of task objects with:
+  - id: Optional stable identifier from a prior todo_read or write. Omit for new items; preserved on replacement.
   - content: Imperative description of what needs to be done (e.g., "Implement user authentication")
   - activeForm: Present continuous form shown during execution (e.g., "Implementing user authentication")
   - status: One of "pending", "in_progress", or "completed"
@@ -345,20 +344,22 @@ Parameters:
 
 Semantics:
 - FULL LIST REPLACEMENT: Each call completely replaces the previous list — include ALL current todos in every call
+- Use todo_update for status or progress transitions.
+- Use todo_read when the current IDs or revision are not available.
+- Do not reconstruct or replace the entire list merely to complete one item.
 - Mark tasks in_progress when you start working on them, completed when done
 - Mark tasks complete IMMEDIATELY after finishing (do not leave them in_progress)
 - Exactly ONE task should be in_progress at any time during active work
 - To view the current todo list without modifying it, call todo_read instead of todo_write
 
 When NOT to use:
+- For status progressions of existing items — use todo_update instead
 - Single trivial operations (just do them directly)
 - Quick file reads or lookups
 - Tasks better tracked mentally
 
 Examples:
 - Start workflow: todos=[{content: "Read existing code", activeForm: "Reading existing code", status: "pending"}, {content: "Implement feature", activeForm: "Implementing feature", status: "pending"}]
-- Begin work: update status of first task to "in_progress"
-- Finish and move on: update first to "completed", second to "in_progress"
 - Clear list: todos=[], confirmClear=true (when all tasks are done)`,
 
 	/**
@@ -366,13 +367,48 @@ Examples:
 	 */
 	todo_read: `Read the session's structured task/todo list without modifying it.
 
-Usage: Retrieve the current state, task items, and completion counts of the active todo list.
+Usage: Retrieve the current state, task items with stable IDs, and revision number of the active todo list.
 
 When to use:
 - You need to inspect existing todos without modifying state
 - You want to verify active tasks before making updates
+- You need stable IDs or the current revision number for a todo_update call
 
-Parameters: None`,
+Parameters: None
+
+Returns stable IDs and current revision for use with todo_update. Use todo_update for progress transitions, not todo_write.`,
+
+	/**
+	 * Todo update tool - partial progress transitions
+	 */
+	todo_update: `Apply partial progress transitions to the todo list without replacing the entire list.
+
+Usage: Mark items as in_progress or completed, or update activeForm/content fields, using stable IDs from todo_read or a prior todo_write.
+
+When to use:
+- Mark a task as in_progress when you start working on it
+- Mark a task as completed when you finish it
+- Update activeForm to reflect current work phrasing
+- Transition exactly ONE task to in_progress at a time
+
+Parameters:
+- updates: Array of partial updates, each with:
+  - id: Stable identifier of the todo item to update (from todo_read)
+  - status: New status - "pending", "in_progress", or "completed" (optional)
+  - activeForm: Updated present continuous form (optional)
+  - content: Updated task description (optional)
+- expectedRevision: Current revision number from todo_read or the last successful mutation. Prevents stale updates.
+
+When NOT to use:
+- You don't know the current IDs or revision — call todo_read first
+- Creating new todo items — use todo_write instead
+- Clearing all todos — use todo_write with confirmClear: true
+- You want to replace the entire list — use todo_write instead
+
+Examples:
+- Mark first item as in_progress: updates=[{id: "td_xxx_1", status: "in_progress"}], expectedRevision=3
+- Complete first and start second: updates=[{id: "td_xxx_1", status: "completed"}, {id: "td_xxx_2", status: "in_progress"}], expectedRevision=3
+- Update activeForm: updates=[{id: "td_xxx_1", activeForm: "Refactoring auth module"}], expectedRevision=3`,
 
 	/**
 	 * Memory write tool - structured session memory
@@ -612,6 +648,7 @@ const FALLBACK_DESCRIPTIONS: Record<string, string> = {
 	ls: "List directory contents",
 	todo_write: "Update the session's structured task/todo list for multi-step workflows",
 	todo_read: "Read the session's structured task/todo list without modifying it",
+	todo_update: "Apply partial progress transitions to the todo list without replacing the entire list",
 	memory_write: "Record or clear structured session memory that survives compaction",
 	process_manager: "Manage persistent background processes on Windows (start, status, stop, list)",
 	task_create: "Create a structured task for multi-step work tracking",

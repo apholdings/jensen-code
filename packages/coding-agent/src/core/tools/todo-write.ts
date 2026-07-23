@@ -1,11 +1,18 @@
 import type { AgentTool } from "@apholdings/jensen-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
+import { generateTodoId } from "../memory.js";
 import { TodoLoopGuard } from "./todo-loop-guard.js";
 
 /** Schema for the todo_write tool */
 const todoWriteSchema = Type.Object({
 	todos: Type.Array(
 		Type.Object({
+			id: Type.Optional(
+				Type.String({
+					description:
+						"Stable identifier from a prior todo_read or write. Omit for new items; preserved on replacement.",
+				}),
+			),
 			content: Type.String({ description: "Imperative task description (what needs to be done)" }),
 			activeForm: Type.String({ description: "Present continuous form shown during execution" }),
 			status: Type.Union([Type.Literal("pending"), Type.Literal("in_progress"), Type.Literal("completed")], {
@@ -23,6 +30,7 @@ export type TodoWriteInput = Static<typeof todoWriteSchema>;
 
 /** Todo item stored in session state */
 export interface TodoItem {
+	id?: string;
 	content: string;
 	activeForm: string;
 	status: "pending" | "in_progress" | "completed";
@@ -50,6 +58,7 @@ export function redactSecrets(text: string): string {
 
 function normalizeTodoItem(item: TodoItem): TodoItem {
 	return {
+		id: item.id || generateTodoId(),
 		content: redactSecrets(item.content.trim()),
 		activeForm: redactSecrets(item.activeForm.trim()),
 		status: item.status,
@@ -71,17 +80,24 @@ function areTodosEqual(a: TodoItem[], b: TodoItem[]): boolean {
  * @param getSessionTodos - Callback to get the current todos from session
  * @param setSessionTodos - Callback to set todos in session and trigger update event
  * @param loopGuard - Guard instance to track consecutive calls
+ * @param getRevision - Callback to get the current todo revision number
  */
 export function createTodoWriteTool(
 	getSessionTodos: () => TodoItem[],
 	setSessionTodos: (todos: TodoItem[]) => void,
 	loopGuard: TodoLoopGuard = new TodoLoopGuard(),
+	getRevision?: () => number,
 ): AgentTool<typeof todoWriteSchema> {
 	return {
 		name: "todo_write",
 		label: "todo_write",
 		description:
-			"Update the session's structured task/todo list for multi-step workflows. Full list replacement each call. To view the current todo list without modifying it, call todo_read.",
+			"Update the session's structured task/todo list for multi-step workflows. " +
+			"Call this for initial creation, deliberate complete replacement, or explicit confirmed clear. " +
+			"Use todo_update for status or progress transitions. " +
+			"Use todo_read when the current IDs or revision are not available. " +
+			"Do not reconstruct or replace the entire list merely to complete one item. " +
+			"To view the current todo list without modifying it, call todo_read.",
 		parameters: todoWriteSchema,
 		execute: async (_toolCallId: string, { todos, confirmClear }: TodoWriteInput, _signal?: AbortSignal) => {
 			// Validate input
@@ -181,7 +197,7 @@ export function createTodoWriteTool(
 			if (normalized.length === 0) {
 				return {
 					content: [{ type: "text", text: "Todo list cleared." }],
-					details: { changed: true, total: 0, pending: 0, inProgress: 0, completed: 0 },
+					details: { changed: true, total: 0, pending: 0, inProgress: 0, completed: 0, revision: getRevision?.() },
 				};
 			}
 
@@ -195,6 +211,7 @@ export function createTodoWriteTool(
 					pending,
 					inProgress,
 					completed,
+					revision: getRevision?.(),
 				},
 			};
 		},

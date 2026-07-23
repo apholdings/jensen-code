@@ -152,11 +152,15 @@ export function createCustomMessage(
 	};
 }
 
-const TODO_WRITE_CONTEXT_ARGUMENTS = { todos: [], snapshotOmitted: true } as const;
+const TODO_WRITE_COMPACTED_TEXT =
+	"Todo snapshot omitted from historical call. Current state is available through todo_read." as const;
 
 /**
  * Keep persisted assistant messages intact for session replay and UI rendering while
  * excluding full todo snapshots from the model-facing conversation history.
+ *
+ * Replaces completed todo_write tool-call blocks with a compact text placeholder
+ * that cannot be replayed as a valid todo_write invocation.
  */
 function compactTodoWriteCalls(message: AssistantMessage, completedToolCalls: ReadonlySet<ToolCall>): AssistantMessage {
 	let changed = false;
@@ -164,10 +168,13 @@ function compactTodoWriteCalls(message: AssistantMessage, completedToolCalls: Re
 		if (block.type !== "toolCall" || !completedToolCalls.has(block)) {
 			return block;
 		}
+		if (block.name !== "todo_write") {
+			return block;
+		}
 		changed = true;
 		return {
-			...block,
-			arguments: TODO_WRITE_CONTEXT_ARGUMENTS,
+			type: "text" as const,
+			text: TODO_WRITE_COMPACTED_TEXT,
 		};
 	});
 
