@@ -322,14 +322,13 @@ describe("todo runtime tool registration", () => {
 				new TodoLoopGuard(),
 			);
 
-			const result = await updateTool.execute("call_1", {
-				updates: [{ id: "t1", status: "completed" }],
-				expectedRevision: 2, // stale
-			});
+			await expect(
+				updateTool.execute("call_1", {
+					updates: [{ id: "t1", status: "completed" }],
+					expectedRevision: 2, // stale
+				}),
+			).rejects.toThrow("Stale revision");
 
-			expect(resultText(result)).toContain("stale revision");
-			expect(result.details).toBeDefined();
-			expect(result.details!.staleRevision).toBe(true);
 			expect(mutated).toBe(false);
 		});
 	});
@@ -695,13 +694,12 @@ describe("integrated todo tool dispatcher simulation", () => {
 		expect(readResult2.details!.todos.length).toBe(7);
 
 		// 7. Stale revision update
-		const updateResult2 = await updateTool.execute("call_5", {
-			updates: [{ id: ids[2], status: "completed" }],
-			expectedRevision: readRevision, // stale
-		});
-
-		expect(resultText(updateResult2)).toContain("stale revision");
-		expect(updateResult2.details!.staleRevision).toBe(true);
+		await expect(
+			updateTool.execute("call_5", {
+				updates: [{ id: ids[2], status: "completed" }],
+				expectedRevision: readRevision, // stale
+			}),
+		).rejects.toThrow("Stale revision");
 
 		// 8. Confirm no mutation from stale update
 		expect(todos[2].status).toBe("pending");
@@ -789,17 +787,20 @@ describe("truthful tool result sequence", () => {
 		});
 
 		// 4. Stale update → rejected
-		const r4 = await updateTool.execute("c4", {
-			updates: [{ id: ids[1], status: "completed" }],
-			expectedRevision: rev, // stale — was already incremented
-		});
-		const r4Text = resultText(r4);
-		results.push({
-			number: 4,
-			tool: "todo_update",
-			actualResult: r4Text,
-			success: false, // stale revision → false
-		});
+		try {
+			await updateTool.execute("c4", {
+				updates: [{ id: ids[1], status: "completed" }],
+				expectedRevision: rev, // stale — was already incremented
+			});
+			throw new Error("Expected throw was not thrown");
+		} catch (err) {
+			results.push({
+				number: 4,
+				tool: "todo_update",
+				actualResult: (err as Error).message,
+				success: false, // stale revision → false
+			});
+		}
 
 		// 5. Rejected clear attempt (clear without confirmClear)
 		const r5 = await writeTool.execute("c5", {

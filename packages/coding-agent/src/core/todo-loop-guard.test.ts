@@ -556,12 +556,12 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 		const before = [...persisted];
 		const beforeRev = revision;
 
-		const res = await updateTool.execute("u1", {
-			updates: [{ id: "id-a", status: "completed" }],
-			expectedRevision: 3, // stale
-		});
-		expect((res.content[0] as { text: string }).text).toContain("stale revision");
-		expect((res.details as { staleRevision?: boolean }).staleRevision).toBe(true);
+		await expect(
+			updateTool.execute("u1", {
+				updates: [{ id: "id-a", status: "completed" }],
+				expectedRevision: 3, // stale
+			}),
+		).rejects.toThrow("Stale revision");
 		expect(persisted).toEqual(before);
 		expect(revision).toBe(beforeRev);
 	});

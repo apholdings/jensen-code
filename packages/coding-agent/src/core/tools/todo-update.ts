@@ -101,15 +101,9 @@ export function createTodoUpdateTool(
 			// Check stale revision
 			const currentRevision = getRevision();
 			if (expectedRevision !== currentRevision) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: `Error: stale revision. Expected revision ${expectedRevision} but current is ${currentRevision}. Call todo_read to get the current state and retry.`,
-						},
-					],
-					details: { staleRevision: true, expected: expectedRevision, current: currentRevision },
-				};
+				throw new Error(
+					`Stale revision. Expected revision ${expectedRevision} but current is ${currentRevision}. Call todo_read to get the current state and retry.`,
+				);
 			}
 
 			// Check loop guard
