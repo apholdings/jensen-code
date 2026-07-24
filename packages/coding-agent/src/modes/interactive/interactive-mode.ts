@@ -1494,6 +1494,9 @@ export class InteractiveMode {
 
 		const channel = this.settingsManager.getReleaseChannel();
 
+		// Invalid/unknown channel: fail closed, no registry query
+		if (channel === undefined) return undefined;
+
 		try {
 			const response = await fetch(`https://registry.npmjs.org/${PACKAGE_NAME}/${channel}`, {
 				signal: AbortSignal.timeout(10000),
@@ -1507,7 +1510,6 @@ export class InteractiveMode {
 			if (!remoteVersion) return undefined;
 
 			// Rule U01: show update only when remote > current (semver)
-			// Rule U06: if channel is unknown, settings default to "latest" which is a safe fallback
 			if (semverGt(remoteVersion, this.version)) {
 				return remoteVersion;
 			}
@@ -4315,6 +4317,7 @@ export class InteractiveMode {
 	showNewVersionNotification(newVersion: string, ownerEpoch?: number): void {
 		if (ownerEpoch !== undefined && this.sessionEpoch !== ownerEpoch) return;
 		const channel = this.settingsManager.getReleaseChannel();
+		if (channel === undefined) return;
 		const action = theme.fg("accent", getUpdateInstruction(PACKAGE_NAME, channel));
 		const updateInstruction = theme.fg("muted", `New version ${newVersion} is available. `) + action;
 		const changelogUrl = theme.fg(

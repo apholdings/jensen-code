@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ReleaseChannel } from "../../config.js";
 import { getUpdateInstruction, semverGt } from "../../config.js";
 import { SettingsManager } from "../../core/settings-manager.js";
 import { InteractiveMode } from "./interactive-mode.js";
@@ -17,7 +18,7 @@ vi.mock("../../config.js", async () => {
 // =============================================================================
 
 describe("semverGt", () => {
-	it("VU01-VU05: numeric semantic ordering", () => {
+	it("VU11: numeric semantic ordering", () => {
 		// patch comparison
 		expect(semverGt("1.1.10", "1.1.9")).toBe(true);
 		expect(semverGt("1.1.9", "1.1.10")).toBe(false);
@@ -31,12 +32,12 @@ describe("semverGt", () => {
 		expect(semverGt("1.99.99", "2.0.0")).toBe(false);
 	});
 
-	it("VU06: remote older - 1.2.0 > 1.10.0", () => {
+	it("VU11: remote older - 1.2.0 < 1.10.0", () => {
 		expect(semverGt("1.10.0", "1.2.0")).toBe(true);
 		expect(semverGt("1.2.0", "1.10.0")).toBe(false);
 	});
 
-	it("VU07: equal versions produce false", () => {
+	it("equal versions produce false", () => {
 		expect(semverGt("1.1.8", "1.1.8")).toBe(false);
 		expect(semverGt("2.0.0", "2.0.0")).toBe(false);
 	});
@@ -69,16 +70,14 @@ describe("getUpdateInstruction", () => {
 	});
 
 	it("VU04: latest channel omits tag", () => {
-		// By convention, latest channel shows the untagged command
 		const instruction = getUpdateInstruction("@apholdings/jensen-code", "latest");
 		expect(instruction).toContain("npm install -g @apholdings/jensen-code");
 		expect(instruction).not.toContain("@latest");
 	});
 
-	it("no channel defaults to no tag", () => {
+	it("no channel argument produces untagged command", () => {
 		const instruction = getUpdateInstruction("@apholdings/jensen-code");
 		expect(instruction).toContain("npm install -g @apholdings/jensen-code");
-		// The @ is from the scoped package name, not a dist-tag
 		expect(instruction).not.toContain("@latest");
 		expect(instruction).not.toContain("@fork");
 	});
@@ -89,7 +88,7 @@ describe("getUpdateInstruction", () => {
 // =============================================================================
 
 describe("isDevMode", () => {
-	it("VU08: returns true when running from source (src/ exists)", async () => {
+	it("VU09: returns true when running from source (src/ exists)", async () => {
 		// The mock overrides isDevMode, so import the real implementation
 		const actual = await vi.importActual<typeof import("../../config.js")>("../../config.js");
 		expect(actual.isDevMode()).toBe(true);
@@ -97,22 +96,24 @@ describe("isDevMode", () => {
 });
 
 // =============================================================================
-// VU: releaseChannel setting
+// VU: releaseChannel resolution
 // =============================================================================
 
 describe("SettingsManager releaseChannel", () => {
-	it("defaults to latest", () => {
-		const sm = SettingsManager.inMemory({});
-		expect(sm.getReleaseChannel()).toBe("latest");
+	afterEach(() => {
+		delete process.env.PI_RELEASE_CHANNEL;
+		delete process.env.JENSEN_RELEASE_CHANNEL;
 	});
 
-	it("reads from settings", () => {
-		const sm = SettingsManager.inMemory({ releaseChannel: "fork" });
+	// VU01 + VU08: default is fork (Apholdings fork default)
+	it("VU01, VU08: defaults to fork when no env or persisted override", () => {
+		const sm = SettingsManager.inMemory({});
 		expect(sm.getReleaseChannel()).toBe("fork");
 	});
 
-	it("reads from PI_RELEASE_CHANNEL env var", () => {
-		const sm = SettingsManager.inMemory({ releaseChannel: "latest" });
+	// VU03: explicit fork via env
+	it("VU03: explicit fork via PI_RELEASE_CHANNEL env", () => {
+		const sm = SettingsManager.inMemory({});
 		try {
 			process.env.PI_RELEASE_CHANNEL = "fork";
 			expect(sm.getReleaseChannel()).toBe("fork");
@@ -121,9 +122,71 @@ describe("SettingsManager releaseChannel", () => {
 		}
 	});
 
-	it("VU11: unknown/non-existent channel falls back to latest", () => {
-		const sm = SettingsManager.inMemory({});
-		expect(sm.getReleaseChannel()).toBe("latest");
+	// VU04: explicit latest via env
+	it("VU04: explicit latest via PI_RELEASE_CHANNEL env", () => {
+		const sm = SettingsManager.inMemory({ releaseChannel: "fork" });
+		try {
+			process.env.PI_RELEASE_CHANNEL = "latest";
+			expect(sm.getReleaseChannel()).toBe("latest");
+		} finally {
+			delete process.env.PI_RELEASE_CHANNEL;
+		}
+	});
+
+	// VU05: persisted fork
+	it("VU05: persisted releaseChannel=fork honored when no env", () => {
+		const sm = SettingsManager.inMemory({ releaseChannel: "fork" });
+		expect(sm.getReleaseChannel()).toBe("fork");
+	});
+
+	// VU06: invalid env override fails closed, does NOT fall through to persisted
+	it("VU06: invalid env override (unknown) fails closed, ignores persisted fork", () => {
+		const sm = SettingsManager.inMemory({ releaseChannel: "fork" });
+		try {
+			process.env.PI_RELEASE_CHANNEL = "unknown";
+			expect(sm.getReleaseChannel()).toBeUndefined();
+		} finally {
+			delete process.env.PI_RELEASE_CHANNEL;
+		}
+	});
+
+	// Also test empty string env
+	it("VU06: empty string env override fails closed", () => {
+		const sm = SettingsManager.inMemory({ releaseChannel: "fork" });
+		try {
+			process.env.PI_RELEASE_CHANNEL = "";
+			expect(sm.getReleaseChannel()).toBeUndefined();
+		} finally {
+			delete process.env.PI_RELEASE_CHANNEL;
+		}
+	});
+
+	// Also test beta env
+	it("VU06: unsupported channel env (beta) fails closed", () => {
+		const sm = SettingsManager.inMemory({ releaseChannel: "fork" });
+		try {
+			process.env.PI_RELEASE_CHANNEL = "beta";
+			expect(sm.getReleaseChannel()).toBeUndefined();
+		} finally {
+			delete process.env.PI_RELEASE_CHANNEL;
+		}
+	});
+
+	// VU07: invalid persisted setting fails closed
+	it("VU07: invalid persisted releaseChannel fails closed, no fallback", () => {
+		const sm = SettingsManager.inMemory({ releaseChannel: "unknown" as ReleaseChannel });
+		expect(sm.getReleaseChannel()).toBeUndefined();
+	});
+
+	// Env takes precedence over persisted
+	it("JENSEN_RELEASE_CHANNEL env var honored", () => {
+		const sm = SettingsManager.inMemory({ releaseChannel: "fork" });
+		try {
+			process.env.JENSEN_RELEASE_CHANNEL = "latest";
+			expect(sm.getReleaseChannel()).toBe("latest");
+		} finally {
+			delete process.env.JENSEN_RELEASE_CHANNEL;
+		}
 	});
 });
 
@@ -144,16 +207,18 @@ describe("checkForNewVersion", () => {
 		originalFetch = global.fetch;
 		fetchSpy = vi.fn();
 		global.fetch = fetchSpy;
+		delete process.env.PI_RELEASE_CHANNEL;
+		delete process.env.JENSEN_RELEASE_CHANNEL;
 	});
 
 	afterEach(() => {
 		global.fetch = originalFetch;
 		delete process.env.PI_RELEASE_CHANNEL;
+		delete process.env.JENSEN_RELEASE_CHANNEL;
 	});
 
-	function createHarness(settings: { releaseChannel?: string } = {}): CheckHarness {
+	function createHarness(settings: { releaseChannel?: ReleaseChannel } = {}): CheckHarness {
 		const sm = SettingsManager.inMemory(settings);
-		// settingsManager is a private getter that delegates to this.session.settingsManager
 		const mockSession = { settingsManager: sm };
 		return Object.assign(Object.create(InteractiveMode.prototype), {
 			version: "1.1.8",
@@ -161,8 +226,9 @@ describe("checkForNewVersion", () => {
 		}) as CheckHarness;
 	}
 
-	it("VU01: reported incident - fork channel, current == remote, no update", async () => {
-		const mode = createHarness({ releaseChannel: "fork" });
+	// VU01: The initial reported incident — default fork channel, current == remote
+	it("VU01: reported incident - fork default, current == fork remote, no update", async () => {
+		const mode = createHarness({});
 		mode.version = "1.1.8";
 
 		fetchSpy.mockResolvedValue({
@@ -178,7 +244,26 @@ describe("checkForNewVersion", () => {
 		);
 	});
 
-	it("VU03: real fork update - current < fork remote", async () => {
+	// VU02: Future default fork update
+	it("VU02: future fork update - default channel, current < fork remote", async () => {
+		const mode = createHarness({});
+		mode.version = "1.1.8";
+
+		fetchSpy.mockResolvedValue({
+			ok: true,
+			json: async () => ({ version: "1.1.9" }),
+		});
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBe("1.1.9");
+		expect(fetchSpy).toHaveBeenCalledWith(
+			expect.stringContaining("/@apholdings/jensen-code/fork"),
+			expect.any(Object),
+		);
+	});
+
+	// VU03: Explicit fork channel
+	it("VU03: explicit fork via persisted, current < remote → update shown", async () => {
 		const mode = createHarness({ releaseChannel: "fork" });
 		mode.version = "1.1.7";
 
@@ -195,19 +280,22 @@ describe("checkForNewVersion", () => {
 		);
 	});
 
-	it("VU03: future fork update - current < remote", async () => {
-		const mode = createHarness({ releaseChannel: "fork" });
-		mode.version = "1.1.8";
+	it("VU03: explicit fork via env, current < remote → update shown", async () => {
+		process.env.PI_RELEASE_CHANNEL = "fork";
+		const mode = createHarness({});
+		mode.version = "1.1.7";
 
 		fetchSpy.mockResolvedValue({
 			ok: true,
-			json: async () => ({ version: "1.1.9" }),
+			json: async () => ({ version: "1.1.8" }),
 		});
 
 		const result = await mode.checkForNewVersion();
-		expect(result).toBe("1.1.9");
+		expect(result).toBe("1.1.8");
+		delete process.env.PI_RELEASE_CHANNEL;
 	});
 
+	// VU04: Explicit latest channel
 	it("VU04: latest channel with real update", async () => {
 		const mode = createHarness({ releaseChannel: "latest" });
 		mode.version = "1.1.5";
@@ -225,7 +313,157 @@ describe("checkForNewVersion", () => {
 		);
 	});
 
-	it("VU05: numeric semantic ordering - 1.1.10 > 1.1.9", async () => {
+	// VU06: Invalid environment override — fail closed
+	it("VU06: invalid env (unknown) → no registry query, no update", async () => {
+		process.env.PI_RELEASE_CHANNEL = "unknown";
+		const mode = createHarness({});
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBeUndefined();
+		expect(fetchSpy).not.toHaveBeenCalled();
+		delete process.env.PI_RELEASE_CHANNEL;
+	});
+
+	it("VU06: invalid env (shell metacharacters) → no registry query", async () => {
+		process.env.PI_RELEASE_CHANNEL = "latest;rm";
+		const mode = createHarness({});
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBeUndefined();
+		expect(fetchSpy).not.toHaveBeenCalled();
+		delete process.env.PI_RELEASE_CHANNEL;
+	});
+
+	it("VU13: env containing slash rejected", async () => {
+		process.env.PI_RELEASE_CHANNEL = "fork/evil";
+		const mode = createHarness({});
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBeUndefined();
+		expect(fetchSpy).not.toHaveBeenCalled();
+		delete process.env.PI_RELEASE_CHANNEL;
+	});
+
+	it("VU13: env containing @ rejected", async () => {
+		process.env.PI_RELEASE_CHANNEL = "@latest";
+		const mode = createHarness({});
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBeUndefined();
+		expect(fetchSpy).not.toHaveBeenCalled();
+		delete process.env.PI_RELEASE_CHANNEL;
+	});
+
+	it("VU13: env containing space rejected", async () => {
+		process.env.PI_RELEASE_CHANNEL = "fork latest";
+		const mode = createHarness({});
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBeUndefined();
+		expect(fetchSpy).not.toHaveBeenCalled();
+		delete process.env.PI_RELEASE_CHANNEL;
+	});
+
+	it("VU13: env containing newline rejected", async () => {
+		process.env.PI_RELEASE_CHANNEL = "fork\nlatest";
+		const mode = createHarness({});
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBeUndefined();
+		expect(fetchSpy).not.toHaveBeenCalled();
+		delete process.env.PI_RELEASE_CHANNEL;
+	});
+
+	// VU07: Invalid persisted setting — fail closed
+	it("VU07: invalid persisted releaseChannel → no registry query", async () => {
+		const mode = createHarness({ releaseChannel: "unknown" as ReleaseChannel });
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBeUndefined();
+		expect(fetchSpy).not.toHaveBeenCalled();
+	});
+
+	// VU09: Development/source mode
+	it("VU09: dev mode always returns undefined, no fetch", async () => {
+		const { isDevMode: isDevModeMock } = await import("../../config.js");
+		(isDevModeMock as ReturnType<typeof vi.fn>).mockReturnValue(true);
+
+		try {
+			const mode = createHarness({});
+
+			fetchSpy.mockResolvedValue({
+				ok: true,
+				json: async () => ({ version: "9.9.9" }),
+			});
+
+			const result = await mode.checkForNewVersion();
+			expect(result).toBeUndefined();
+			expect(fetchSpy).not.toHaveBeenCalled();
+		} finally {
+			(isDevModeMock as ReturnType<typeof vi.fn>).mockReturnValue(false);
+		}
+	});
+
+	// VU10: Registry failures
+	it("VU10: registry error (non-ok response) - no update, no crash", async () => {
+		const mode = createHarness({});
+
+		fetchSpy.mockResolvedValue({
+			ok: false,
+			status: 500,
+		});
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBeUndefined();
+	});
+
+	it("VU10: registry timeout (fetch throws) - no update, no crash", async () => {
+		const mode = createHarness({});
+
+		fetchSpy.mockRejectedValue(new Error("timeout"));
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBeUndefined();
+	});
+
+	it("VU10: missing version field - no update", async () => {
+		const mode = createHarness({});
+
+		fetchSpy.mockResolvedValue({
+			ok: true,
+			json: async () => ({ name: "some-package" }),
+		});
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBeUndefined();
+	});
+
+	it("VU10: malformed version field - no update", async () => {
+		const mode = createHarness({});
+
+		fetchSpy.mockResolvedValue({
+			ok: true,
+			json: async () => ({ version: "not-a-version" }),
+		});
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBeUndefined();
+	});
+
+	it("VU10: null version field - no update", async () => {
+		const mode = createHarness({});
+
+		fetchSpy.mockResolvedValue({
+			ok: true,
+			json: async () => ({ version: null }),
+		});
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBeUndefined();
+	});
+
+	// VU11: Semantic ordering
+	it("VU11: 1.1.10 > 1.1.9 produces update", async () => {
 		const mode = createHarness({ releaseChannel: "latest" });
 		mode.version = "1.1.9";
 
@@ -238,7 +476,20 @@ describe("checkForNewVersion", () => {
 		expect(result).toBe("1.1.10");
 	});
 
-	it("VU06: remote older - no update", async () => {
+	it("VU11: 1.10.0 > 1.9.9 produces update", async () => {
+		const mode = createHarness({ releaseChannel: "latest" });
+		mode.version = "1.9.9";
+
+		fetchSpy.mockResolvedValue({
+			ok: true,
+			json: async () => ({ version: "1.10.0" }),
+		});
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBe("1.10.0");
+	});
+
+	it("VU11: 1.2.0 < 1.10.0 produces no update", async () => {
 		const mode = createHarness({ releaseChannel: "latest" });
 		mode.version = "1.10.0";
 
@@ -251,7 +502,7 @@ describe("checkForNewVersion", () => {
 		expect(result).toBeUndefined();
 	});
 
-	it("VU07: equal versions - no update", async () => {
+	it("VU11: equal versions produce no update", async () => {
 		const mode = createHarness({ releaseChannel: "latest" });
 		mode.version = "1.1.6";
 
@@ -264,93 +515,20 @@ describe("checkForNewVersion", () => {
 		expect(result).toBeUndefined();
 	});
 
-	it("VU09: registry error (non-ok response) - no update, no crash", async () => {
-		const mode = createHarness({ releaseChannel: "latest" });
-
-		fetchSpy.mockResolvedValue({
-			ok: false,
-			status: 500,
-		});
-
-		const result = await mode.checkForNewVersion();
-		expect(result).toBeUndefined();
-	});
-
-	it("VU09: registry timeout (fetch throws) - no update, no crash", async () => {
-		const mode = createHarness({ releaseChannel: "latest" });
-
-		fetchSpy.mockRejectedValue(new Error("timeout"));
-
-		const result = await mode.checkForNewVersion();
-		expect(result).toBeUndefined();
-	});
-
-	it("VU10: missing version field - no update", async () => {
-		const mode = createHarness({ releaseChannel: "latest" });
-
-		fetchSpy.mockResolvedValue({
-			ok: true,
-			json: async () => ({ name: "some-package" }), // no version field
-		});
-
-		const result = await mode.checkForNewVersion();
-		expect(result).toBeUndefined();
-	});
-
-	it("VU10: malformed version field - no update", async () => {
-		const mode = createHarness({ releaseChannel: "latest" });
-
-		fetchSpy.mockResolvedValue({
-			ok: true,
-			json: async () => ({ version: "not-a-version" }),
-		});
-
-		const result = await mode.checkForNewVersion();
-		expect(result).toBeUndefined();
-	});
-
-	it("VU10: null version field - no update", async () => {
-		const mode = createHarness({ releaseChannel: "latest" });
-
-		fetchSpy.mockResolvedValue({
-			ok: true,
-			json: async () => ({ version: null }),
-		});
-
-		const result = await mode.checkForNewVersion();
-		expect(result).toBeUndefined();
-	});
-
-	it("VU08: dev mode always returns undefined regardless of registry", async () => {
-		// isDevMode is mocked to return false globally; override for this test
-		const { isDevMode: isDevModeMock } = await import("../../config.js");
-		(isDevModeMock as ReturnType<typeof vi.fn>).mockReturnValue(true);
-
-		const mode = createHarness({ releaseChannel: "latest" });
-
-		fetchSpy.mockResolvedValue({
-			ok: true,
-			json: async () => ({ version: "9.9.9" }),
-		});
-
-		const result = await mode.checkForNewVersion();
-		expect(result).toBeUndefined();
-		// fetch should not even be called since dev mode returns early
-		expect(fetchSpy).not.toHaveBeenCalled();
-	});
-
-	it("VU02: fork update command contains @fork", () => {
+	// VU12: Command integrity
+	it("VU12: fork update command contains @fork", () => {
 		const instruction = getUpdateInstruction("@apholdings/jensen-code", "fork");
 		expect(instruction).toContain("@fork");
+		expect(instruction).toContain("npm install -g");
 	});
 
-	it("reported incident regression: 1.1.8 on fork vs 1.1.6 on latest", async () => {
-		// This is the exact scenario from the defect: fork user running 1.1.8,
-		// latest dist-tag is 1.1.6. The code must not compare against latest.
-		const mode = createHarness({ releaseChannel: "fork" });
+	// Regression: reported incident exact scenario
+	it("regression: 1.1.8 on fork vs stale 1.1.6 on latest", async () => {
+		// fork user running 1.1.8, latest dist-tag is 1.1.6.
+		// Default channel must be fork, so we never see latest's stale version.
+		const mode = createHarness({});
 		mode.version = "1.1.8";
 
-		// Simulate fork dist-tag returning 1.1.8 (same as current)
 		fetchSpy.mockResolvedValue({
 			ok: true,
 			json: async () => ({ version: "1.1.8" }),
@@ -358,10 +536,15 @@ describe("checkForNewVersion", () => {
 
 		const result = await mode.checkForNewVersion();
 		expect(result).toBeUndefined();
+		// Must have queried fork, not latest
+		expect(fetchSpy).toHaveBeenCalledWith(
+			expect.stringContaining("/@apholdings/jensen-code/fork"),
+			expect.any(Object),
+		);
 	});
 
 	it("PI_SKIP_VERSION_CHECK suppresses check", async () => {
-		const mode = createHarness({ releaseChannel: "latest" });
+		const mode = createHarness({});
 		process.env.PI_SKIP_VERSION_CHECK = "1";
 
 		const result = await mode.checkForNewVersion();
@@ -371,7 +554,7 @@ describe("checkForNewVersion", () => {
 	});
 
 	it("PI_OFFLINE suppresses check", async () => {
-		const mode = createHarness({ releaseChannel: "latest" });
+		const mode = createHarness({});
 		process.env.PI_OFFLINE = "1";
 
 		const result = await mode.checkForNewVersion();

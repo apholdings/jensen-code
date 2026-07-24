@@ -2,7 +2,8 @@ import type { Transport } from "@apholdings/jensen-ai";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
-import { CONFIG_DIR_NAME, getAgentDir } from "../config.js";
+import type { ReleaseChannel } from "../config.js";
+import { CONFIG_DIR_NAME, getAgentDir, getReleaseChannelEnv, resolveReleaseChannel } from "../config.js";
 import type { ToolName } from "./tools/index.js";
 
 export interface CompactionSettings {
@@ -116,7 +117,7 @@ export interface Settings {
 	markdown?: MarkdownSettings;
 	editorBackground?: EditorBackgroundSettings; // Optional override for editor/prompt background
 	tools?: ToolsSettings; // Tool-related settings
-	releaseChannel?: string; // npm dist-tag for update checking (default: "latest")
+	releaseChannel?: ReleaseChannel; // npm dist-tag for update checking (default: "fork")
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -969,13 +970,22 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getReleaseChannel(): string {
-		const env = process.env.PI_RELEASE_CHANNEL;
-		if (env) return env;
-		return this.settings.releaseChannel ?? "latest";
+	getReleaseChannel(): ReleaseChannel | undefined {
+		const env = getReleaseChannelEnv();
+		if (env !== undefined) {
+			// Explicit env override: validate; do not fall through to persisted setting
+			return resolveReleaseChannel(env);
+		}
+		const persisted = this.settings.releaseChannel;
+		if (persisted !== undefined) {
+			// Explicit persisted setting: validate; do not fall through to default
+			return resolveReleaseChannel(persisted);
+		}
+		// Neither env nor persisted: default for Apholdings fork
+		return "fork";
 	}
 
-	setReleaseChannel(channel: string): void {
+	setReleaseChannel(channel: ReleaseChannel): void {
 		this.globalSettings.releaseChannel = channel;
 		this.markModified("releaseChannel");
 		this.save();

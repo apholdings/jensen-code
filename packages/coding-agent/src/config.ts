@@ -85,12 +85,33 @@ export function semverGt(a: string, b: string): boolean {
 // Release Channel
 // =============================================================================
 
+/** Supported npm dist-tag channels for the Apholdings Jensen Code fork. */
+export const VALID_RELEASE_CHANNELS = ["fork", "latest"] as const;
+export type ReleaseChannel = (typeof VALID_RELEASE_CHANNELS)[number];
+
 /**
  * Get the release channel from environment variable.
- * Returns undefined if not set, falling back to the settings value.
+ * Returns undefined if not set.
  */
 export function getReleaseChannelEnv(): string | undefined {
 	return process.env[`${ENV_PREFIX}_RELEASE_CHANNEL`] || process.env.PI_RELEASE_CHANNEL;
+}
+
+/**
+ * Resolve a raw release channel value to a valid ReleaseChannel or undefined.
+ *
+ * When explicitValue is undefined (neither env nor persisted setting is set),
+ * this Apholdings fork defaults to "fork".
+ *
+ * An explicit but invalid value returns undefined (fail-closed).  The caller
+ * must not fall through to another channel source.
+ */
+export function resolveReleaseChannel(explicitValue: string | undefined): ReleaseChannel | undefined {
+	if (explicitValue === undefined) return "fork";
+	if ((VALID_RELEASE_CHANNELS as readonly string[]).includes(explicitValue)) {
+		return explicitValue as ReleaseChannel;
+	}
+	return undefined;
 }
 
 // =============================================================================
@@ -122,7 +143,7 @@ export function detectInstallMethod(): InstallMethod {
 	return "unknown";
 }
 
-export function getUpdateInstruction(packageName: string, channel?: string): string {
+export function getUpdateInstruction(packageName: string, channel?: ReleaseChannel): string {
 	const method = detectInstallMethod();
 	const tag = channel && channel !== "latest" ? `@${channel}` : "";
 	switch (method) {
