@@ -44,7 +44,9 @@ import {
 	getDebugLogPath,
 	getShareViewerUrl,
 	getUpdateInstruction,
+	isDevMode,
 	PACKAGE_NAME,
+	semverGt,
 	VERSION,
 } from "../../config.js";
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.js";
@@ -1481,22 +1483,33 @@ export class InteractiveMode {
 	}
 
 	/**
-	 * Check npm registry for a newer version.
+	 * Check npm registry for a newer version on the active release channel.
+	 * Suppressed in development/source mode and when the version check is skipped.
 	 */
 	private async checkForNewVersion(): Promise<string | undefined> {
 		if (process.env.PI_SKIP_VERSION_CHECK || process.env.PI_OFFLINE) return undefined;
 
+		// Rule U04: suppress update notice in development/source mode
+		if (isDevMode()) return undefined;
+
+		const channel = this.settingsManager.getReleaseChannel();
+
 		try {
-			const response = await fetch(`https://registry.npmjs.org/${PACKAGE_NAME}/latest`, {
+			const response = await fetch(`https://registry.npmjs.org/${PACKAGE_NAME}/${channel}`, {
 				signal: AbortSignal.timeout(10000),
 			});
 			if (!response.ok) return undefined;
 
 			const data = (await response.json()) as { version?: string };
-			const latestVersion = data.version;
+			const remoteVersion = data.version;
 
-			if (latestVersion && latestVersion !== this.version) {
-				return latestVersion;
+			// Rule U05: missing or malformed version is non-authoritative
+			if (!remoteVersion) return undefined;
+
+			// Rule U01: show update only when remote > current (semver)
+			// Rule U06: if channel is unknown, settings default to "latest" which is a safe fallback
+			if (semverGt(remoteVersion, this.version)) {
+				return remoteVersion;
 			}
 
 			return undefined;
@@ -4301,7 +4314,8 @@ export class InteractiveMode {
 
 	showNewVersionNotification(newVersion: string, ownerEpoch?: number): void {
 		if (ownerEpoch !== undefined && this.sessionEpoch !== ownerEpoch) return;
-		const action = theme.fg("accent", getUpdateInstruction(PACKAGE_NAME));
+		const channel = this.settingsManager.getReleaseChannel();
+		const action = theme.fg("accent", getUpdateInstruction(PACKAGE_NAME, channel));
 		const updateInstruction = theme.fg("muted", `New version ${newVersion} is available. `) + action;
 		const changelogUrl = theme.fg(
 			"accent",

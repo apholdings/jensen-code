@@ -50,6 +50,50 @@ export const FILE_PREFIX: string = APP_NAME.toLowerCase().replace(/\s+/g, "-");
 export const ENV_PREFIX: string = APP_NAME.toUpperCase().replace(/\s+/g, "_");
 
 // =============================================================================
+// Development Mode Detection
+// =============================================================================
+
+/**
+ * Detect if we're running from source (development mode) rather than an installed package.
+ * True when the package directory contains a `src/` directory (i.e., a development checkout).
+ */
+export function isDevMode(): boolean {
+	return existsSync(join(PACKAGE_DIR, "src"));
+}
+
+// =============================================================================
+// Version Comparison
+// =============================================================================
+
+/**
+ * Compare two semver strings. Returns true if a > b using semantic version ordering.
+ * Supports major.minor.patch format. Malformed versions compare as equal.
+ */
+export function semverGt(a: string, b: string): boolean {
+	const aParts = a.split(".").map(Number);
+	const bParts = b.split(".").map(Number);
+	for (let i = 0; i < 3; i++) {
+		const av = aParts[i] ?? 0;
+		const bv = bParts[i] ?? 0;
+		if (Number.isNaN(av) || Number.isNaN(bv)) return false;
+		if (av !== bv) return av > bv;
+	}
+	return false;
+}
+
+// =============================================================================
+// Release Channel
+// =============================================================================
+
+/**
+ * Get the release channel from environment variable.
+ * Returns undefined if not set, falling back to the settings value.
+ */
+export function getReleaseChannelEnv(): string | undefined {
+	return process.env[`${ENV_PREFIX}_RELEASE_CHANNEL`] || process.env.PI_RELEASE_CHANNEL;
+}
+
+// =============================================================================
 // Install Method Detection
 // =============================================================================
 
@@ -78,21 +122,22 @@ export function detectInstallMethod(): InstallMethod {
 	return "unknown";
 }
 
-export function getUpdateInstruction(packageName: string): string {
+export function getUpdateInstruction(packageName: string, channel?: string): string {
 	const method = detectInstallMethod();
+	const tag = channel && channel !== "latest" ? `@${channel}` : "";
 	switch (method) {
 		case "bun-binary":
 			return `Download from: https://github.com/apholdings/jensen-code/releases/latest`;
 		case "pnpm":
-			return `Run: pnpm install -g ${packageName}`;
+			return `Run: pnpm install -g ${packageName}${tag}`;
 		case "yarn":
-			return `Run: yarn global add ${packageName}`;
+			return `Run: yarn global add ${packageName}${tag}`;
 		case "bun":
-			return `Run: bun install -g ${packageName}`;
+			return `Run: bun install -g ${packageName}${tag}`;
 		case "npm":
-			return `Run: npm install -g ${packageName}`;
+			return `Run: npm install -g ${packageName}${tag}`;
 		default:
-			return `Run: npm install -g ${packageName}`;
+			return `Run: npm install -g ${packageName}${tag}`;
 	}
 }
 

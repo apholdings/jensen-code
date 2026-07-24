@@ -116,6 +116,7 @@ export interface Settings {
 	markdown?: MarkdownSettings;
 	editorBackground?: EditorBackgroundSettings; // Optional override for editor/prompt background
 	tools?: ToolsSettings; // Tool-related settings
+	releaseChannel?: string; // npm dist-tag for update checking (default: "latest")
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -965,6 +966,18 @@ export class SettingsManager {
 	setDoubleEscapeAction(action: "fork" | "tree" | "none"): void {
 		this.globalSettings.doubleEscapeAction = action;
 		this.markModified("doubleEscapeAction");
+		this.save();
+	}
+
+	getReleaseChannel(): string {
+		const env = process.env.PI_RELEASE_CHANNEL;
+		if (env) return env;
+		return this.settings.releaseChannel ?? "latest";
+	}
+
+	setReleaseChannel(channel: string): void {
+		this.globalSettings.releaseChannel = channel;
+		this.markModified("releaseChannel");
 		this.save();
 	}
 
