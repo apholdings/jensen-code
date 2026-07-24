@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.9
+
+### Patch Changes
+
+- Updated dependencies [1419cfb]
+  - @apholdings/jensen-code@1.1.9
+  - @apholdings/jensen-agent-core@1.1.9
+  - @apholdings/jensen-ai@1.1.9
+
 ## 1.1.8
 
 ### Patch Changes
