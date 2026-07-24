@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReleaseChannel } from "../../config.js";
-import { getUpdateInstruction, semverGt } from "../../config.js";
+import { getUpdateInstruction, parseStrictStableVersion, semverGt } from "../../config.js";
 import { SettingsManager } from "../../core/settings-manager.js";
 import { InteractiveMode } from "./interactive-mode.js";
 
@@ -42,15 +42,100 @@ describe("semverGt", () => {
 		expect(semverGt("2.0.0", "2.0.0")).toBe(false);
 	});
 
-	it("handles short versions", () => {
-		expect(semverGt("2", "1")).toBe(true);
-		expect(semverGt("2.0", "2")).toBe(false);
+	it("rejects short versions (not strict semver)", () => {
+		expect(semverGt("2", "1.0.0")).toBe(false);
+		expect(semverGt("1.1", "1.1.0")).toBe(false);
+		expect(semverGt("1.0.0", "1.1")).toBe(false);
+	});
+
+	it("rejects extra version component", () => {
+		expect(semverGt("1.1.8.1", "1.1.8")).toBe(false);
+		expect(semverGt("1.1.8", "1.1.8.1")).toBe(false);
+	});
+
+	it("rejects leading zeros", () => {
+		expect(semverGt("01.1.9", "1.1.8")).toBe(false);
+		expect(semverGt("1.01.9", "1.1.8")).toBe(false);
+		expect(semverGt("1.1.09", "1.1.8")).toBe(false);
+	});
+
+	it("rejects prefixes and suffixes", () => {
+		expect(semverGt("v1.1.9", "1.1.8")).toBe(false);
+		expect(semverGt("1.1.9-beta.1", "1.1.8")).toBe(false);
+		expect(semverGt("1.1.9+build.1", "1.1.8")).toBe(false);
+	});
+
+	it("rejects whitespace-only and empty", () => {
+		expect(semverGt(" ", "1.0.0")).toBe(false);
+		expect(semverGt("1.0.0", " ")).toBe(false);
+		expect(semverGt("", "1.0.0")).toBe(false);
+		expect(semverGt("1.0.0", "")).toBe(false);
+		expect(semverGt("", "")).toBe(false);
 	});
 
 	it("handles malformed versions safely", () => {
 		expect(semverGt("abc", "1.0.0")).toBe(false);
 		expect(semverGt("1.0.0", "abc")).toBe(false);
-		expect(semverGt("", "")).toBe(false);
+	});
+});
+
+// =============================================================================
+// VER: parseStrictStableVersion
+// =============================================================================
+
+describe("parseStrictStableVersion", () => {
+	// Acceptance
+	it("VER01: accepts valid strict versions", () => {
+		expect(parseStrictStableVersion("0.0.0")).toEqual({ major: 0, minor: 0, patch: 0 });
+		expect(parseStrictStableVersion("0.1.0")).toEqual({ major: 0, minor: 1, patch: 0 });
+		expect(parseStrictStableVersion("1.1.8")).toEqual({ major: 1, minor: 1, patch: 8 });
+		expect(parseStrictStableVersion("1.1.10")).toEqual({ major: 1, minor: 1, patch: 10 });
+		expect(parseStrictStableVersion("10.20.30")).toEqual({ major: 10, minor: 20, patch: 30 });
+	});
+
+	// Rejection: missing components
+	it("VER03: rejects short versions", () => {
+		expect(parseStrictStableVersion("2")).toBeNull();
+		expect(parseStrictStableVersion("1.1")).toBeNull();
+	});
+
+	// Rejection: extra components
+	it("VER05: rejects extra version component", () => {
+		expect(parseStrictStableVersion("1.1.8.1")).toBeNull();
+	});
+
+	// Rejection: prefixes and suffixes
+	it("VER06: rejects 'v' prefix", () => {
+		expect(parseStrictStableVersion("v1.1.9")).toBeNull();
+	});
+
+	it("VER07: rejects prerelease", () => {
+		expect(parseStrictStableVersion("1.1.9-beta.1")).toBeNull();
+	});
+
+	it("rejects build metadata", () => {
+		expect(parseStrictStableVersion("1.1.9+build.1")).toBeNull();
+	});
+
+	// Rejection: leading zeros
+	it("VER08: rejects leading zeros", () => {
+		expect(parseStrictStableVersion("01.1.9")).toBeNull();
+		expect(parseStrictStableVersion("1.01.9")).toBeNull();
+		expect(parseStrictStableVersion("1.1.09")).toBeNull();
+	});
+
+	// Rejection: whitespace and empty
+	it("rejects whitespace and empty", () => {
+		expect(parseStrictStableVersion("")).toBeNull();
+		expect(parseStrictStableVersion(" ")).toBeNull();
+		expect(parseStrictStableVersion(" 1.1.8")).toBeNull();
+		expect(parseStrictStableVersion("1.1.8 ")).toBeNull();
+	});
+
+	// Rejection: signs
+	it("rejects signs", () => {
+		expect(parseStrictStableVersion("-1.1.0")).toBeNull();
+		expect(parseStrictStableVersion("+1.1.0")).toBeNull();
 	});
 });
 
@@ -187,6 +272,98 @@ describe("SettingsManager releaseChannel", () => {
 		} finally {
 			delete process.env.JENSEN_RELEASE_CHANNEL;
 		}
+	});
+
+	// ENV01: empty canonical env → invalid, no fallback
+	it("ENV01: empty JENSEN_RELEASE_CHANNEL, PI=fork, persisted=fork → invalid", () => {
+		const sm = SettingsManager.inMemory({ releaseChannel: "fork" });
+		try {
+			process.env.JENSEN_RELEASE_CHANNEL = "";
+			process.env.PI_RELEASE_CHANNEL = "fork";
+			expect(sm.getReleaseChannel()).toBeUndefined();
+		} finally {
+			delete process.env.JENSEN_RELEASE_CHANNEL;
+			delete process.env.PI_RELEASE_CHANNEL;
+		}
+	});
+
+	// ENV02: whitespace-only canonical env → invalid, no fallback
+	it("ENV02: whitespace JENSEN_RELEASE_CHANNEL, PI=fork → invalid", () => {
+		const sm = SettingsManager.inMemory({ releaseChannel: "fork" });
+		try {
+			process.env.JENSEN_RELEASE_CHANNEL = "   ";
+			process.env.PI_RELEASE_CHANNEL = "fork";
+			expect(sm.getReleaseChannel()).toBeUndefined();
+		} finally {
+			delete process.env.JENSEN_RELEASE_CHANNEL;
+			delete process.env.PI_RELEASE_CHANNEL;
+		}
+	});
+
+	// ENV03: empty legacy env → invalid, no fallback to persisted
+	it("ENV03: JENSEN absent, PI empty, persisted=fork → invalid", () => {
+		const sm = SettingsManager.inMemory({ releaseChannel: "fork" });
+		try {
+			process.env.PI_RELEASE_CHANNEL = "";
+			expect(sm.getReleaseChannel()).toBeUndefined();
+		} finally {
+			delete process.env.PI_RELEASE_CHANNEL;
+		}
+	});
+
+	// ENV04: invalid canonical wins over valid legacy
+	it("ENV04: invalid JENSEN_RELEASE_CHANNEL, valid PI → invalid, no fallback", () => {
+		const sm = SettingsManager.inMemory({ releaseChannel: "fork" });
+		try {
+			process.env.JENSEN_RELEASE_CHANNEL = "unknown";
+			process.env.PI_RELEASE_CHANNEL = "fork";
+			expect(sm.getReleaseChannel()).toBeUndefined();
+		} finally {
+			delete process.env.JENSEN_RELEASE_CHANNEL;
+			delete process.env.PI_RELEASE_CHANNEL;
+		}
+	});
+
+	// ENV05: JENSEN absent, PI=fork → fork
+	it("ENV05: JENSEN absent, PI=fork → fork", () => {
+		const sm = SettingsManager.inMemory({});
+		try {
+			process.env.PI_RELEASE_CHANNEL = "fork";
+			expect(sm.getReleaseChannel()).toBe("fork");
+		} finally {
+			delete process.env.PI_RELEASE_CHANNEL;
+		}
+	});
+
+	// ENV06: both env absent, persisted absent → fork
+	it("ENV06: both env absent, persisted absent → fork", () => {
+		const sm = SettingsManager.inMemory({});
+		expect(sm.getReleaseChannel()).toBe("fork");
+	});
+
+	// Canonical precedence: JENSEN=fork, PI=latest → fork
+	it("JENSEN_RELEASE_CHANNEL takes precedence over PI_RELEASE_CHANNEL", () => {
+		const sm = SettingsManager.inMemory({});
+		try {
+			process.env.JENSEN_RELEASE_CHANNEL = "fork";
+			process.env.PI_RELEASE_CHANNEL = "latest";
+			expect(sm.getReleaseChannel()).toBe("fork");
+		} finally {
+			delete process.env.JENSEN_RELEASE_CHANNEL;
+			delete process.env.PI_RELEASE_CHANNEL;
+		}
+	});
+
+	// All explicit sources absent → fork
+	it("all explicit sources absent → fork", () => {
+		const sm = SettingsManager.inMemory({});
+		expect(sm.getReleaseChannel()).toBe("fork");
+	});
+
+	// Persisted empty string → invalid (validated same as env)
+	it("persisted empty releaseChannel → invalid, no fallback", () => {
+		const sm = SettingsManager.inMemory({ releaseChannel: "" as ReleaseChannel });
+		expect(sm.getReleaseChannel()).toBeUndefined();
 	});
 });
 
@@ -541,6 +718,127 @@ describe("checkForNewVersion", () => {
 			expect.stringContaining("/@apholdings/jensen-code/fork"),
 			expect.any(Object),
 		);
+	});
+
+	// VER03: Short remote version → no update
+	it("VER03: short remote version '2' → no update", async () => {
+		const mode = createHarness({ releaseChannel: "latest" });
+
+		fetchSpy.mockResolvedValue({
+			ok: true,
+			json: async () => ({ version: "2" }),
+		});
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBeUndefined();
+	});
+
+	// VER04: Short current version → no update (production uses this.version)
+	it("VER04: short remote '1.1' → no update", async () => {
+		const mode = createHarness({ releaseChannel: "latest" });
+
+		fetchSpy.mockResolvedValue({
+			ok: true,
+			json: async () => ({ version: "1.1" }),
+		});
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBeUndefined();
+	});
+
+	// VER05: Extra component → no update
+	it("VER05: remote '1.1.8.1' with extra component → no update", async () => {
+		const mode = createHarness({ releaseChannel: "latest" });
+		mode.version = "1.1.8";
+
+		fetchSpy.mockResolvedValue({
+			ok: true,
+			json: async () => ({ version: "1.1.8.1" }),
+		});
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBeUndefined();
+	});
+
+	// VER06: 'v' prefix → no update
+	it("VER06: remote 'v1.1.9' → no update", async () => {
+		const mode = createHarness({ releaseChannel: "latest" });
+
+		fetchSpy.mockResolvedValue({
+			ok: true,
+			json: async () => ({ version: "v1.1.9" }),
+		});
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBeUndefined();
+	});
+
+	// VER07: prerelease → no update
+	it("VER07: remote '1.1.9-beta.1' → no update", async () => {
+		const mode = createHarness({ releaseChannel: "latest" });
+
+		fetchSpy.mockResolvedValue({
+			ok: true,
+			json: async () => ({ version: "1.1.9-beta.1" }),
+		});
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBeUndefined();
+	});
+
+	// VER08: leading zero → no update
+	it("VER08: remote '01.1.9' → no update", async () => {
+		const mode = createHarness({ releaseChannel: "latest" });
+
+		fetchSpy.mockResolvedValue({
+			ok: true,
+			json: async () => ({ version: "01.1.9" }),
+		});
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBeUndefined();
+	});
+
+	// VER09: Current version malformed, remote valid → no update
+	it("VER09: malformed current version, valid remote → no update", async () => {
+		const mode = createHarness({ releaseChannel: "latest" });
+		// Simulate a hypothetically corrupted current version
+		mode.version = "1.1";
+
+		fetchSpy.mockResolvedValue({
+			ok: true,
+			json: async () => ({ version: "1.2.0" }),
+		});
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBeUndefined();
+	});
+
+	// VER10: Equal and older versions → no update (valid case)
+	it("VER10: valid equal version → no update", async () => {
+		const mode = createHarness({ releaseChannel: "latest" });
+		mode.version = "1.1.8";
+
+		fetchSpy.mockResolvedValue({
+			ok: true,
+			json: async () => ({ version: "1.1.8" }),
+		});
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBeUndefined();
+	});
+
+	it("VER10: valid older remote → no update", async () => {
+		const mode = createHarness({ releaseChannel: "latest" });
+		mode.version = "1.2.0";
+
+		fetchSpy.mockResolvedValue({
+			ok: true,
+			json: async () => ({ version: "1.1.9" }),
+		});
+
+		const result = await mode.checkForNewVersion();
+		expect(result).toBeUndefined();
 	});
 
 	it("PI_SKIP_VERSION_CHECK suppresses check", async () => {

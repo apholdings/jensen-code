@@ -65,20 +65,53 @@ export function isDevMode(): boolean {
 // Version Comparison
 // =============================================================================
 
+/** Strict stable semver core: major.minor.patch with no leading zeros. */
+const STRICT_SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+
+export interface StrictVersion {
+	major: number;
+	minor: number;
+	patch: number;
+}
+
 /**
- * Compare two semver strings. Returns true if a > b using semantic version ordering.
- * Supports major.minor.patch format. Malformed versions compare as equal.
+ * Parse a strict stable semver core string.
+ *
+ * Accepts only the exact form major.minor.patch where each component is
+ * either the single digit 0 or a positive integer with no leading zero.
+ *
+ * Returns null for anything else, including:
+ *   - missing components ("2", "1.1")
+ *   - extra components ("1.1.8.1")
+ *   - leading zeros ("01.1.9")
+ *   - prefixes / suffixes ("v1.1.8", "1.1.8-beta.1", "1.1.8+build.1")
+ *   - whitespace, non-string types
+ */
+export function parseStrictStableVersion(version: string): StrictVersion | null {
+	if (typeof version !== "string") return null;
+	const match = version.match(STRICT_SEMVER_RE);
+	if (!match) return null;
+	return {
+		major: parseInt(match[1], 10),
+		minor: parseInt(match[2], 10),
+		patch: parseInt(match[3], 10),
+	};
+}
+
+/**
+ * Compare two version strings using strict stable semver ordering.
+ * Returns true if a > b.
+ *
+ * Malformed versions (anything other than major.minor.patch) are
+ * rejected and comparison returns false — no update is shown.
  */
 export function semverGt(a: string, b: string): boolean {
-	const aParts = a.split(".").map(Number);
-	const bParts = b.split(".").map(Number);
-	for (let i = 0; i < 3; i++) {
-		const av = aParts[i] ?? 0;
-		const bv = bParts[i] ?? 0;
-		if (Number.isNaN(av) || Number.isNaN(bv)) return false;
-		if (av !== bv) return av > bv;
-	}
-	return false;
+	const parsedA = parseStrictStableVersion(a);
+	const parsedB = parseStrictStableVersion(b);
+	if (!parsedA || !parsedB) return false;
+	if (parsedA.major !== parsedB.major) return parsedA.major > parsedB.major;
+	if (parsedA.minor !== parsedB.minor) return parsedA.minor > parsedB.minor;
+	return parsedA.patch > parsedB.patch;
 }
 
 // =============================================================================
@@ -91,10 +124,22 @@ export type ReleaseChannel = (typeof VALID_RELEASE_CHANNELS)[number];
 
 /**
  * Get the release channel from environment variable.
- * Returns undefined if not set.
+ *
+ * Uses own-property presence checks, not truthiness, to distinguish
+ * "absent" from "explicitly set to empty string".  An explicitly set
+ * empty variable is invalid configuration and must fail closed.
+ *
+ * Returns undefined when neither environment variable is present.
  */
 export function getReleaseChannelEnv(): string | undefined {
-	return process.env[`${ENV_PREFIX}_RELEASE_CHANNEL`] || process.env.PI_RELEASE_CHANNEL;
+	const jensenKey = `${ENV_PREFIX}_RELEASE_CHANNEL`;
+	if (jensenKey in process.env) {
+		return process.env[jensenKey];
+	}
+	if ("PI_RELEASE_CHANNEL" in process.env) {
+		return process.env.PI_RELEASE_CHANNEL;
+	}
+	return undefined;
 }
 
 /**
