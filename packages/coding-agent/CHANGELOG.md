@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.9
+
+### Patch Changes
+
+- 1419cfb: Fix update notifications to default safely to the fork release channel, use strict stable semver comparison, reject malformed registry versions, and fail closed on empty or invalid channel configuration (including explicitly empty environment variables).
+  - @apholdings/jensen-agent-core@1.1.9
+  - @apholdings/jensen-ai@1.1.9
+  - @apholdings/jensen-tui@1.1.9
+
 ## 1.1.8
 
 ### Patch Changes
