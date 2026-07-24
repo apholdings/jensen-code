@@ -50,6 +50,116 @@ export const FILE_PREFIX: string = APP_NAME.toLowerCase().replace(/\s+/g, "-");
 export const ENV_PREFIX: string = APP_NAME.toUpperCase().replace(/\s+/g, "_");
 
 // =============================================================================
+// Development Mode Detection
+// =============================================================================
+
+/**
+ * Detect if we're running from source (development mode) rather than an installed package.
+ * True when the package directory contains a `src/` directory (i.e., a development checkout).
+ */
+export function isDevMode(): boolean {
+	return existsSync(join(PACKAGE_DIR, "src"));
+}
+
+// =============================================================================
+// Version Comparison
+// =============================================================================
+
+/** Strict stable semver core: major.minor.patch with no leading zeros. */
+const STRICT_SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+
+export interface StrictVersion {
+	major: number;
+	minor: number;
+	patch: number;
+}
+
+/**
+ * Parse a strict stable semver core string.
+ *
+ * Accepts only the exact form major.minor.patch where each component is
+ * either the single digit 0 or a positive integer with no leading zero.
+ *
+ * Returns null for anything else, including:
+ *   - missing components ("2", "1.1")
+ *   - extra components ("1.1.8.1")
+ *   - leading zeros ("01.1.9")
+ *   - prefixes / suffixes ("v1.1.8", "1.1.8-beta.1", "1.1.8+build.1")
+ *   - whitespace, non-string types
+ */
+export function parseStrictStableVersion(version: string): StrictVersion | null {
+	if (typeof version !== "string") return null;
+	const match = version.match(STRICT_SEMVER_RE);
+	if (!match) return null;
+	return {
+		major: parseInt(match[1], 10),
+		minor: parseInt(match[2], 10),
+		patch: parseInt(match[3], 10),
+	};
+}
+
+/**
+ * Compare two version strings using strict stable semver ordering.
+ * Returns true if a > b.
+ *
+ * Malformed versions (anything other than major.minor.patch) are
+ * rejected and comparison returns false — no update is shown.
+ */
+export function semverGt(a: string, b: string): boolean {
+	const parsedA = parseStrictStableVersion(a);
+	const parsedB = parseStrictStableVersion(b);
+	if (!parsedA || !parsedB) return false;
+	if (parsedA.major !== parsedB.major) return parsedA.major > parsedB.major;
+	if (parsedA.minor !== parsedB.minor) return parsedA.minor > parsedB.minor;
+	return parsedA.patch > parsedB.patch;
+}
+
+// =============================================================================
+// Release Channel
+// =============================================================================
+
+/** Supported npm dist-tag channels for the Apholdings Jensen Code fork. */
+export const VALID_RELEASE_CHANNELS = ["fork", "latest"] as const;
+export type ReleaseChannel = (typeof VALID_RELEASE_CHANNELS)[number];
+
+/**
+ * Get the release channel from environment variable.
+ *
+ * Uses own-property presence checks, not truthiness, to distinguish
+ * "absent" from "explicitly set to empty string".  An explicitly set
+ * empty variable is invalid configuration and must fail closed.
+ *
+ * Returns undefined when neither environment variable is present.
+ */
+export function getReleaseChannelEnv(): string | undefined {
+	const jensenKey = `${ENV_PREFIX}_RELEASE_CHANNEL`;
+	if (jensenKey in process.env) {
+		return process.env[jensenKey];
+	}
+	if ("PI_RELEASE_CHANNEL" in process.env) {
+		return process.env.PI_RELEASE_CHANNEL;
+	}
+	return undefined;
+}
+
+/**
+ * Resolve a raw release channel value to a valid ReleaseChannel or undefined.
+ *
+ * When explicitValue is undefined (neither env nor persisted setting is set),
+ * this Apholdings fork defaults to "fork".
+ *
+ * An explicit but invalid value returns undefined (fail-closed).  The caller
+ * must not fall through to another channel source.
+ */
+export function resolveReleaseChannel(explicitValue: string | undefined): ReleaseChannel | undefined {
+	if (explicitValue === undefined) return "fork";
+	if ((VALID_RELEASE_CHANNELS as readonly string[]).includes(explicitValue)) {
+		return explicitValue as ReleaseChannel;
+	}
+	return undefined;
+}
+
+// =============================================================================
 // Install Method Detection
 // =============================================================================
 
@@ -78,21 +188,22 @@ export function detectInstallMethod(): InstallMethod {
 	return "unknown";
 }
 
-export function getUpdateInstruction(packageName: string): string {
+export function getUpdateInstruction(packageName: string, channel?: ReleaseChannel): string {
 	const method = detectInstallMethod();
+	const tag = channel && channel !== "latest" ? `@${channel}` : "";
 	switch (method) {
 		case "bun-binary":
 			return `Download from: https://github.com/apholdings/jensen-code/releases/latest`;
 		case "pnpm":
-			return `Run: pnpm install -g ${packageName}`;
+			return `Run: pnpm install -g ${packageName}${tag}`;
 		case "yarn":
-			return `Run: yarn global add ${packageName}`;
+			return `Run: yarn global add ${packageName}${tag}`;
 		case "bun":
-			return `Run: bun install -g ${packageName}`;
+			return `Run: bun install -g ${packageName}${tag}`;
 		case "npm":
-			return `Run: npm install -g ${packageName}`;
+			return `Run: npm install -g ${packageName}${tag}`;
 		default:
-			return `Run: npm install -g ${packageName}`;
+			return `Run: npm install -g ${packageName}${tag}`;
 	}
 }
 
