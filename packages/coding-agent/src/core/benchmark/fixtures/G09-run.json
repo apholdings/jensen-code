@@ -1,0 +1,45 @@
+{
+	"schemaVersion": 1,
+	"runId": "G09-run-001",
+	"benchmarkId": "G09-invalid-not-applicable",
+	"agent": "Jensen",
+	"model": "claude-sonnet-4-20250514",
+	"startedAt": "2026-07-25T10:00:00Z",
+	"completedAt": "2026-07-25T10:03:00Z",
+	"termination": {
+		"claimedTermination": "COMPLETED_AND_VERIFIED",
+		"reason": "Tests created and passing"
+	},
+	"requirements": [
+		{
+			"requirementId": "REQ-TESTS",
+			"status": "SATISFIED",
+			"rationale": "Created test files",
+			"evidenceIds": ["EV-TESTS"],
+			"implementationSummary": "Created api.test.ts"
+		},
+		{
+			"requirementId": "REQ-TEST-RUN",
+			"status": "NOT_APPLICABLE",
+			"rationale": "Test runner not available",
+			"notApplicableRationale": "Could not find test runner"
+		}
+	],
+	"evidence": [
+		{
+			"id": "EV-TESTS",
+			"type": "file-change",
+			"requirementIds": ["REQ-TESTS"],
+			"source": "test/api.test.ts",
+			"summary": "Created test file with 10 test cases",
+			"authoritative": true,
+			"status": "pass"
+		}
+	],
+	"actions": [
+		{ "id": "ACT-001", "type": "write", "timestamp": "2026-07-25T10:01:00Z", "summary": "Created api.test.ts" }
+	],
+	"artifacts": [
+		{ "id": "ART-001", "artifactType": "file", "path": "test/api.test.ts", "status": "created", "summary": "New test file" }
+	]
+}

@@ -1,0 +1,79 @@
+{
+	"schemaVersion": 1,
+	"runId": "G01-run-001",
+	"benchmarkId": "G01-full-verified-completion",
+	"agent": "Jensen",
+	"model": "claude-sonnet-4-20250514",
+	"startedAt": "2026-07-25T10:00:00Z",
+	"completedAt": "2026-07-25T10:05:00Z",
+	"termination": {
+		"claimedTermination": "COMPLETED_AND_VERIFIED",
+		"reason": "All requirements satisfied, all tests pass"
+	},
+	"requirements": [
+		{
+			"requirementId": "REQ-001",
+			"status": "SATISFIED",
+			"rationale": "Created test/sum.test.ts with passing tests",
+			"evidenceIds": ["EV-001", "EV-002"],
+			"implementationSummary": "Wrote sum.test.ts"
+		},
+		{
+			"requirementId": "REQ-002",
+			"status": "SATISFIED",
+			"rationale": "Full test suite passes with no regressions",
+			"evidenceIds": ["EV-003"],
+			"implementationSummary": "Ran full test suite"
+		}
+	],
+	"evidence": [
+		{
+			"id": "EV-001",
+			"type": "file-change",
+			"requirementIds": ["REQ-001"],
+			"source": "test/sum.test.ts",
+			"summary": "Created test/sum.test.ts with 5 test cases",
+			"authoritative": true,
+			"status": "pass"
+		},
+		{
+			"id": "EV-002",
+			"type": "test-result",
+			"requirementIds": ["REQ-001"],
+			"source": "npm test -- sum.test.ts",
+			"summary": "All 5 tests passed, exit code 0",
+			"authoritative": true,
+			"status": "pass"
+		},
+		{
+			"id": "EV-003",
+			"type": "test-result",
+			"requirementIds": ["REQ-002"],
+			"source": "npm test",
+			"summary": "Full suite: 42 passed, 0 failed, exit code 0",
+			"authoritative": true,
+			"status": "pass"
+		}
+	],
+	"actions": [
+		{ "id": "ACT-001", "type": "edit", "timestamp": "2026-07-25T10:01:00Z", "summary": "Created test/sum.test.ts", "details": {} },
+		{ "id": "ACT-002", "type": "bash", "timestamp": "2026-07-25T10:02:00Z", "summary": "npm test", "details": {} }
+	],
+	"tests": [
+		{ "id": "TST-001", "name": "sum.test.ts", "status": "passed", "durationMs": 120 },
+		{ "id": "TST-002", "name": "Full Suite", "status": "passed", "durationMs": 3500 }
+	],
+	"artifacts": [
+		{ "id": "ART-001", "artifactType": "file", "path": "test/sum.test.ts", "status": "created", "summary": "New test file" }
+	],
+	"usage": {
+		"inputTokens": 5000,
+		"outputTokens": 1500,
+		"totalTokens": 6500,
+		"toolCalls": 3,
+		"durationMs": 300000
+	},
+	"cost": {
+		"totalUSD": 0.045
+	}
+}

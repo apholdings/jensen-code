@@ -1,0 +1,120 @@
+{
+	"schemaVersion": 1,
+	"runId": "G10-run-001",
+	"benchmarkId": "G10-partial-mission",
+	"agent": "Jensen",
+	"model": "claude-sonnet-4-20250514",
+	"startedAt": "2026-07-25T10:00:00Z",
+	"completedAt": "2026-07-25T10:20:00Z",
+	"termination": {
+		"claimedTermination": "COMPLETED_WITH_UNVERIFIED_WORK",
+		"reason": "Implementation done, running out of context"
+	},
+	"requirements": [
+		{
+			"requirementId": "REQ-DISCOVER",
+			"status": "SATISFIED",
+			"rationale": "Discovered backend views.py and frontend UserList.cs",
+			"evidenceIds": ["EV-DISCOVER"],
+			"implementationSummary": "Architecture discovery complete"
+		},
+		{
+			"requirementId": "REQ-BACKEND",
+			"status": "SATISFIED",
+			"rationale": "Added paginated list-users endpoint to views.py",
+			"evidenceIds": ["EV-BACKEND-CODE", "EV-BACKEND-CURL"],
+			"implementationSummary": "GET /users endpoint with page/limit params"
+		},
+		{
+			"requirementId": "REQ-FRONTEND",
+			"status": "SATISFIED",
+			"rationale": "Updated UserListController.cs with pagination",
+			"evidenceIds": ["EV-FRONTEND-CODE"],
+			"implementationSummary": "Unity component loads paginated user data"
+		},
+		{
+			"requirementId": "REQ-INTEGRATION",
+			"status": "IMPLEMENTED_UNVERIFIED",
+			"rationale": "Integration test file created but tests not run",
+			"evidenceIds": ["EV-INTEG"],
+			"implementationSummary": "Created integration_test.py but not executed"
+		},
+		{
+			"requirementId": "REQ-TEST-SUITE",
+			"status": "PENDING",
+			"rationale": "Test suite not yet run",
+			"implementationSummary": "Not started"
+		},
+		{
+			"requirementId": "REQ-DIFF-AUDIT",
+			"status": "UNASSESSED",
+			"rationale": "Did not perform diff audit"
+		}
+	],
+	"evidence": [
+		{
+			"id": "EV-DISCOVER",
+			"type": "repository-state",
+			"requirementIds": ["REQ-DISCOVER"],
+			"source": "ls/grep/find operations",
+			"summary": "Found views.py, urls.py, UserListController.cs, UserAPI.cs",
+			"authoritative": true,
+			"status": "pass"
+		},
+		{
+			"id": "EV-BACKEND-CODE",
+			"type": "file-change",
+			"requirementIds": ["REQ-BACKEND"],
+			"source": "backend/views.py",
+			"summary": "Added list_users view with pagination",
+			"authoritative": true,
+			"status": "pass"
+		},
+		{
+			"id": "EV-BACKEND-CURL",
+			"type": "command-result",
+			"requirementIds": ["REQ-BACKEND"],
+			"source": "curl localhost:8000/users?page=1&limit=20",
+			"summary": "Returns 200 with paginated JSON, exit 0",
+			"authoritative": true,
+			"status": "pass"
+		},
+		{
+			"id": "EV-FRONTEND-CODE",
+			"type": "file-change",
+			"requirementIds": ["REQ-FRONTEND"],
+			"source": "frontend/UserListController.cs",
+			"summary": "Updated with page navigation controls",
+			"authoritative": true,
+			"status": "pass"
+		},
+		{
+			"id": "EV-INTEG",
+			"type": "file-change",
+			"requirementIds": ["REQ-INTEGRATION"],
+			"source": "tests/integration_test.py",
+			"summary": "Created integration tests for user endpoint contract",
+			"authoritative": true,
+			"status": "pass"
+		}
+	],
+	"actions": [
+		{ "id": "ACT-001", "type": "find", "timestamp": "2026-07-25T10:01:00Z", "summary": "Discovered architecture" },
+		{ "id": "ACT-002", "type": "edit", "timestamp": "2026-07-25T10:05:00Z", "summary": "Added backend endpoint" },
+		{ "id": "ACT-003", "type": "bash", "timestamp": "2026-07-25T10:06:00Z", "summary": "curl test endpoint" },
+		{ "id": "ACT-004", "type": "edit", "timestamp": "2026-07-25T10:10:00Z", "summary": "Updated Unity frontend" },
+		{ "id": "ACT-005", "type": "write", "timestamp": "2026-07-25T10:15:00Z", "summary": "Created integration test file" }
+	],
+	"artifacts": [
+		{ "id": "ART-001", "artifactType": "file", "path": "backend/views.py", "status": "modified", "summary": "Paginated endpoint" },
+		{ "id": "ART-002", "artifactType": "file", "path": "frontend/UserListController.cs", "status": "modified", "summary": "Pagination UI" },
+		{ "id": "ART-003", "artifactType": "file", "path": "tests/integration_test.py", "status": "created", "summary": "Integration tests" }
+	],
+	"usage": {
+		"inputTokens": 45000,
+		"outputTokens": 12000,
+		"totalTokens": 57000,
+		"toolCalls": 15,
+		"durationMs": 1200000
+	}
+}

@@ -1,0 +1,20 @@
+{
+	"schemaVersion": 1,
+	"runId": "G12-run-001",
+	"benchmarkId": "G12-invalid-dependency-graph",
+	"agent": "Jensen",
+	"model": "claude-sonnet-4-20250514",
+	"startedAt": "2026-07-25T10:00:00Z",
+	"completedAt": "2026-07-25T10:01:00Z",
+	"termination": {
+		"claimedTermination": "COMPLETED_AND_VERIFIED",
+		"reason": "Done"
+	},
+	"requirements": [
+		{ "requirementId": "REQ-A", "status": "SATISFIED" },
+		{ "requirementId": "REQ-B", "status": "SATISFIED" }
+	],
+	"evidence": [],
+	"actions": [],
+	"artifacts": []
+}

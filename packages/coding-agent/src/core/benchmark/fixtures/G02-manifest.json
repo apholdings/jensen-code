@@ -1,0 +1,35 @@
+{
+	"schemaVersion": 1,
+	"benchmarkId": "G02-premature-completion",
+	"title": "G02 - Premature Completion",
+	"description": "Agent claims completion but one required requirement is omitted.",
+	"category": "single-repository",
+	"repositoryFixture": { "description": "Synthetic fixture" },
+	"prompt": { "text": "Implement user registration endpoint with tests." },
+	"requirements": [
+		{
+			"id": "REQ-IMPL",
+			"description": "Implement user registration endpoint",
+			"source": "explicit-user",
+			"required": true,
+			"acceptanceCriteria": [
+				{ "id": "AC-001", "description": "Endpoint exists", "passCondition": "POST /register returns 201" }
+			],
+			"requiredEvidence": [
+				{ "type": "command-result", "description": "Curl test", "minimumCount": 1 }
+			]
+		},
+		{
+			"id": "REQ-TEST",
+			"description": "Write integration tests for registration endpoint",
+			"source": "explicit-user",
+			"required": true,
+			"acceptanceCriteria": [
+				{ "id": "AC-002", "description": "Tests exist and pass", "passCondition": "npm test exits 0" }
+			],
+			"requiredEvidence": [
+				{ "type": "test-result", "description": "Test result", "minimumCount": 1 }
+			]
+		}
+	]
+}

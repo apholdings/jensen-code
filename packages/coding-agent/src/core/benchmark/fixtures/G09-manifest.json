@@ -1,0 +1,32 @@
+{
+	"schemaVersion": 1,
+	"benchmarkId": "G09-invalid-not-applicable",
+	"title": "G09 - Invalid NOT_APPLICABLE",
+	"description": "Required requirement marked NOT_APPLICABLE without permission. Completion fails.",
+	"category": "single-repository",
+	"repositoryFixture": { "description": "Synthetic fixture" },
+	"prompt": { "text": "Add unit tests for all public API functions." },
+	"requirements": [
+		{
+			"id": "REQ-TESTS",
+			"description": "Add unit tests for all public API functions",
+			"source": "explicit-user",
+			"required": true,
+			"acceptanceCriteria": [
+				{ "id": "AC-001", "description": "Tests exist", "passCondition": "Test files created" }
+			],
+			"requiredEvidence": [
+				{ "type": "file-change", "description": "Test files", "minimumCount": 1 }
+			]
+		},
+		{
+			"id": "REQ-TEST-RUN",
+			"description": "Run tests and confirm they pass",
+			"source": "explicit-user",
+			"required": true,
+			"acceptanceCriteria": [
+				{ "id": "AC-002", "description": "Tests pass", "passCondition": "npm test exits 0" }
+			]
+		}
+	]
+}
