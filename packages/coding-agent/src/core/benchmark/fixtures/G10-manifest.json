@@ -1,0 +1,91 @@
+{
+	"schemaVersion": 1,
+	"benchmarkId": "G10-partial-mission",
+	"title": "G10 - Partial Long-Horizon Mission",
+	"description": "Representative synthetic mission: discovery, implementation, integration, tests, final diff audit. Run completes implementation but omits integration and audit.",
+	"category": "cross-component",
+	"repositoryFixture": { "description": "Synthetic fixture - multi-component app" },
+	"prompt": {
+		"text": "Add a paginated list-users endpoint to the Django backend and update the Unity frontend to display the user list with page navigation. Add integration tests. Run the full suite and do a final diff audit before completing."
+	},
+	"requirements": [
+		{
+			"id": "REQ-DISCOVER",
+			"description": "Discover existing backend and frontend architecture",
+			"source": "inferred-necessary",
+			"required": true,
+			"acceptanceCriteria": [
+				{ "id": "AC-001", "description": "Relevant files identified", "passCondition": "File listing in run report" }
+			],
+			"requiredEvidence": [
+				{ "type": "repository-state", "description": "Architecture discovery output", "minimumCount": 1 }
+			]
+		},
+		{
+			"id": "REQ-BACKEND",
+			"description": "Implement paginated list-users Django endpoint",
+			"source": "explicit-user",
+			"required": true,
+			"dependencies": ["REQ-DISCOVER"],
+			"acceptanceCriteria": [
+				{ "id": "AC-002", "description": "GET /users?page=1&limit=20 exists", "passCondition": "Endpoint returns paginated JSON" }
+			],
+			"requiredEvidence": [
+				{ "type": "file-change", "description": "Backend code changes", "minimumCount": 1 },
+				{ "type": "command-result", "description": "Curl test of endpoint", "minimumCount": 1 }
+			]
+		},
+		{
+			"id": "REQ-FRONTEND",
+			"description": "Update Unity frontend with paginated user list",
+			"source": "explicit-user",
+			"required": true,
+			"dependencies": ["REQ-DISCOVER", "REQ-BACKEND"],
+			"acceptanceCriteria": [
+				{ "id": "AC-003", "description": "User list component exists", "passCondition": "Unity component loads user data" }
+			],
+			"requiredEvidence": [
+				{ "type": "file-change", "description": "Frontend code changes", "minimumCount": 1 }
+			]
+		},
+		{
+			"id": "REQ-INTEGRATION",
+			"description": "Add integration tests for the Django-Unity contract",
+			"source": "explicit-user",
+			"required": true,
+			"dependencies": ["REQ-BACKEND", "REQ-FRONTEND"],
+			"acceptanceCriteria": [
+				{ "id": "AC-004", "description": "Integration tests exist", "passCondition": "Integration test file created" }
+			],
+			"requiredEvidence": [
+				{ "type": "file-change", "description": "Integration test file", "minimumCount": 1 },
+				{ "type": "test-result", "description": "Integration test run", "minimumCount": 1 }
+			]
+		},
+		{
+			"id": "REQ-TEST-SUITE",
+			"description": "Run the full test suite and confirm all pass",
+			"source": "explicit-user",
+			"required": true,
+			"dependencies": ["REQ-INTEGRATION", "REQ-BACKEND", "REQ-FRONTEND"],
+			"acceptanceCriteria": [
+				{ "id": "AC-005", "description": "Full suite passes", "passCondition": "All tests pass, exit 0" }
+			],
+			"requiredEvidence": [
+				{ "type": "test-result", "description": "Full test suite output", "minimumCount": 1 }
+			]
+		},
+		{
+			"id": "REQ-DIFF-AUDIT",
+			"description": "Perform final diff audit of all changes",
+			"source": "explicit-user",
+			"required": true,
+			"acceptanceCriteria": [
+				{ "id": "AC-006", "description": "Diff audit completed", "passCondition": "git diff reviewed and reported" }
+			],
+			"requiredEvidence": [
+				{ "type": "command-result", "description": "git diff output", "minimumCount": 1 }
+			]
+		}
+	]
+}

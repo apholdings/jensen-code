@@ -1,0 +1,20 @@
+{
+	"schemaVersion": 1,
+	"benchmarkId": "G05-unsupported-blocker",
+	"title": "G05 - Unsupported Blocker",
+	"description": "Agent claims credential blocker with no evidence. Invalid blocker finding.",
+	"category": "single-repository",
+	"repositoryFixture": { "description": "Synthetic fixture" },
+	"prompt": { "text": "Push the feature branch to origin." },
+	"requirements": [
+		{
+			"id": "REQ-PUSH",
+			"description": "Push feature branch to origin",
+			"source": "explicit-user",
+			"required": true,
+			"acceptanceCriteria": [
+				{ "id": "AC-001", "description": "Push succeeds", "passCondition": "git push exits 0" }
+			]
+		}
+	]
+}

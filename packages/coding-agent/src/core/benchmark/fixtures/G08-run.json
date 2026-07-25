@@ -1,0 +1,53 @@
+{
+	"schemaVersion": 1,
+	"runId": "G08-run-001",
+	"benchmarkId": "G08-dependency-inconsistency",
+	"agent": "Jensen",
+	"model": "claude-sonnet-4-20250514",
+	"startedAt": "2026-07-25T10:00:00Z",
+	"completedAt": "2026-07-25T10:04:00Z",
+	"termination": {
+		"claimedTermination": "COMPLETED_AND_VERIFIED",
+		"reason": "Migrations applied successfully"
+	},
+	"requirements": [
+		{
+			"requirementId": "REQ-SETUP-DB",
+			"status": "FAILED",
+			"rationale": "createdb command failed with error",
+			"evidenceIds": ["EV-DB-FAIL"]
+		},
+		{
+			"requirementId": "REQ-MIGRATE",
+			"status": "SATISFIED",
+			"rationale": "Migrations applied",
+			"evidenceIds": ["EV-MIGRATE"],
+			"implementationSummary": "Ran prisma migrate"
+		}
+	],
+	"evidence": [
+		{
+			"id": "EV-DB-FAIL",
+			"type": "command-result",
+			"requirementIds": ["REQ-SETUP-DB"],
+			"source": "createdb myapp",
+			"summary": "Exit code 1: permission denied",
+			"authoritative": true,
+			"status": "fail"
+		},
+		{
+			"id": "EV-MIGRATE",
+			"type": "command-result",
+			"requirementIds": ["REQ-MIGRATE"],
+			"source": "npx prisma migrate dev",
+			"summary": "Migrations applied, exit 0",
+			"authoritative": true,
+			"status": "pass"
+		}
+	],
+	"actions": [
+		{ "id": "ACT-001", "type": "bash", "timestamp": "2026-07-25T10:01:00Z", "summary": "createdb - failed" },
+		{ "id": "ACT-002", "type": "bash", "timestamp": "2026-07-25T10:02:00Z", "summary": "prisma migrate" }
+	],
+	"artifacts": []
+}

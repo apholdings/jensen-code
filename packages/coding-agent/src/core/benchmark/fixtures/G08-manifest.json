@@ -1,0 +1,36 @@
+{
+	"schemaVersion": 1,
+	"benchmarkId": "G08-dependency-inconsistency",
+	"title": "G08 - Dependency Inconsistency",
+	"description": "Dependent requirement SATISFIED while its dependency FAILED.",
+	"category": "single-repository",
+	"repositoryFixture": { "description": "Synthetic fixture" },
+	"prompt": { "text": "Set up database, then run migrations, then verify schema." },
+	"requirements": [
+		{
+			"id": "REQ-SETUP-DB",
+			"description": "Set up database",
+			"source": "explicit-user",
+			"required": true,
+			"acceptanceCriteria": [
+				{ "id": "AC-001", "description": "Database created", "passCondition": "createdb exits 0" }
+			],
+			"requiredEvidence": [
+				{ "type": "command-result", "description": "DB creation result", "minimumCount": 1 }
+			]
+		},
+		{
+			"id": "REQ-MIGRATE",
+			"description": "Run migrations",
+			"source": "explicit-user",
+			"required": true,
+			"dependencies": ["REQ-SETUP-DB"],
+			"acceptanceCriteria": [
+				{ "id": "AC-002", "description": "Migrations applied", "passCondition": "npx prisma migrate exits 0" }
+			],
+			"requiredEvidence": [
+				{ "type": "command-result", "description": "Migration result", "minimumCount": 1 }
+			]
+		}
+	]
+}

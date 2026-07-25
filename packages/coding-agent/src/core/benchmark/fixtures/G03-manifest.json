@@ -1,0 +1,32 @@
+{
+	"schemaVersion": 1,
+	"benchmarkId": "G03-implemented-unverified",
+	"title": "G03 - Implemented But Unverified",
+	"description": "Code change claimed, required tests absent.",
+	"category": "single-repository",
+	"repositoryFixture": { "description": "Synthetic fixture" },
+	"prompt": { "text": "Refactor the auth module and run the test suite." },
+	"requirements": [
+		{
+			"id": "REQ-REFACTOR",
+			"description": "Refactor auth module",
+			"source": "explicit-user",
+			"required": true,
+			"acceptanceCriteria": [
+				{ "id": "AC-001", "description": "Auth module refactored", "passCondition": "Code changed" }
+			]
+		},
+		{
+			"id": "REQ-TESTS",
+			"description": "Run the test suite and confirm all pass",
+			"source": "explicit-user",
+			"required": true,
+			"acceptanceCriteria": [
+				{ "id": "AC-002", "description": "Tests pass", "passCondition": "npm test exits 0" }
+			],
+			"requiredEvidence": [
+				{ "type": "test-result", "description": "Test suite run result", "minimumCount": 1 }
+			]
+		}
+	]
+}

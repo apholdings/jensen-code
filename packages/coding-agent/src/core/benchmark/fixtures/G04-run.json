@@ -1,0 +1,41 @@
+{
+	"schemaVersion": 1,
+	"runId": "G04-run-001",
+	"benchmarkId": "G04-legitimate-blocker",
+	"agent": "Jensen",
+	"model": "claude-sonnet-4-20250514",
+	"startedAt": "2026-07-25T10:00:00Z",
+	"completedAt": "2026-07-25T10:02:00Z",
+	"termination": {
+		"claimedTermination": "BLOCKED_BY_EXTERNAL_DEPENDENCY",
+		"reason": "Staging environment is down for maintenance"
+	},
+	"requirements": [
+		{
+			"requirementId": "REQ-DEPLOY",
+			"status": "BLOCKED",
+			"rationale": "Cannot deploy: staging unavailable",
+			"evidenceIds": ["EV-BLOCK"],
+			"blockerDetails": {
+				"type": "external-dependency",
+				"description": "Staging environment HTTP 503 maintenance",
+				"evidenceId": "EV-BLOCK"
+			}
+		}
+	],
+	"evidence": [
+		{
+			"id": "EV-BLOCK",
+			"type": "external-blocker",
+			"requirementIds": ["REQ-DEPLOY"],
+			"source": "curl https://staging.example.com/health",
+			"summary": "HTTP 503 Service Unavailable - maintenance mode",
+			"authoritative": true,
+			"status": "fail"
+		}
+	],
+	"actions": [
+		{ "id": "ACT-001", "type": "bash", "timestamp": "2026-07-25T10:01:00Z", "summary": "curl health check - 503" }
+	],
+	"artifacts": []
+}

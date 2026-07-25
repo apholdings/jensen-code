@@ -1,0 +1,31 @@
+{
+	"schemaVersion": 1,
+	"benchmarkId": "G12-invalid-dependency-graph",
+	"title": "G12 - Invalid Dependency Graph (Cycle)",
+	"description": "Manifest contains a dependency cycle. Schema validation must reject it.",
+	"category": "single-repository",
+	"repositoryFixture": {
+		"description": "Synthetic fixture"
+	},
+	"prompt": {
+		"text": "Do the task."
+	},
+	"requirements": [
+		{
+			"id": "REQ-A",
+			"description": "Task A",
+			"source": "explicit-user",
+			"required": true,
+			"dependencies": ["REQ-B"],
+			"acceptanceCriteria": []
+		},
+		{
+			"id": "REQ-B",
+			"description": "Task B",
+			"source": "explicit-user",
+			"required": true,
+			"dependencies": ["REQ-A"],
+			"acceptanceCriteria": []
+		}
+	]
+}
