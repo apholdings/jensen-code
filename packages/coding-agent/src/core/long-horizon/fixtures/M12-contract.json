@@ -1,0 +1,30 @@
+{
+  "contractVersion": 1,
+  "missionId": "M12-illegal-satisfied",
+  "revision": 1,
+  "title": "M12 Illegal Direct SATISFIED Transition",
+  "objective": "Verify that direct SATISFIED from non-IMPLEMENTED_UNVERIFIED states is rejected.",
+  "workstreams": [{ "id": "WS-MAIN", "title": "Main", "order": 1 }],
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "workstreamId": "WS-MAIN",
+      "kind": "EXPLICIT",
+      "statement": "Feature requiring valid lifecycle.",
+      "sourceRefs": ["spec"],
+      "dependencies": [],
+      "acceptanceCriteria": [
+        {
+          "id": "AC-001",
+          "statement": "Feature works.",
+          "requiredEvidence": [
+            { "allowedTypes": ["test-result"], "minAuthority": "test-result" }
+          ]
+        }
+      ]
+    }
+  ],
+  "constraints": [],
+  "forbiddenActions": [],
+  "evidencePolicy": { "authoritativeSources": ["test-result"] }
+}

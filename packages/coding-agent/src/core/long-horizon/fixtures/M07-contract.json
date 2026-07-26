@@ -1,0 +1,17 @@
+{
+	"contractVersion": 1,
+	"missionId": "M07-ws-cycle",
+	"revision": 1,
+	"title": "M07 Workstream Cycle",
+	"objective": "Expected: INVALID due to workstream parent cycle.",
+	"workstreams": [
+		{"id": "WS-A", "title": "A", "parentId": "WS-B", "order": 1},
+		{"id": "WS-B", "title": "B", "parentId": "WS-A", "order": 2}
+	],
+	"requirements": [
+		{"id": "REQ-001", "workstreamId": "WS-A", "kind": "EXPLICIT", "statement": "X", "sourceRefs": [], "dependencies": [], "acceptanceCriteria": [{"id": "AC-1", "statement": "Done", "requiredEvidence": []}]}
+	],
+	"constraints": [],
+	"forbiddenActions": [],
+	"evidencePolicy": {"authoritativeSources": []}
+}

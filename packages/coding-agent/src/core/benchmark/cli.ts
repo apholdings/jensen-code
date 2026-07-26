@@ -5,6 +5,7 @@
 import chalk from "chalk";
 import { readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
+import { handleLongHorizonCommand } from "../long-horizon/cli.js";
 import { evaluate } from "./evaluator.js";
 import { generateJsonReport, generateTextReport } from "./report.js";
 import type { LongHorizonBenchmarkManifest, LongHorizonRunReport } from "./types.js";
@@ -88,6 +89,10 @@ ${chalk.bold("Exit Codes:")}
 }
 
 export async function handleBenchmarkCommand(args: string[]): Promise<boolean> {
+	// Try long-horizon mission/ledger commands first
+	const lhResult = await handleLongHorizonCommand(args);
+	if (lhResult) return true;
+
 	const options = parseBenchmarkArgs(args);
 	if (!options) return false;
 

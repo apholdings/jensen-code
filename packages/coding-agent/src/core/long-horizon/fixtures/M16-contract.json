@@ -1,0 +1,15 @@
+{
+	"contractVersion": 1,
+	"missionId": "M16-not-applicable",
+	"revision": 1,
+	"title": "M16 NOT_APPLICABLE Authority Enforcement",
+	"objective": "Test NOT_APPLICABLE requires proper authorization.",
+	"workstreams": [{"id": "WS-MAIN", "title": "Main", "order": 1}],
+	"requirements": [
+		{"id": "REQ-001", "workstreamId": "WS-MAIN", "kind": "EXPLICIT", "statement": "Must be done.", "sourceRefs": [], "dependencies": [], "acceptanceCriteria": [{"id": "AC-1", "statement": "Done", "requiredEvidence": []}]},
+		{"id": "REQ-NA", "workstreamId": "WS-MAIN", "kind": "INFERRED", "statement": "Optionally applicable.", "rationale": "Not needed for this mission scope.", "sourceRefs": [], "dependencies": [], "acceptanceCriteria": [{"id": "AC-NA", "statement": "N/A", "requiredEvidence": []}], "initialApplicability": "NOT_APPLICABLE"}
+	],
+	"constraints": [],
+	"forbiddenActions": [],
+	"evidencePolicy": {"authoritativeSources": []}
+}

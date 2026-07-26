@@ -1,0 +1,30 @@
+{
+  "contractVersion": 1,
+  "missionId": "M09-lifecycle",
+  "revision": 1,
+  "title": "M09 Valid Lifecycle to IMPLEMENTED_UNVERIFIED",
+  "objective": "Demonstrate a valid state lifecycle from UNASSESSED through to IMPLEMENTED_UNVERIFIED.",
+  "workstreams": [{ "id": "WS-MAIN", "title": "Main", "order": 1 }],
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "workstreamId": "WS-MAIN",
+      "kind": "EXPLICIT",
+      "statement": "Implement lifecycle-tested feature.",
+      "sourceRefs": ["spec"],
+      "dependencies": [],
+      "acceptanceCriteria": [
+        {
+          "id": "AC-001",
+          "statement": "Feature implemented correctly.",
+          "requiredEvidence": [
+            { "allowedTypes": ["test-result"], "minAuthority": "test-result" }
+          ]
+        }
+      ]
+    }
+  ],
+  "constraints": [],
+  "forbiddenActions": [],
+  "evidencePolicy": { "authoritativeSources": ["test-result", "operator-confirmation"] }
+}

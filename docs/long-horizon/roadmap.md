@@ -23,14 +23,21 @@
 - Adversarial regression tests (A01-A20)
 - Provider-neutral design
 
-## LH-1: Mission Contract and Requirement Ledger
+## LH-1: Mission Contract and Requirement Ledger (Implemented)
 
-Runtime tracking of mission requirements during agent execution:
+Runtime modeling of mission requirements and auditable execution tracking:
 
-- Mission Contract: runtime state tracking requirements as the agent works
-- Requirement Ledger: runtime tools for recording evidence
-- Automatic extraction of requirements from user prompts
-- Live requirement status updates
+- Versioned Mission Contract schema v1 (workstreams, requirements, constraints, forbidden actions)
+- Explicit versus inferred requirement provenance with mandatory rationale
+- Structured acceptance criteria with minimum evidence requirements
+- Requirement dependency DAG validation (Kahn's algorithm)
+- Versioned Requirement Ledger v1 (append-only transitions and evidence)
+- Deterministic contract-to-ledger cryptographic binding (SHA-256)
+- Optimistic concurrency with stale revision rejection
+- Authoritative evidence enforcement (agent claims never authoritative)
+- Deterministic canonical JSON serialization
+- Provider-isolated CLI commands
+- Golden fixtures and comprehensive tests
 
 ## LH-2: Execution State Machine
 

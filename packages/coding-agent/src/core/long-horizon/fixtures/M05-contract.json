@@ -1,0 +1,14 @@
+{
+	"contractVersion": 1,
+	"missionId": "M05-unknown-dep",
+	"revision": 1,
+	"title": "M05 Unknown Dependency",
+	"objective": "Expected: INVALID due to unknown dependency reference.",
+	"workstreams": [{"id": "WS-MAIN", "title": "Main", "order": 1}],
+	"requirements": [
+		{"id": "REQ-001", "workstreamId": "WS-MAIN", "kind": "EXPLICIT", "statement": "A", "sourceRefs": [], "dependencies": ["REQ-NONEXISTENT"], "acceptanceCriteria": [{"id": "AC-1", "statement": "Done", "requiredEvidence": []}]}
+	],
+	"constraints": [],
+	"forbiddenActions": [],
+	"evidencePolicy": {"authoritativeSources": []}
+}

@@ -1,0 +1,14 @@
+{
+	"contractVersion": 1,
+	"missionId": "M20-completion-candidate",
+	"revision": 1,
+	"title": "M20 Fully Satisfied Completion Candidate",
+	"objective": "Target: full satisfied completion candidate after lifecycle.",
+	"workstreams": [{"id": "WS-MAIN", "title": "Main", "order": 1}],
+	"requirements": [
+		{"id": "REQ-001", "workstreamId": "WS-MAIN", "kind": "EXPLICIT", "statement": "Implement feature.", "sourceRefs": [], "dependencies": [], "acceptanceCriteria": [{"id": "AC-1", "statement": "Done", "requiredEvidence": [{"allowedTypes": ["test-result"], "minAuthority": "test-result"}]}]}
+	],
+	"constraints": [],
+	"forbiddenActions": [],
+	"evidencePolicy": {"authoritativeSources": ["test-result"]}
+}
