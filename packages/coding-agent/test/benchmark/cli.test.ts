@@ -532,9 +532,10 @@ describe("C13 - Text and JSON invalid-schema parity (G12)", () => {
 			"json",
 		]);
 		expect(json.status).toBe(1);
-		// Strip stdout noise from the dev launcher script
-		const stdout = json.stdout.replace("Running without API keys...\n", "").trim();
-		const parsed = JSON.parse(stdout);
+		// Development launcher may print platform-selection and no-key notices.
+		const jsonStart = json.stdout.indexOf("{");
+		expect(jsonStart).toBeGreaterThanOrEqual(0);
+		const parsed = JSON.parse(json.stdout.slice(jsonStart));
 		expect(parsed.schemaValidation.valid).toBe(false);
 		expect(parsed.schemaValidation.errors.some((e: string) => e.includes("cycle"))).toBe(true);
 	});

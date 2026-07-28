@@ -1,0 +1,30 @@
+{
+  "contractVersion": 1,
+  "missionId": "M19-incomplete-criteria",
+  "revision": 1,
+  "title": "M19 Criterion Evidence Incomplete",
+  "objective": "Verify that SATISFIED is rejected when evidence IDs are missing.",
+  "workstreams": [{ "id": "WS-MAIN", "title": "Main", "order": 1 }],
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "workstreamId": "WS-MAIN",
+      "kind": "EXPLICIT",
+      "statement": "Feature requiring evidence for satisfaction.",
+      "sourceRefs": ["spec"],
+      "dependencies": [],
+      "acceptanceCriteria": [
+        {
+          "id": "AC-001",
+          "statement": "Must have evidence.",
+          "requiredEvidence": [
+            { "allowedTypes": ["test-result"], "minAuthority": "test-result" }
+          ]
+        }
+      ]
+    }
+  ],
+  "constraints": [],
+  "forbiddenActions": [],
+  "evidencePolicy": { "authoritativeSources": ["test-result"] }
+}

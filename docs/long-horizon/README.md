@@ -1,111 +1,74 @@
-# Long-Horizon Software Execution
+# Long-Horizon Autonomous Execution
 
-The Jensen Long-Horizon benchmark measures whether a coding agent actually completes a complete software-engineering mission.
+## Roadmap
 
-## Why This Matters
+See [roadmap.md](./roadmap.md) for the full long-horizon development plan.
 
-Software engineering missions are long-running, multi-step tasks: discovery, implementation, integration, testing, validation, and audit. Current agent evaluation metrics (lines changed, tool calls, turn count) answer "did the agent do something?" but never answer "did the agent actually finish everything?"
+## LH-0: Benchmark Foundation (Implemented)
 
-A single omitted acceptance criterion, skipped test suite, or unsupported completion claim is the difference between a successful mission and an incomplete one that silently ships with missing work.
+Deterministic benchmark evaluation system. See [benchmark-format.md](./benchmark-format.md) for the task manifest and run report schema.
 
-This benchmark framework provides:
+## LH-1: Mission Contract and Requirement Ledger (Implemented)
 
-1. **Deterministic evaluation** - no model inference, no ambiguity
-2. **Authoritative evidence** - file changes, command results, test outputs
-3. **Fail-closed scoring** - missing information never defaults to success
-4. **Provider neutrality** - evaluates any agent (Jensen, Codex, human)
-5. **Identical conditions** - same snapshot, same prompt, same acceptance criteria
+Models and records execution obligations for long-running missions. LH-1 does NOT yet force the running agent to continue executing them — that enforcement begins in LH-2 and LH-3.
 
-## How It Works
+### Components
 
-### Task Manifest
+- **Mission Contract** ([mission-contract.md](./mission-contract.md)): Versioned JSON schema defining mission requirements, workstreams, constraints, forbidden actions, and evidence policy.
+- **Requirement Ledger** ([requirement-ledger.md](./requirement-ledger.md)): Append-only, auditable ledger tracking requirement state transitions and evidence records.
+- **CLI** (`jensen benchmark long-horizon`): Provider-isolated commands for contract validation, digest computation, ledger initialization, evidence insertion, transition application, and ledger inspection.
 
-A benchmark task defines what must be done, not how. It specifies:
-
-- Requirements with acceptance criteria
-- Required evidence types (file changes, test results, command output)
-- Forbidden actions (no push to main, no tag creation)
-- Expected validation (test suites, diff audits)
-- Budget constraints
-
-### Run Report
-
-An agent produces a run report describing:
-
-- What was attempted and what was implemented
-- Evidence for each requirement
-- Claims made (distinguished as authoritative or non-authoritative)
-- Actions taken (including any forbidden actions)
-- Termination reason
-
-### Evaluator
-
-The deterministic evaluator:
-
-1. Validates schema compatibility, duplicate identities, and acyclic dependency graphs
-2. Matches run results to manifest requirements
-3. Detects missing evaluations and omissions
-4. Distinguishes authoritative evidence from unsupported claims (claims are never authoritative)
-5. Detects forbidden actions
-6. Validates blocker classifications
-7. Detects premature completion
-8. Derives effective states in dependency order (dependency-inconsistent work cannot be verified)
-9. Calculates metrics including Verified Completion Ratio
-
-### CLI Exit Codes
-
-Process exit indicates whether evaluation executed validly. `completionGate.passed` indicates whether the benchmark subject completed the mission. The two are independent.
-
-| Input/evaluation state            | Exit | completionGate       |
-| --------------------------------- | ---: | -------------------- |
-| Valid and verified                |    0 | true                 |
-| Valid but benchmark subject fails |    0 | false                |
-| Invalid schema or identity        |    1 | false                |
-| Parse/read/write/CLI failure      |    1 | unavailable or false |
-
-Valid evaluations always exit 0. Schema-invalid input always exits 1. Operational errors (missing files, malformed JSON, write failures) exit 1.
-
-### Effective Termination vs Premature Completion
-
-`effectiveTermination` and `prematureCompletion` are related but distinct fields. A run may have `effectiveTermination: "COMPLETED_WITH_UNVERIFIED_WORK"` while `prematureCompletion` is `true` — the agent truthfully reported incomplete work but stopped while applicable work remained incomplete. Not all incomplete runs map to `PREMATURE_COMPLETION` as the effective termination.
-
-### Trust Boundary
-
-Run reports intended for authoritative benchmarking must be produced by a trusted collector that records tool, repository, test and operator evidence independently of the evaluated agent. The evaluator does not cryptographically authenticate JSON input.
-
-### Primary Metric: Verified Completion Ratio
+### Architecture
 
 ```
-VCR = requirements SATISFIED with authoritative evidence / all applicable requirements
+packages/coding-agent/src/core/
+  benchmark/          LH-0 benchmark evaluation (remains separate)
+  long-horizon/       LH-1 mission contract + ledger
+    types.ts          Canonical domain types (reuses benchmark RequirementEvaluationStatus)
+    mission-contract-schema.ts  Contract validation (DAG, duplicates, cycles)
+    contract-digest.ts           SHA-256 deterministic digest
+    requirement-ledger.ts        Ledger operations (init, evidence, transition)
+    transition-policy.ts          Single canonical transition matrix
+    ledger-reducer.ts             State derivation from transition log
+    ledger-summary.ts             Deterministic mission summaries
+    canonical-json.ts             Stable JSON serialization
+    cli.ts                        CLI command handlers
+    index.ts                      Public API
+    fixtures/                     Golden test fixtures
 ```
 
-A VCR of 1.0 means every applicable requirement was satisfied with authoritative evidence. Checkmarks and claims are not evidence.
+### Key Design Decisions
 
-## Fair Comparison (Jensen vs Codex)
+1. **Shared requirement states**: LH-1 reuses `RequirementEvaluationStatus` from LH-0 benchmark types — exactly one source of truth.
+2. **Trust boundary**: Agent claims are never authoritative. Transitions to SATISFIED require authoritative evidence from a trusted collector or operator.
+3. **Optimistic concurrency**: Every mutable operation requires `expectedRevision`. Stale revisions are rejected atomically.
+4. **Append-only**: Evidence and transitions are never deleted or modified, only appended.
+5. **Deterministic**: All core functions are pure, immutable, and free of provider, filesystem, or time dependencies.
 
-Both agents will be evaluated against the same:
+### Scope Boundary
 
-- Git snapshot
-- Task prompt
-- Allowed tools
-- Forbidden actions
-- Task manifest
-- Acceptance criteria
-- Evidence requirements
+LH-1 models and records execution obligations.
 
-Comparable model budgets. Separate clean workspaces. No evaluator access during execution. Deterministic post-run evaluation.
+LH-1 does NOT yet:
+- Automatically generate contracts from prompts (no LLM inference)
+- Integrate with the agent execution loop
+- Automatically resume or schedule continuations
+- Run watchdog monitoring
+- Perform semantic compaction
+- Implement independent completion review
 
-## Implementation Status
+Those features begin in LH-2 through LH-7.
 
-| Milestone | Status |
-|-----------|--------|
-| LH-0: Benchmark Foundation | Implemented |
-| LH-1: Mission Contract | Planned |
-| LH-2: Execution State Machine | Planned |
-| LH-3: Continuation Scheduler | Planned |
-| LH-4: Progress Watchdog | Planned |
-| LH-5: Completion Gate | Planned |
-| LH-6: Semantic Checkpointing | Planned |
-| LH-7: Independent Review | Planned |
-| LH-8: Golden Benchmark Suite | Planned |
-| LH-9: Adaptive Policies | Planned |
+### CLI Commands
+
+```
+jensen benchmark long-horizon mission validate --contract <path>
+jensen benchmark long-horizon mission digest --contract <path>
+jensen benchmark long-horizon ledger init --contract <path> --output <path>
+jensen benchmark long-horizon ledger validate --contract <path> --ledger <path>
+jensen benchmark long-horizon ledger add-evidence --contract <path> --ledger <path> ...
+jensen benchmark long-horizon ledger transition --contract <path> --ledger <path> ...
+jensen benchmark long-horizon ledger inspect --contract <path> --ledger <path>
+```
+
+All commands route before model selection and provider loading.

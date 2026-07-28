@@ -1,0 +1,30 @@
+{
+  "contractVersion": 1,
+  "missionId": "M17-satisfied-regression",
+  "revision": 1,
+  "title": "M17 Satisfied Requirement Regression and Reopening",
+  "objective": "Verify that SATISFIED can regress to IMPLEMENTED_UNVERIFIED or FAILED.",
+  "workstreams": [{ "id": "WS-MAIN", "title": "Main", "order": 1 }],
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "workstreamId": "WS-MAIN",
+      "kind": "EXPLICIT",
+      "statement": "Feature that can regress from SATISFIED.",
+      "sourceRefs": ["spec"],
+      "dependencies": [],
+      "acceptanceCriteria": [
+        {
+          "id": "AC-001",
+          "statement": "Feature works.",
+          "requiredEvidence": [
+            { "allowedTypes": ["test-result"], "minAuthority": "test-result" }
+          ]
+        }
+      ]
+    }
+  ],
+  "constraints": [],
+  "forbiddenActions": [],
+  "evidencePolicy": { "authoritativeSources": ["test-result", "operator-confirmation"] }
+}

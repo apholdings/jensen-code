@@ -1,0 +1,52 @@
+{
+	"contractVersion": 1,
+	"missionId": "M02-explicit-inferred",
+	"revision": 1,
+	"title": "M02 Explicit and Inferred Requirements",
+	"objective": "Test that both EXPLICIT and INFERRED requirements with rationale pass validation.",
+	"workstreams": [
+		{ "id": "WS-MAIN", "title": "Main Workstream", "order": 1 }
+	],
+	"requirements": [
+		{
+			"id": "REQ-E1",
+			"workstreamId": "WS-MAIN",
+			"kind": "EXPLICIT",
+			"statement": "Fix the null-check bug.",
+			"sourceRefs": ["user-prompt"],
+			"dependencies": [],
+			"acceptanceCriteria": [
+				{
+					"id": "AC-E1",
+					"statement": "Null check added.",
+					"requiredEvidence": [
+						{ "allowedTypes": ["file-change"], "minAuthority": "repository-observation" }
+					]
+				}
+			]
+		},
+		{
+			"id": "REQ-I1",
+			"workstreamId": "WS-MAIN",
+			"kind": "INFERRED",
+			"statement": "Run existing test suite to verify no regressions.",
+			"rationale": "Any code change must be verified against the existing test suite to prevent regressions.",
+			"sourceRefs": ["inferred-from-best-practices"],
+			"dependencies": ["REQ-E1"],
+			"acceptanceCriteria": [
+				{
+					"id": "AC-I1",
+					"statement": "All tests pass.",
+					"requiredEvidence": [
+						{ "allowedTypes": ["test-result"], "minAuthority": "test-result" }
+					]
+				}
+			]
+		}
+	],
+	"constraints": [],
+	"forbiddenActions": [],
+	"evidencePolicy": {
+		"authoritativeSources": ["repository-observation", "test-result"]
+	}
+}

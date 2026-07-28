@@ -1,0 +1,15 @@
+{
+	"contractVersion": 1,
+	"missionId": "M04-dup-req",
+	"revision": 1,
+	"title": "M04 Duplicate Requirement ID",
+	"objective": "Expected: INVALID due to duplicate requirement ID.",
+	"workstreams": [{"id": "WS-MAIN", "title": "Main", "order": 1}],
+	"requirements": [
+		{"id": "REQ-DUP", "workstreamId": "WS-MAIN", "kind": "EXPLICIT", "statement": "A", "sourceRefs": [], "dependencies": [], "acceptanceCriteria": [{"id": "AC-1", "statement": "Done", "requiredEvidence": []}]},
+		{"id": "REQ-DUP", "workstreamId": "WS-MAIN", "kind": "EXPLICIT", "statement": "B", "sourceRefs": [], "dependencies": [], "acceptanceCriteria": [{"id": "AC-2", "statement": "Done", "requiredEvidence": []}]}
+	],
+	"constraints": [],
+	"forbiddenActions": [],
+	"evidencePolicy": {"authoritativeSources": []}
+}

@@ -1,0 +1,38 @@
+{
+	"contractVersion": 1,
+	"missionId": "M01-minimal-valid",
+	"revision": 1,
+	"title": "M01 Minimal Valid Explicit Mission",
+	"objective": "Validate that a minimal mission contract passes validation.",
+	"workstreams": [
+		{ "id": "WS-MAIN", "title": "Main Workstream", "order": 1 }
+	],
+	"requirements": [
+		{
+			"id": "REQ-001",
+			"workstreamId": "WS-MAIN",
+			"kind": "EXPLICIT",
+			"statement": "Implement a simple feature.",
+			"sourceRefs": ["user-prompt"],
+			"dependencies": [],
+			"acceptanceCriteria": [
+				{
+					"id": "AC-001",
+					"statement": "Feature works as expected.",
+					"requiredEvidence": [
+						{ "allowedTypes": ["test-result"], "minAuthority": "test-result" }
+					]
+				}
+			]
+		}
+	],
+	"constraints": [
+		{ "id": "C-001", "kind": "PROCESS", "statement": "Do not push to main.", "sourceRefs": [], "severity": "error" }
+	],
+	"forbiddenActions": [
+		{ "id": "FA-001", "statement": "Do not force-push.", "sourceRefs": [], "severity": "error" }
+	],
+	"evidencePolicy": {
+		"authoritativeSources": ["test-result", "operator-confirmation"]
+	}
+}

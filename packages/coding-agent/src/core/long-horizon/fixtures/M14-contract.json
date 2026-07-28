@@ -1,0 +1,30 @@
+{
+  "contractVersion": 1,
+  "missionId": "M14-digest-mismatch",
+  "revision": 2,
+  "title": "M14 Contract Digest Mismatch Rejected",
+  "objective": "This contract differs from the ledger-bound contract — used to test digest mismatch detection.",
+  "workstreams": [{ "id": "WS-MAIN", "title": "Main", "order": 1 }],
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "workstreamId": "WS-MAIN",
+      "kind": "EXPLICIT",
+      "statement": "Feature whose contract will be modified.",
+      "sourceRefs": ["spec"],
+      "dependencies": [],
+      "acceptanceCriteria": [
+        {
+          "id": "AC-001",
+          "statement": "Feature works.",
+          "requiredEvidence": [
+            { "allowedTypes": ["test-result"], "minAuthority": "test-result" }
+          ]
+        }
+      ]
+    }
+  ],
+  "constraints": [],
+  "forbiddenActions": [],
+  "evidencePolicy": { "authoritativeSources": ["test-result"] }
+}

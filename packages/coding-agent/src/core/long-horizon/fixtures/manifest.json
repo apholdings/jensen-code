@@ -1,0 +1,137 @@
+{
+  "description": "Fixture expectation manifest for M01-M20 and M14-alt. Each fixture declares its expected behavior for contract validation, ledger initialization, and semantic scenarios.",
+  "fixtures": {
+    "M01": {
+      "contractValid": true,
+      "requirementCount": 1,
+      "acceptanceCriterionCount": 1,
+      "initialRevision": 0,
+      "initialStates": { "REQ-001": "UNASSESSED" }
+    },
+    "M02": {
+      "contractValid": true,
+      "requirementCount": 2,
+      "initialStates": { "REQ-E1": "UNASSESSED", "REQ-I1": "UNASSESSED" }
+    },
+    "M03": {
+      "contractValid": true,
+      "requirementCount": 1,
+      "workstreamCount": 3
+    },
+    "M04": {
+      "contractValid": false,
+      "errorContains": "Duplicate requirement id"
+    },
+    "M05": {
+      "contractValid": false,
+      "errorContains": "references unknown requirement"
+    },
+    "M06": {
+      "contractValid": false,
+      "errorContains": "cycle"
+    },
+    "M07": {
+      "contractValid": false,
+      "errorContains": "cycle"
+    },
+    "M08": {
+      "contractValid": true,
+      "requirementCount": 2,
+      "initialRevision": 0,
+      "initialStates": { "REQ-001": "UNASSESSED", "REQ-002": "UNASSESSED" }
+    },
+    "M09": {
+      "contractValid": true,
+      "initialRevision": 0,
+      "initialStates": { "REQ-001": "UNASSESSED" },
+      "lifecycleSequence": ["PENDING", "IN_PROGRESS", "IMPLEMENTED_UNVERIFIED"],
+      "finalState": "IMPLEMENTED_UNVERIFIED",
+      "expectedCompletionCandidate": false
+    },
+    "M10": {
+      "contractValid": true,
+      "initialStates": { "REQ-001": "UNASSESSED" },
+      "authoritativeSatisfaction": {
+        "fromState": "IMPLEMENTED_UNVERIFIED",
+        "toState": "SATISFIED",
+        "requiredEvidenceType": "test-result",
+        "completionCandidate": true
+      }
+    },
+    "M11": {
+      "contractValid": true,
+      "initialStates": { "REQ-001": "UNASSESSED" },
+      "selfClaimRejected": {
+        "fromState": "IMPLEMENTED_UNVERIFIED",
+        "rejectedTransition": "SATISFIED",
+        "errorCode": "SELF_AUTH_SATISFIED"
+      }
+    },
+    "M12": {
+      "contractValid": true,
+      "initialStates": { "REQ-001": "UNASSESSED" },
+      "illegalSatisfiedRejected": true,
+      "rejectedTransitions": ["UNASSESSED→SATISFIED", "PENDING→SATISFIED", "IN_PROGRESS→SATISFIED", "BLOCKED→SATISFIED"]
+    },
+    "M13": {
+      "contractValid": true,
+      "initialStates": { "REQ-001": "UNASSESSED" },
+      "staleRevisionRejected": true,
+      "expectedRevisionAfterFailedOp": 1
+    },
+    "M14": {
+      "contractValid": true,
+      "digestMismatchTest": true
+    },
+    "M14-alt": {
+      "contractValid": true,
+      "digestMismatchTest": true,
+      "description": "Alternate contract with same missionId as M14 but different revision/title — used as the comparison contract in digest mismatch tests."
+    },
+    "M15": {
+      "contractValid": true,
+      "initialStates": { "REQ-001": "UNASSESSED" },
+      "blockerFlow": {
+        "sequence": ["PENDING", "IN_PROGRESS", "PENDING", "IN_PROGRESS", "IMPLEMENTED_UNVERIFIED"],
+        "finalState": "IMPLEMENTED_UNVERIFIED"
+      }
+    },
+    "M16": {
+      "contractValid": true,
+      "requirementCount": 2,
+      "initialRevision": 0,
+      "initialStates": { "REQ-001": "UNASSESSED", "REQ-NA": "NOT_APPLICABLE" }
+    },
+    "M17": {
+      "contractValid": true,
+      "initialStates": { "REQ-001": "UNASSESSED" },
+      "regressionFlow": {
+        "sequence": ["PENDING", "IN_PROGRESS", "IMPLEMENTED_UNVERIFIED", "SATISFIED", "IMPLEMENTED_UNVERIFIED", "SATISFIED"],
+        "finalState": "SATISFIED"
+      }
+    },
+    "M18": {
+      "contractValid": true,
+      "initialStates": { "REQ-001": "UNASSESSED" },
+      "duplicateEvidenceRejected": true
+    },
+    "M19": {
+      "contractValid": true,
+      "initialStates": { "REQ-001": "UNASSESSED" },
+      "incompleteCriteria": {
+        "rejectedTransition": "SATISFIED",
+        "errorContains": "evidence"
+      }
+    },
+    "M20": {
+      "contractValid": true,
+      "requirementCount": 1,
+      "initialRevision": 0,
+      "initialStates": { "REQ-001": "UNASSESSED" },
+      "fullSatisfaction": {
+        "finalState": "SATISFIED",
+        "completionCandidate": true
+      }
+    }
+  }
+}

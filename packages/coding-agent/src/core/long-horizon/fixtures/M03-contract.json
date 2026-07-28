@@ -1,0 +1,28 @@
+{
+	"contractVersion": 1,
+	"missionId": "M03-hierarchical-workstreams",
+	"revision": 1,
+	"title": "M03 Hierarchical Workstreams",
+	"objective": "Test that valid hierarchical workstreams pass validation.",
+	"workstreams": [
+		{ "id": "WS-ROOT", "title": "Root Workstream", "order": 1 },
+		{ "id": "WS-CHILD", "title": "Child Workstream", "parentId": "WS-ROOT", "order": 2 },
+		{ "id": "WS-GRANDCHILD", "title": "Grandchild Workstream", "parentId": "WS-CHILD", "order": 3 }
+	],
+	"requirements": [
+		{
+			"id": "REQ-001",
+			"workstreamId": "WS-GRANDCHILD",
+			"kind": "EXPLICIT",
+			"statement": "Implement feature in grandchild workstream.",
+			"sourceRefs": [],
+			"dependencies": [],
+			"acceptanceCriteria": [
+				{ "id": "AC-001", "statement": "Done.", "requiredEvidence": [] }
+			]
+		}
+	],
+	"constraints": [],
+	"forbiddenActions": [],
+	"evidencePolicy": { "authoritativeSources": [] }
+}

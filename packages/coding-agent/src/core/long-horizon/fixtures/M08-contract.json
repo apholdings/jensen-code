@@ -1,0 +1,15 @@
+{
+	"contractVersion": 1,
+	"missionId": "M08-ledger-init",
+	"revision": 1,
+	"title": "M08 Valid Ledger Initialization",
+	"objective": "Initialize a valid ledger from contract.",
+	"workstreams": [{"id": "WS-MAIN", "title": "Main", "order": 1}],
+	"requirements": [
+		{"id": "REQ-001", "workstreamId": "WS-MAIN", "kind": "EXPLICIT", "statement": "Implement feature.", "sourceRefs": [], "dependencies": [], "acceptanceCriteria": [{"id": "AC-1", "statement": "Done", "requiredEvidence": []}]},
+		{"id": "REQ-002", "workstreamId": "WS-MAIN", "kind": "INFERRED", "statement": "Run tests.", "rationale": "Best practice.", "sourceRefs": [], "dependencies": ["REQ-001"], "acceptanceCriteria": [{"id": "AC-2", "statement": "Tests pass", "requiredEvidence": []}]}
+	],
+	"constraints": [],
+	"forbiddenActions": [],
+	"evidencePolicy": {"authoritativeSources": []}
+}

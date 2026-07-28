@@ -1,0 +1,30 @@
+{
+  "contractVersion": 1,
+  "missionId": "M11-self-auth-claim",
+  "revision": 1,
+  "title": "M11 Self-Authorized Claim Rejected",
+  "objective": "Verify that agent self-authorized claim evidence cannot satisfy criteria.",
+  "workstreams": [{ "id": "WS-MAIN", "title": "Main", "order": 1 }],
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "workstreamId": "WS-MAIN",
+      "kind": "EXPLICIT",
+      "statement": "Requirement requiring authoritative evidence only.",
+      "sourceRefs": ["spec"],
+      "dependencies": [],
+      "acceptanceCriteria": [
+        {
+          "id": "AC-001",
+          "statement": "Must be verified by a trusted source.",
+          "requiredEvidence": [
+            { "minAuthority": "test-result" }
+          ]
+        }
+      ]
+    }
+  ],
+  "constraints": [],
+  "forbiddenActions": [],
+  "evidencePolicy": { "authoritativeSources": ["test-result", "operator-confirmation"] }
+}

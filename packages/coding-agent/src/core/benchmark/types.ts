@@ -225,15 +225,9 @@ export interface LongHorizonRunReport {
 	metadata?: Record<string, unknown>;
 }
 
-export type RequirementEvaluationStatus =
-	| "UNASSESSED"
-	| "PENDING"
-	| "IN_PROGRESS"
-	| "IMPLEMENTED_UNVERIFIED"
-	| "SATISFIED"
-	| "BLOCKED"
-	| "NOT_APPLICABLE"
-	| "FAILED";
+import type { RequirementEvaluationStatus } from "../long-horizon/domain-types.js";
+// Re-export for backward compat (existing consumers import from benchmark/types.ts)
+export type { RequirementEvaluationStatus };
 
 export interface RunRequirementResult {
 	requirementId: string;

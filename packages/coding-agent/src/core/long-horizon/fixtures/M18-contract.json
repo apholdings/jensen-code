@@ -1,0 +1,30 @@
+{
+  "contractVersion": 1,
+  "missionId": "M18-dup-evidence",
+  "revision": 1,
+  "title": "M18 Duplicate Evidence ID Rejected",
+  "objective": "Verify that duplicate evidence IDs are rejected.",
+  "workstreams": [{ "id": "WS-MAIN", "title": "Main", "order": 1 }],
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "workstreamId": "WS-MAIN",
+      "kind": "EXPLICIT",
+      "statement": "Feature for duplicate evidence test.",
+      "sourceRefs": ["spec"],
+      "dependencies": [],
+      "acceptanceCriteria": [
+        {
+          "id": "AC-001",
+          "statement": "Verified.",
+          "requiredEvidence": [
+            { "allowedTypes": ["test-result"], "minAuthority": "test-result" }
+          ]
+        }
+      ]
+    }
+  ],
+  "constraints": [],
+  "forbiddenActions": [],
+  "evidencePolicy": { "authoritativeSources": ["test-result"] }
+}

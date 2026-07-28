@@ -1,0 +1,30 @@
+{
+  "contractVersion": 1,
+  "missionId": "M15-blocker-reopen",
+  "revision": 1,
+  "title": "M15 Valid Blocker and Reopen Flow",
+  "objective": "Verify BLOCKED state can transition to IN_PROGRESS and continue lifecycle.",
+  "workstreams": [{ "id": "WS-MAIN", "title": "Main", "order": 1 }],
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "workstreamId": "WS-MAIN",
+      "kind": "EXPLICIT",
+      "statement": "Feature that can be blocked and reopened.",
+      "sourceRefs": ["spec"],
+      "dependencies": [],
+      "acceptanceCriteria": [
+        {
+          "id": "AC-001",
+          "statement": "Feature works.",
+          "requiredEvidence": [
+            { "allowedTypes": ["test-result"], "minAuthority": "test-result" }
+          ]
+        }
+      ]
+    }
+  ],
+  "constraints": [],
+  "forbiddenActions": [],
+  "evidencePolicy": { "authoritativeSources": ["test-result", "operator-confirmation"] }
+}

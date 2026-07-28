@@ -1,0 +1,30 @@
+{
+  "contractVersion": 1,
+  "missionId": "M10-satisfied-auth",
+  "revision": 1,
+  "title": "M10 Authoritative Evidence to SATISFIED",
+  "objective": "Verify that SATISFIED requires authoritative evidence passing all acceptance criteria.",
+  "workstreams": [{ "id": "WS-MAIN", "title": "Main", "order": 1 }],
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "workstreamId": "WS-MAIN",
+      "kind": "EXPLICIT",
+      "statement": "Implement feature verified by authoritative evidence.",
+      "sourceRefs": ["spec"],
+      "dependencies": [],
+      "acceptanceCriteria": [
+        {
+          "id": "AC-001",
+          "statement": "All tests pass.",
+          "requiredEvidence": [
+            { "allowedTypes": ["test-result"], "minAuthority": "test-result" }
+          ]
+        }
+      ]
+    }
+  ],
+  "constraints": [],
+  "forbiddenActions": [],
+  "evidencePolicy": { "authoritativeSources": ["test-result", "operator-confirmation", "trusted-collector"] }
+}

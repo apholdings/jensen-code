@@ -1,0 +1,15 @@
+{
+	"contractVersion": 1,
+	"missionId": "M06-dep-cycle",
+	"revision": 1,
+	"title": "M06 Dependency Cycle",
+	"objective": "Expected: INVALID due to dependency cycle.",
+	"workstreams": [{"id": "WS-MAIN", "title": "Main", "order": 1}],
+	"requirements": [
+		{"id": "REQ-A", "workstreamId": "WS-MAIN", "kind": "EXPLICIT", "statement": "A", "sourceRefs": [], "dependencies": ["REQ-B"], "acceptanceCriteria": [{"id": "AC-A", "statement": "Done", "requiredEvidence": []}]},
+		{"id": "REQ-B", "workstreamId": "WS-MAIN", "kind": "EXPLICIT", "statement": "B", "sourceRefs": [], "dependencies": ["REQ-A"], "acceptanceCriteria": [{"id": "AC-B", "statement": "Done", "requiredEvidence": []}]}
+	],
+	"constraints": [],
+	"forbiddenActions": [],
+	"evidencePolicy": {"authoritativeSources": []}
+}
