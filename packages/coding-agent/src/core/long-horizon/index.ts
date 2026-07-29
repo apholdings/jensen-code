@@ -10,6 +10,28 @@ export { toCanonicalJson } from "./canonical-json.js";
 // CLI
 export { handleLongHorizonCommand } from "./cli.js";
 export { computeMissionContractDigest } from "./contract-digest.js";
+// Execution State Machine types
+export type {
+	MissionExecutionErrorCode,
+	MissionExecutionInspectionResult,
+	MissionExecutionRecordV1,
+	MissionExecutionState,
+	MissionExecutionTransitionKind,
+	MissionExecutionTransitionRecordV1,
+	MissionExecutionTransitionRequestV1,
+	MissionExecutionTransitionResult,
+	MissionExecutionValidationResult,
+	ResumableMissionExecutionState,
+} from "./execution-state-machine.js";
+// Execution State Machine
+export {
+	applyMissionExecutionTransition,
+	EXECUTION_COMPLETION_CAPABILITY,
+	initializeMissionExecution,
+	inspectMissionExecution,
+	MISSION_EXECUTION_RECORD_VERSION,
+	validateMissionExecutionRecord,
+} from "./execution-state-machine.js";
 export {
 	deriveCurrentStates,
 	getRequirementStatus,
@@ -63,7 +85,6 @@ export {
 	isTrustedMutationContext,
 	isTrustedValidationContext,
 } from "./trusted-context.js";
-
 // Types
 export type {
 	AcceptanceCriterion,

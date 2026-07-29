@@ -65,7 +65,8 @@ export type LedgerCapability =
 	| "evidence:trusted-collector"
 	| "transition:satisfy"
 	| "transition:not-applicable"
-	| "transition:operator-override";
+	| "transition:operator-override"
+	| "execution:complete";
 
 export type EvidenceLedgerCapability = Extract<
 	LedgerCapability,
@@ -87,6 +88,7 @@ const ALL_CAPABILITIES: ReadonlySet<string> = new Set([
 	"transition:satisfy",
 	"transition:not-applicable",
 	"transition:operator-override",
+	"execution:complete",
 ]);
 
 const EVIDENCE_CAPABILITIES: ReadonlySet<string> = new Set([

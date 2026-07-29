@@ -21,6 +21,14 @@ import { randomBytes } from "crypto";
 import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "fs";
 import { dirname, resolve } from "path";
 import { computeMissionContractDigest } from "./contract-digest.js";
+import {
+	applyMissionExecutionTransition,
+	initializeMissionExecution,
+	inspectMissionExecution,
+	type MissionExecutionRecordV1,
+	type MissionExecutionTransitionKind,
+	validateMissionExecutionRecord,
+} from "./execution-state-machine.js";
 import { inspectLedgerStructure } from "./ledger-summary.js";
 import { validateMissionContract } from "./mission-contract-schema.js";
 import {
@@ -38,6 +46,50 @@ import type {
 	TransitionRequest,
 	ValidationResult,
 } from "./types.js";
+
+// =============================================================================
+// Strict expectedRevision parser
+// =============================================================================
+
+/**
+ * Parse a string as a canonical non-negative integer suitable for use as
+ * an expectedRevision value. Rejects:
+ *  - decimals: "1.0", "12.5"
+ *  - scientific notation: "1e2"
+ *  - leading sign: "+1", "-1"
+ *  - leading zeros: "01" (except "0" itself)
+ *  - NaN, Infinity, -Infinity
+ *  - empty or whitespace-only strings
+ *  - values exceeding Number.MAX_SAFE_INTEGER
+ *
+ * Accepts only: "0", "1", "12", "9007199254740991"
+ */
+export function parseStrictNonNegativeInteger(raw: string): number | undefined {
+	if (raw === undefined || raw === null) return undefined;
+	if (typeof raw !== "string") return undefined;
+
+	// Reject empty or whitespace-only
+	if (raw.length === 0) return undefined;
+	if (raw.trim().length === 0) return undefined;
+
+	// Must match canonical decimal: one or more digits, no leading sign, no leading zero except "0" itself
+	if (!/^(?:0|[1-9][0-9]*)$/.test(raw)) {
+		return undefined;
+	}
+
+	const value = Number(raw);
+
+	// Number() for canonical integer strings should equal the integer value;
+	// additionally require integer and safe.
+	if (!Number.isSafeInteger(value)) return undefined;
+	if (value < 0) return undefined;
+
+	return value;
+}
+
+// =============================================================================
+// Utilities
+// =============================================================================
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
@@ -280,6 +332,11 @@ export interface LongHorizonCommandOptions {
 	blockerReference?: string;
 	evidenceInput?: string;
 	transitionId?: string;
+
+	// For execution operations
+	execution?: string;
+	executionId?: string;
+	kind?: string;
 }
 
 export async function handleLongHorizonCommand(args: string[]): Promise<boolean> {
@@ -314,6 +371,14 @@ export async function handleLongHorizonCommand(args: string[]): Promise<boolean>
 				return await handleLedgerTransition(options);
 			case "ledger-inspect":
 				return await handleLedgerInspect(options);
+			case "execution-init":
+				return await handleExecutionInit(options);
+			case "execution-inspect":
+				return await handleExecutionInspect(options);
+			case "execution-validate":
+				return await handleExecutionValidate(options);
+			case "execution-transition":
+				return await handleExecutionTransition(options);
 			default:
 				return false; // Let the existing benchmark handler take over
 		}
@@ -385,8 +450,15 @@ function parseLongHorizonArgs(args: string[]): LongHorizonCommandOptions {
 		}
 
 		if (arg === "--expected-revision" && i + 1 < args.length) {
-			const val = parseInt(args[++i], 10);
-			if (!Number.isNaN(val)) options.expectedRevision = val;
+			const raw = args[++i];
+			const parsed = parseStrictNonNegativeInteger(raw);
+			if (parsed === undefined) {
+				// Store a sentinel so the handler can produce a typed error
+				(options as LongHorizonCommandOptions & { _invalidExpectedRevision?: string })._invalidExpectedRevision =
+					raw;
+			} else {
+				options.expectedRevision = parsed;
+			}
 			i++;
 			continue;
 		}
@@ -426,6 +498,24 @@ function parseLongHorizonArgs(args: string[]): LongHorizonCommandOptions {
 
 		if (arg === "--transition-id" && i + 1 < args.length) {
 			options.transitionId = args[++i];
+			i++;
+			continue;
+		}
+
+		if (arg === "--execution" && i + 1 < args.length) {
+			options.execution = args[++i];
+			i++;
+			continue;
+		}
+
+		if (arg === "--execution-id" && i + 1 < args.length) {
+			options.executionId = args[++i];
+			i++;
+			continue;
+		}
+
+		if (arg === "--kind" && i + 1 < args.length) {
+			options.kind = args[++i];
 			i++;
 			continue;
 		}
@@ -472,6 +562,29 @@ function parseLongHorizonArgs(args: string[]): LongHorizonCommandOptions {
 			}
 		}
 
+		if (arg === "execution") {
+			if (i + 1 < args.length && args[i + 1] === "init") {
+				options.command = "execution-init";
+				i += 2;
+				continue;
+			}
+			if (i + 1 < args.length && args[i + 1] === "inspect") {
+				options.command = "execution-inspect";
+				i += 2;
+				continue;
+			}
+			if (i + 1 < args.length && args[i + 1] === "validate") {
+				options.command = "execution-validate";
+				i += 2;
+				continue;
+			}
+			if (i + 1 < args.length && args[i + 1] === "transition") {
+				options.command = "execution-transition";
+				i += 2;
+				continue;
+			}
+		}
+
 		// "evaluate" subcommand — let existing handler take over
 		if (arg === "evaluate") {
 			return options; // No command set, fall through to existing handler
@@ -501,6 +614,12 @@ ${chalk.bold("Requirement Ledger Commands:")}
   ledger add-evidence  Add an evidence record to the ledger (append-only)
   ledger transition    Apply a state transition to a requirement
   ledger inspect       Display a summary of the ledger
+
+${chalk.bold("Execution State Machine Commands:")}
+  execution init       Initialize a mission execution record (starts in PLANNING)
+  execution inspect    Inspect an execution record structurally (untrusted)
+  execution validate   Validate an execution record against its contract
+  execution transition Apply a state transition to an execution record
 
 ${chalk.bold("Common Options:")}
   --contract <path>           Path to mission contract JSON file
@@ -990,5 +1109,223 @@ function printTextStructuralInspection(summary: StructuralLedgerInspection): voi
 	}
 	if (summary.failedRequirements.length > 0) {
 		console.log(chalk.red(`Failed: ${summary.failedRequirements.join(", ")}`));
+	}
+}
+
+// =============================================================================
+// Execution State Machine Commands
+// =============================================================================
+
+const VALID_EXECUTION_KINDS: ReadonlySet<string> = new Set([
+	"START_EXECUTION",
+	"REQUEST_VERIFICATION",
+	"RETURN_TO_EXECUTION",
+	"REQUEST_COMPLETION_REVIEW",
+	"RETURN_TO_VERIFICATION",
+	"APPROVE_COMPLETION",
+	"BLOCK",
+	"RESUME",
+	"FAIL",
+	"CANCEL",
+]);
+
+async function handleExecutionInit(options: LongHorizonCommandOptions): Promise<boolean> {
+	if (!options.contract || !options.executionId) {
+		console.error(chalk.red("Error: --contract and --execution-id are required"));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const contract = readContractFileAndParse(options.contract);
+	if (!contract) return true;
+
+	let record: MissionExecutionRecordV1;
+	try {
+		record = initializeMissionExecution(contract, options.executionId);
+	} catch (err: unknown) {
+		const message = err instanceof Error ? err.message : "Unknown error";
+		console.error(chalk.red(`Error: ${message}`));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const format = options.format ?? "text";
+	writeExecutionOutput(record, options, format);
+	return true;
+}
+
+async function handleExecutionInspect(options: LongHorizonCommandOptions): Promise<boolean> {
+	if (!options.contract || !options.execution) {
+		console.error(chalk.red("Error: --contract and --execution are required"));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const contract = readContractFileAndParse(options.contract);
+	if (!contract) return true;
+
+	const record = readExecutionFile(options.execution);
+	if (!record) return true;
+
+	const inspection = inspectMissionExecution(contract, record);
+	const format = options.format ?? "text";
+
+	if (format === "json") {
+		const output = JSON.stringify(inspection, null, 2);
+		writeOutput(output, options);
+	} else {
+		if (inspection.valid) {
+			console.log(chalk.bold("Execution Record Inspection (structural only)"));
+			console.log(`${"Execution ID".padEnd(28)} ${inspection.executionId}`);
+			console.log(`${"Contract Digest".padEnd(28)} ${inspection.contractDigest}`);
+			console.log(`${"State".padEnd(28)} ${inspection.state}`);
+			console.log(`${"Revision".padEnd(28)} ${inspection.revision}`);
+			console.log(`${"Transition Count".padEnd(28)} ${inspection.transitionCount}`);
+			if (inspection.blockedFromState) {
+				console.log(`${"Blocked From".padEnd(28)} ${inspection.blockedFromState}`);
+			}
+			console.log(
+				`${chalk.yellow("Completion Approved".padEnd(28))} ${chalk.yellow("unavailable (trusted context required)")}`,
+			);
+		} else {
+			console.log(chalk.red(`Invalid: ${inspection.error}`));
+			process.exitCode = 1;
+		}
+	}
+
+	if (!inspection.valid) process.exitCode = 1;
+	return true;
+}
+
+async function handleExecutionValidate(options: LongHorizonCommandOptions): Promise<boolean> {
+	if (!options.contract || !options.execution) {
+		console.error(chalk.red("Error: --contract and --execution are required"));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const contract = readContractFileAndParse(options.contract);
+	if (!contract) return true;
+
+	const record = readExecutionFile(options.execution);
+	if (!record) return true;
+
+	const result = validateMissionExecutionRecord(contract, record);
+	const format = options.format ?? "text";
+
+	if (format === "json") {
+		const output = JSON.stringify(result, null, 2);
+		writeOutput(output, options);
+	} else {
+		if (result.valid) {
+			console.log(chalk.green("Execution record is valid"));
+		} else {
+			console.log(chalk.red(`Invalid: ${result.error}`));
+		}
+	}
+
+	if (!result.valid) process.exitCode = 1;
+	return true;
+}
+
+async function handleExecutionTransition(options: LongHorizonCommandOptions): Promise<boolean> {
+	if (!options.contract || !options.execution || !options.transitionId || !options.kind) {
+		console.error(chalk.red("Error: --contract, --execution, --transition-id, and --kind are required"));
+		process.exitCode = 1;
+		return true;
+	}
+	if (options.expectedRevision === undefined) {
+		const invalidRev = (options as LongHorizonCommandOptions & { _invalidExpectedRevision?: string })
+			._invalidExpectedRevision;
+		if (invalidRev !== undefined) {
+			console.error(
+				chalk.red(`Error: invalid-expected-revision: "${invalidRev}" is not a valid non-negative integer`),
+			);
+		} else {
+			console.error(chalk.red("Error: --expected-revision is required"));
+		}
+		process.exitCode = 1;
+		return true;
+	}
+
+	if (!VALID_EXECUTION_KINDS.has(options.kind)) {
+		console.error(chalk.red(`Error: invalid transition kind: "${options.kind}"`));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const contract = readContractFileAndParse(options.contract);
+	if (!contract) return true;
+
+	const record = readExecutionFile(options.execution);
+	if (!record) return true;
+
+	// APPROVE_COMPLETION requires trusted context — the generic CLI cannot mint one.
+	// Reject atomically before any mutation.
+	if (options.kind === "APPROVE_COMPLETION") {
+		console.error(
+			chalk.red(
+				"Error: TRUSTED_VALIDATION_CONTEXT_REQUIRED: APPROVE_COMPLETION requires a trusted validation context (not available through generic CLI)",
+			),
+		);
+		process.exitCode = 1;
+		return true;
+	}
+
+	const result = applyMissionExecutionTransition(contract, record, {
+		transitionId: options.transitionId,
+		expectedRevision: options.expectedRevision,
+		kind: options.kind as MissionExecutionTransitionKind,
+	});
+
+	if (!result.ok) {
+		console.error(chalk.red(`Error: ${result.code ? `${result.code}: ` : ""}${result.error}`));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const format = options.format ?? "text";
+	writeExecutionOutput(result.record, options, format);
+	return true;
+}
+
+// =============================================================================
+// Execution file I/O
+// =============================================================================
+
+function readExecutionFile(path: string): MissionExecutionRecordV1 | null {
+	const raw = readFileContent(path);
+	if (!raw) return null;
+	try {
+		const parsed = JSON.parse(raw) as MissionExecutionRecordV1;
+		return parsed;
+	} catch {
+		console.error(chalk.red("Error parsing execution record JSON"));
+		process.exitCode = 1;
+		return null;
+	}
+}
+
+function writeExecutionOutput(
+	record: MissionExecutionRecordV1,
+	options: LongHorizonCommandOptions,
+	format: "text" | "json",
+): void {
+	if (format === "json") {
+		const output = JSON.stringify(record, null, 2);
+		writeOutput(output, options);
+	} else {
+		const lines = [
+			`Execution: ${record.executionId}`,
+			`Contract Digest: ${record.contractDigest}`,
+			`State: ${record.state}`,
+			`Revision: ${record.revision}`,
+			`Transitions: ${record.transitions.length}`,
+		];
+		if (record.blockedFromState) {
+			lines.push(`Blocked From: ${record.blockedFromState}`);
+		}
+		const text = lines.join("\n");
+		writeOutput(text, options);
 	}
 }
