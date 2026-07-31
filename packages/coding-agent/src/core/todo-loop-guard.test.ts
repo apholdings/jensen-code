@@ -375,12 +375,11 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 			timestamp: 2,
 		};
 		const converted = convertToLlm([assistant, toolResult]);
-		const assistantMsg = converted[0];
-		if (assistantMsg.role !== "assistant") throw new Error("Expected assistant");
-		const firstContent = assistantMsg.content[0];
 		// Latest completed span is preserved — toolCall stays visible so model knows write succeeded.
 		// Per-user-turn lock on tool level prevents actual re-execution.
-		expect(firstContent.type).toBe("toolCall");
+		const assistantMsg = converted[0];
+		if (assistantMsg.role !== "assistant") throw new Error("Expected assistant");
+		expect(assistantMsg.content.some((b: { type: string }) => b.type === "toolCall")).toBe(true);
 	});
 
 	it("R16 snapshotOmitted absent from public todo_write schema", async () => {

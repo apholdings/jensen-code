@@ -83,9 +83,7 @@ declare module "@apholdings/jensen-agent-core" {
 	}
 }
 
-/**
- * Convert a BashExecutionMessage to user message text for LLM context.
- */
+/** Convert a BashExecutionMessage to user message text for LLM context. */
 export function bashExecutionToText(msg: BashExecutionMessage): string {
 	let text = `Ran \`${msg.command}\`\n`;
 	if (msg.output) {
@@ -120,7 +118,7 @@ export function createCompactionSummaryMessage(
 ): CompactionSummaryMessage {
 	return {
 		role: "compactionSummary",
-		summary: summary,
+		summary,
 		tokensBefore,
 		timestamp: new Date(timestamp).getTime(),
 	};
@@ -156,14 +154,15 @@ const TODO_WRITE_COMPACTED_TEXT =
 	"Todo snapshot omitted from historical call. Current state is available through todo_read." as const;
 
 /**
- * Keep persisted assistant messages intact for session replay and UI rendering while
- * excluding full todo snapshots from the model-facing conversation history.
+ * Fold older completed todoWrite spans atomically, preserving the most recent.
  *
- * Replaces **older** completed todo_write tool-call blocks with a compact text placeholder
- * that cannot be replayed as a valid todo_write invocation.
+ * For each completed todo_write span (assistant.toolCall + matching toolResult),
+ * keep the **latest** one entirely intact. All earlier completed spans get their
+ * todoWrite toolCalls replaced with a neutral text placeholder and their results
+ * removed — atomically, so no half-span survives.
  *
- * Preserves the **most recently completed** todo_write span (call + result) so the model
- * can observe its own result and continue execution without retrying.
+ * Non-todo toolCalls are left untouched regardless of whether their assistant
+ * also contained a todoWrite call.
  */
 function compactTodoWriteCalls(
 	message: AssistantMessage,
@@ -172,11 +171,12 @@ function compactTodoWriteCalls(
 	msgIdx: number,
 	completedMsgIndices: ReadonlySet<number>,
 ): AssistantMessage {
-	// If this message isn't in the set of msgs with completed todoWrite calls, skip folding entirely
+	// Not an assistant or not part of any completed span → return as-is
 	if (!completedMsgIndices.has(msgIdx)) {
 		return message;
 	}
-	// If this message IS the latest completed span, keep everything intact
+
+	// Latest completed span: keep everything intact (call + result stay visible)
 	if (msgIdx === maxCompletedIdx) {
 		return message;
 	}
@@ -190,10 +190,7 @@ function compactTodoWriteCalls(
 			return block;
 		}
 		changed = true;
-		return {
-			type: "text" as const,
-			text: TODO_WRITE_COMPACTED_TEXT,
-		};
+		return { type: "text" as const, text: TODO_WRITE_COMPACTED_TEXT };
 	});
 
 	return changed ? { ...message, content } : message;
@@ -213,6 +210,8 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 	const pendingResultsByCallId = new Map<string, number>();
 	const completedMsgIndices = new Set<number>(); // assistant msg indices that contain completed todoWrite spans
 	let maxCompletedIndex = -1;
+
+	// Pass 1: identify completed todoWrite spans (reverse iteration)
 	for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex--) {
 		const message = messages[messageIndex];
 		if (message.role === "toolResult" && message.toolName === "todo_write") {
@@ -230,7 +229,6 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 			const pendingResults = pendingResultsByCallId.get(block.id) ?? 0;
 			if (pendingResults > 0) {
 				completedTodoWriteCalls.add(block);
-				// Track index for each call so we can preserve the most recent.
 				const prevIdx = completedTodoWriteIds.get(block.id) ?? -1;
 				completedTodoWriteIds.set(block.id, Math.max(prevIdx, messageIndex));
 				if (messageIndex > maxCompletedIndex) {
@@ -242,11 +240,11 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 		}
 	}
 
-	return messages
+	// Pass 2: fold historical spans, preserve latest
+	const folded = messages
 		.map((m, mIndex): Message | undefined => {
 			switch (m.role) {
 				case "bashExecution":
-					// Skip messages excluded from context (!! prefix)
 					if (m.excludeFromContext) {
 						return undefined;
 					}
@@ -257,11 +255,7 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 					};
 				case "custom": {
 					const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
-					return {
-						role: "user",
-						content,
-						timestamp: m.timestamp,
-					};
+					return { role: "user", content, timestamp: m.timestamp };
 				}
 				case "branchSummary":
 					return {
@@ -278,18 +272,12 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						timestamp: m.timestamp,
 					};
 				case "memoryContext":
-					return {
-						role: "user",
-						content: [{ type: "text" as const, text: m.content }],
-						timestamp: m.timestamp,
-					};
+					return { role: "user", content: [{ type: "text" as const, text: m.content }], timestamp: m.timestamp };
 				case "user":
 					return m;
 				case "toolResult":
-					// Remove orphaned tool results for **older** compacted todo_write spans.
-					// Preserve the tool result for the most recently completed span so
-					// the model can observe what the write produced.
-					// Only filter if this result belongs to a completed todo_write span.
+					// Remove results only for OLDER compacted todo_write spans.
+					// Keep the result for the most-recent span and all non-todo results.
 					if (completedTodoWriteIds.has(m.toolCallId)) {
 						const completedIdx = completedTodoWriteIds.get(m.toolCallId)!;
 						if (completedIdx < maxCompletedIndex) {
@@ -305,5 +293,7 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 					return undefined;
 			}
 		})
-		.filter((m) => m !== undefined);
+		.filter((m): m is Message => m !== undefined);
+
+	return folded;
 }

@@ -151,13 +151,15 @@ export function createTodoUpdateTool(
 
 			// Check loop guard
 			const guardResult = loopGuard.recordWrite(false);
-			if (guardResult.blocked) {
+			if (!guardResult.allowed) {
 				return {
 					content: [{ type: "text", text: guardResult.message! }],
 					details: {
 						loopGuardTriggered: true,
-						todoWriteTemporarilyBlocked: true,
-						requiredNextAction: guardResult.requiredNextAction,
+						todoWriteTemporarilyBlocked: guardResult.circuitOpen,
+						requiredNextAction: guardResult.message
+							? "execute a non-todo tool or return a useful response"
+							: undefined,
 					},
 				};
 			}

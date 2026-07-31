@@ -190,7 +190,9 @@ describe("todo_write model context", () => {
 		expect(execution.toolResult.content).toEqual([
 			{
 				type: "text",
-				text: expect.stringMatching(/^Todo list updated \(.*\)\.\s*Todo list is locked for this user turn/),
+				text: expect.stringMatching(
+					/^Todo list updated \(.*\)\. Revision .*\.?\s*Todo list is locked for this user turn/,
+				),
 			},
 		]);
 		expect(initial).not.toEqual(todos);

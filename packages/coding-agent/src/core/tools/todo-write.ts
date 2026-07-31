@@ -40,6 +40,19 @@ export interface TodoItem {
  * Per-user-turn lock marker.
  * Prevents duplicate todo_write within the same user turn.
  */
+export function createPerTurnLock(): PerTurnLock {
+	return {
+		currentTurn: 0,
+		lockedUntil: -1,
+		isActive() {
+			return this.lockedUntil === this.currentTurn;
+		},
+		setLockedForCurrentTurn() {
+			this.lockedUntil = this.currentTurn;
+		},
+	};
+}
+
 export interface PerTurnLock {
 	currentTurn: number;
 	lockedUntil: number;
@@ -115,7 +128,7 @@ export function createTodoWriteTool(
 				content: [
 					{
 						type: "text",
-						text: `${list.length} todo(s) already exist (${pending} pending, ${inProgress} in progress, ${completedCount} completed). The plan already exists. Do not call todo_write again during this user turn. Use todo_read, todo_update, or execute the active task.`,
+						text: `${list.length} todo(s) already exist (${pending} pending, ${inProgress} in progress, ${completedCount} completed). The plan is locked for this user turn — call it again.`,
 					},
 				],
 				details: {
@@ -184,13 +197,19 @@ export function createTodoWriteTool(
 
 		// Check loop guard
 		const guardResult = loopGuard.recordWrite(isNoOp);
-		if (guardResult.blocked) {
+		if (!guardResult.allowed) {
+			// Circuit breaker: activate turn lock so future writes are rejected at tool level
+			if (perTurnLock) {
+				perTurnLock.setLockedForCurrentTurn();
+			}
 			return {
-				content: [{ type: "text", text: guardResult.message! }],
+				content: [{ type: "text", text: guardResult.message ?? "Todo write is blocked by the loop guard." }],
 				details: {
 					loopGuardTriggered: true,
-					todoWriteTemporarilyBlocked: true,
-					requiredNextAction: guardResult.requiredNextAction,
+					todoWriteTemporarilyBlocked: guardResult.circuitOpen,
+					requiredNextAction: guardResult.message
+						? "execute a non-todo tool or return a useful response"
+						: undefined,
 				},
 			};
 		}
@@ -236,7 +255,7 @@ export function createTodoWriteTool(
 		const revision = getRevision?.();
 		const lockNote = "\n\nTodo list is locked for this user turn. Next permitted operations: todo_read, todo_update.";
 
-		const summary = `Todo list updated (${total} total: ${pending} pending, ${inProgress} in progress, ${completedCount} completed).${lockNote}`;
+		const summary = `Todo list updated (${total} total: ${pending} pending, ${inProgress} in progress, ${completedCount} completed). Revision ${revision ?? "new"}.${lockNote}`;
 
 		return {
 			content: [{ type: "text", text: summary }],

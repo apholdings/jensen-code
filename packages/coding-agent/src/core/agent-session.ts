@@ -121,7 +121,7 @@ import {
 import { TodoLoopGuard } from "./tools/todo-loop-guard.js";
 import { createTodoReadTool } from "./tools/todo-read.js";
 import { createTodoUpdateTool } from "./tools/todo-update.js";
-import { createTodoWriteTool, type PerTurnLock, type TodoItem } from "./tools/todo-write.js";
+import { createPerTurnLock, createTodoWriteTool, type TodoItem } from "./tools/todo-write.js";
 import {
 	buildUltraplanPlannerTask,
 	buildUltraplanRevisionTask,
@@ -370,16 +370,7 @@ export class AgentSession {
 	private _todos: TodoItem[] = [];
 	private _todoRevision = 0;
 	private _todoLoopGuard = new TodoLoopGuard();
-	private _todoPerTurnLock: PerTurnLock = {
-		currentTurn: 0,
-		lockedUntil: -1,
-		isActive() {
-			return false;
-		},
-		setLockedForCurrentTurn() {
-			this.lockedUntil = this.currentTurn;
-		},
-	};
+	private _todoPerTurnLock = createPerTurnLock();
 	private _todoReadSnapshot: { revision: number; timestamp: number } | null = null;
 	private _memoryItems: MemoryItem[] = [];
 	private _delegatedTasks: DelegatedTask[] = [];
@@ -763,6 +754,21 @@ export class AgentSession {
 			};
 			await this._extensionRunner.emit(extensionEvent);
 		} else if (event.type === "tool_execution_end") {
+			if (event.toolName === "todo_write") {
+				const details = event.result.details as Record<string, unknown> | undefined;
+
+				if (details?.circuitOpen || details?.todoWriteTemporarilyBlocked) {
+					// Circuit breaker tripped — hide todo_write from future provider requests
+					this._todoPerTurnLock.lockedUntil = this._todoPerTurnLock.currentTurn + 100; // effectively locked forever this turn
+					const activeNames = this.getActiveToolNames().filter((n) => n !== "todo_write");
+					this.setActiveToolsByName(activeNames);
+				} else if (event.result.details?.changed) {
+					// Successful state-mutating todo_write — hide from future provider requests in this turn
+					this._todoPerTurnLock.setLockedForCurrentTurn();
+					const activeNames = this.getActiveToolNames().filter((n) => n !== "todo_write");
+					this.setActiveToolsByName(activeNames);
+				}
+			}
 			if (!event.isError && event.toolName !== "todo_write" && event.toolName !== "todo_read") {
 				this._todoLoopGuard.resetOnNonTodoToolSuccess(event.toolName);
 			}
