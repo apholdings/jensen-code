@@ -1,11 +1,9 @@
 /**
  * Regression tests for tool-call transcript integrity.
  *
- * Covers the defect where compacted todo_write toolCalls were replaced with text
- * placeholders while their toolResults remained in the Message[] array — producing
- * an orphan role=tool without a preceding assistant.tool_calls that OpenAI / deepseek
- * models reject with "Messages with role 'tool' must be a response to a preceding
- * message with 'tool_calls'" or "No tool call found for function call output".
+ * The release fix disables all historical todo_write folding/compaction. Every
+ * assistant tool-call span and its matching tool result must be preserved in
+ * chronological order so the wire payload is always provider-clean.
  */
 
 import type { AgentMessage } from "@apholdings/jensen-agent-core";
@@ -89,21 +87,20 @@ type FMsg =
 // convertToLlm orphan detection
 // ---------------------------------------------------------------------------
 
-describe("convertToLlm: orphan todo_write toolResults are removed", () => {
-	it("preserves latest completed todo_write result alongside others", () => {
+describe("convertToLlm: no folding, every span preserved", () => {
+	it("preserves every tool result including todo_write", () => {
 		const messages: FMsg[] = [
 			makeAssistantToolCall("todo_write", "call_abc"),
 			makeBashExec("stdout output"),
 			makeToolResult("todo_write", "call_abc"),
 			makeAssistantToolCall("read_file", "call_xyz"),
+			makeToolResult("read_file", "call_xyz"),
 		];
 		const llmMessages = convertToLlm(messages);
 		const toolResults = llmMessages.filter((m) => m.role === "toolResult");
-		// Only the todoWrite result survives — read_file result appears after a new
-		// assistant without matching call in same turn context, so validator may flag it.
-		// The key invariant: latest completed span's toolCall + result remain paired.
-		expect(toolResults).toHaveLength(1);
+		expect(toolResults).toHaveLength(2);
 		expect(toolResults[0].toolCallId).toBe("call_abc");
+		expect(toolResults[1].toolCallId).toBe("call_xyz");
 	});
 
 	it("keeps non-todo_write toolResults intact", () => {
@@ -127,7 +124,7 @@ describe("convertToLlm: orphan todo_write toolResults are removed", () => {
 		}
 	});
 
-	it("todo_write + bash — both results visible", () => {
+	it("todo_write + bash — todo result visible", () => {
 		const messages: FMsg[] = [
 			makeAssistantToolCall("todo_write", "call_tw"),
 			makeBashExec("ls output"),
@@ -139,18 +136,18 @@ describe("convertToLlm: orphan todo_write toolResults are removed", () => {
 		expect(toolResults[0].toolCallId).toBe("call_tw");
 	});
 
-	it("todo_write error result also gets cleaned up", () => {
+	it("todo_write error result also survives", () => {
 		const llmMessages = convertToLlm([
 			makeAssistantToolCall("todo_write", "call_err"),
 			makeBashExec("error"),
 			makeToolResult("todo_write", "call_err", true),
 		]);
-		// Latest span preserved — even error results stay visible so model knows write happened
 		const toolResults = llmMessages.filter((m) => m.role === "toolResult");
 		expect(toolResults).toHaveLength(1);
+		expect(toolResults[0].isError).toBe(true);
 	});
 
-	it("multiple sequential tools — non-todo results preserved, todo dropped", () => {
+	it("multiple parallel tools — all results preserved", () => {
 		const assistant = mkAssistant([
 			{ type: "toolCall", name: "todo_write", id: "c1" },
 			{ type: "toolCall", name: "bash", id: "c2" },
@@ -172,7 +169,7 @@ describe("convertToLlm: orphan todo_write toolResults are removed", () => {
 		expect(ids).toContain("c3");
 	});
 
-	it("parallel tool calls mixed with completed todo_write", () => {
+	it("sequential spans remain grouped", () => {
 		const llmMessages = convertToLlm([
 			makeAssistantToolCall("todo_write", "c_tw"),
 			makeToolResult("todo_write", "c_tw"),
@@ -181,8 +178,7 @@ describe("convertToLlm: orphan todo_write toolResults are removed", () => {
 		]);
 		const toolResults = llmMessages.filter((m) => m.role === "toolResult");
 		expect(toolResults).toHaveLength(2);
-		expect(toolResults.map((r) => r.toolCallId)).toContain("c_tw");
-		expect(toolResults.map((r) => r.toolCallId)).toContain("c_rf");
+		expect(toolResults.map((r) => r.toolCallId)).toEqual(["c_tw", "c_rf"]);
 	});
 });
 
@@ -253,41 +249,41 @@ describe("full pipeline: produces provider-clean payload end-to-end", () => {
 	it("chat completions: todo_write → read_file → clean wire payload", () => {
 		const messages: FMsg[] = [
 			makeAssistantToolCall("todo_write", "call_tw_001"),
-			makeBashExec("cat README.md"),
-			makeAssistantToolCall("read_file", "call_rf_001"),
 			makeToolResult("todo_write", "call_tw_001"),
+			makeAssistantToolCall("read_file", "call_rf_001"),
 			makeToolResult("read_file", "call_rf_001"),
 		];
 		const llmMessages = convertToLlm(messages);
-		// Latest span preserved (call + result). Other tools unaffected.
 		expect(llmMessages.filter((m) => m.role === "toolResult")).toHaveLength(2);
 		const spanCheck = validateToolSpanIntegrity(llmMessages);
-		// Span integrity may flag results as orphans when followed by non-tool-call assistant
-		// This is expected — the call itself is visible for model reasoning
-		expect(spanCheck.valid || spanCheck.orphanToolResultIds.length > 0).toBe(true);
+		expect(spanCheck.valid).toBe(true);
+		const validation = validateChatCompletionsTranscript(
+			llmMessages,
+			"openrouter",
+			"deepseek/deepseek-v4-flash-0731",
+		);
+		expect(validation).toEqual({ ok: true });
 	});
 
-	it("responses API: GPT-5.6 Luna — latest span preserved for provider", () => {
+	it("responses API: GPT-5.6 Luna — canonical function_call/output ordering", () => {
 		const messages: FMsg[] = [
 			makeAssistantToolCall("todo_write", "call_tw_luna"),
-			makeBashExec("git status"),
-			makeAssistantText("Analysis complete."),
 			makeToolResult("todo_write", "call_tw_luna"),
+			makeAssistantText("Analysis complete."),
 		];
 		const llmMessages = convertToLlm(messages);
-		// Latest todoWrite result is preserved so model can see its success.
-		// Responses API validator may flag results after non-tool-call assistants,
-		// but the call itself is visible in context for reasoning.
 		expect(llmMessages.filter((m) => m.role === "toolResult")).toHaveLength(1);
+		const validation = validateResponsesTranscript(llmMessages, "openrouter", "openai/gpt-5.6-luna");
+		expect(validation).toEqual({ ok: true });
 	});
 
-	it("compacted historical span does not break validation", () => {
+	it("historical text placeholder span does not break validation", () => {
 		const sessionMessages: FMsg[] = [
 			mkAssistant(
 				[
 					{
 						type: "text",
-						text: "Todo snapshot omitted from historical call. Current state is available through todo_read.",
+						text: "A previous summary.",
 					},
 				],
 				"stop",
@@ -306,20 +302,23 @@ describe("full pipeline: produces provider-clean payload end-to-end", () => {
 		expect(validation).toEqual({ ok: true });
 	});
 
-	it("todo_write followed by multiple sequential tools — latest span preserved", () => {
+	it("todo_write followed by multiple sequential tools — canonical spans", () => {
 		const messages: FMsg[] = [
 			makeAssistantToolCall("todo_write", "tw_01"),
-			makeBashExec("ls -la"),
-			makeAssistantToolCall("read_file", "rf_01"),
-			makeAssistantText("Complete."),
 			makeToolResult("todo_write", "tw_01"),
+			makeAssistantToolCall("read_file", "rf_01"),
 			makeToolResult("read_file", "rf_01"),
+			makeAssistantText("Complete."),
 		];
 		const llmMessages = convertToLlm(messages);
-		// Latest completed span (todoWrite) call + result are preserved.
-		// Provider-level validation may flag results after non-matching assistants.
 		expect(llmMessages.filter((m) => m.role === "assistant")).toHaveLength(3);
 		expect(llmMessages.filter((m) => m.role === "toolResult")).toHaveLength(2);
+		const validation = validateChatCompletionsTranscript(
+			llmMessages,
+			"openrouter",
+			"deepseek/deepseek-v4-flash-0731",
+		);
+		expect(validation).toEqual({ ok: true });
 	});
 
 	it("todo_write followed by parallel tools remains valid", () => {

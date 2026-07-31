@@ -119,16 +119,26 @@ export function createTodoWriteTool(
 	): Promise<{ content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> }> => {
 		// Per-user-turn lock: reject duplicate todo_write within the same turn.
 		if (perTurnLock?.isActive()) {
+			const firstDuplicate = loopGuard.recordDuplicate();
 			const list = [...getSessionTodos()];
 			const pending = list.filter((t) => t.status === "pending").length;
 			const inProgress = list.filter((t) => t.status === "in_progress").length;
 			const completedCount = list.filter((t) => t.status === "completed").length;
 
+			if (!firstDuplicate) {
+				// Second equivalent duplicate within the same user turn: terminate the
+				// active agent run locally. This must not mutate state and must not
+				// result in another provider request.
+				throw new Error(
+					"REPEATED_TOOL_CALL_LOOP: todo_write was called again after it was removed. The active agent run is terminated. Start a new user message to continue.",
+				);
+			}
+
 			return {
 				content: [
 					{
 						type: "text",
-						text: `${list.length} todo(s) already exist (${pending} pending, ${inProgress} in progress, ${completedCount} completed). The plan is locked for this user turn — call it again.`,
+						text: `${list.length} todo(s) already exist (${pending} pending, ${inProgress} in progress, ${completedCount} completed). The plan already exists. Do not call todo_write again during this user turn.\n\nContinue using another available tool or execute the active task.`,
 					},
 				],
 				details: {
@@ -195,25 +205,6 @@ export function createTodoWriteTool(
 		const current = getSessionTodos().map(normalizeTodoItem);
 		const isNoOp = areTodosEqual(normalized, current);
 
-		// Check loop guard
-		const guardResult = loopGuard.recordWrite(isNoOp);
-		if (!guardResult.allowed) {
-			// Circuit breaker: activate turn lock so future writes are rejected at tool level
-			if (perTurnLock) {
-				perTurnLock.setLockedForCurrentTurn();
-			}
-			return {
-				content: [{ type: "text", text: guardResult.message ?? "Todo write is blocked by the loop guard." }],
-				details: {
-					loopGuardTriggered: true,
-					todoWriteTemporarilyBlocked: guardResult.circuitOpen,
-					requiredNextAction: guardResult.message
-						? "execute a non-todo tool or return a useful response"
-						: undefined,
-				},
-			};
-		}
-
 		if (isNoOp) {
 			const pending = current.filter((t) => t.status === "pending").length;
 			const inProgress = current.filter((t) => t.status === "in_progress").length;
@@ -253,9 +244,13 @@ export function createTodoWriteTool(
 		}
 
 		const revision = getRevision?.();
-		const lockNote = "\n\nTodo list is locked for this user turn. Next permitted operations: todo_read, todo_update.";
 
-		const summary = `Todo list updated (${total} total: ${pending} pending, ${inProgress} in progress, ${completedCount} completed). Revision ${revision ?? "new"}.${lockNote}`;
+		const activeTask = normalized.find((t) => t.status === "in_progress");
+		const activeText = activeTask ? ` Active task: ${activeTask.activeForm || activeTask.content}.` : "";
+		const summary =
+			`Todo list updated (${total} total: ${pending} pending, ${inProgress} in progress, ${completedCount} completed). Revision ${revision ?? "new"}.` +
+			activeText +
+			"\n\ntodo_write is unavailable for the rest of this user turn. todo_read, todo_update, and other authorized tools remain available.";
 
 		return {
 			content: [{ type: "text", text: summary }],

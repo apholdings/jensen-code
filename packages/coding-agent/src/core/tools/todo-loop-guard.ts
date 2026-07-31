@@ -1,92 +1,52 @@
-export interface LoopGuardResult {
-	/** Whether this call should proceed */
-	allowed: boolean;
-	/** True if we're entering the final blocked range (not yet circuit open) */
-	isBlocked?: boolean;
-	/** True if circuit is fully open (3rd direct-blocked) */
-	circuitOpen?: boolean;
-	/** How many consecutive writes have occurred */
-	consecutiveWrites: number;
-	todoWriteTemporarilyBlocked?: boolean;
-	requiredNextAction?: string;
-	message?: string;
-}
-
 /**
- * Guard against consecutive todo_write calls without real non-todo progress.
+ * Guard against duplicate todo_write calls within a single user turn.
  *
- * Circuit breakers:
- * - Consecutive write count resets on non-todo tool success or new user message
- * - After 3 consecutive write calls (regardless of outcome), circuit opens
- * - Circuit opening halts the turn locally
+ * - The first write after the per-turn lock is active is blocked and returns a
+ *   paired TODO_WRITE_ALREADY_APPLIED rejection result.
+ * - The second equivalent duplicate terminates the active agent run locally with
+ *   REPEATED_TOOL_CALL_LOOP. The tool layer throws for this case.
  *
- * Every call that reaches recordWrite() counts toward consecutiveWrites.
- * When blockedCallCount >= 3, the circuit opens and the tool throws
- * REPEATED_TOOL_CALL_LOOP to halt the run immediately.
+ * Counts reset on non-todo tool success or a new user message.
  */
 export class TodoLoopGuard {
-	private consecutiveWriteCount = 0;
-	private blockedCallCount = 0;
+	private duplicateRejectionCount = 0;
 
 	/**
-	 * Record a write attempt to todo_write.
-	 * Returns LoopGuardResult indicating whether the call proceeds.
+	 * Record a todo_write attempt that was already rejected by the per-turn lock.
+	 * Returns whether the call may return a rejection result (first duplicate)
+	 * or must terminate the run (second equivalent duplicate).
 	 */
-	recordWrite(_isNoOp: boolean): LoopGuardResult {
-		this.consecutiveWriteCount++;
-
-		const result: LoopGuardResult = {
-			allowed: true,
-			consecutiveWrites: this.consecutiveWriteCount,
-		};
-
-		// All calls count toward the circuit breaker
-		this.blockedCallCount++;
-
-		if (this.blockedCallCount >= 3) {
-			result.circuitOpen = true;
-			result.allowed = false;
-			result.isBlocked = true;
-			result.message =
-				"Repeated todo_write attempts detected. All subsequent calls are terminated. Execute the current in-progress task now.";
-		}
-
-		return result;
+	recordDuplicate(): boolean {
+		this.duplicateRejectionCount++;
+		return this.duplicateRejectionCount <= 1;
 	}
 
 	/**
 	 * Reset loop guard after a successful non-todo tool call.
 	 */
 	resetOnNonTodoToolSuccess(_toolName: string): void {
-		this.consecutiveWriteCount = 0;
-		this.blockedCallCount = 0;
+		this.duplicateRejectionCount = 0;
 	}
 
 	/**
 	 * Reset loop guard when a new user message arrives.
 	 */
 	resetOnNewUserMessage(): void {
-		this.consecutiveWriteCount = 0;
-		this.blockedCallCount = 0;
+		this.duplicateRejectionCount = 0;
 	}
 
 	/**
 	 * Reset loop guard manually.
 	 */
 	reset(): void {
-		this.consecutiveWriteCount = 0;
-		this.blockedCallCount = 0;
+		this.duplicateRejectionCount = 0;
 	}
 
-	getConsecutiveCount(): number {
-		return this.consecutiveWriteCount;
+	getDuplicateRejectionCount(): number {
+		return this.duplicateRejectionCount;
 	}
 
-	getBlockedCallCount(): number {
-		return this.blockedCallCount;
-	}
-
-	isCircuitOpen(): boolean {
-		return this.blockedCallCount >= 3;
+	isDuplicateLoop(): boolean {
+		return this.duplicateRejectionCount >= 2;
 	}
 }

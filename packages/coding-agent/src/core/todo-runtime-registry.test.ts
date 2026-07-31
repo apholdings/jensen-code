@@ -290,6 +290,10 @@ describe("todo runtime tool registration", () => {
 				},
 				() => revision,
 				new TodoLoopGuard(),
+				{
+					getSnapshot: () => ({ revision: 3, timestamp: Date.now() }),
+					invalidateSnapshot: () => {},
+				},
 			);
 
 			expect(updateTool.name).toBe("todo_update");
@@ -320,6 +324,10 @@ describe("todo runtime tool registration", () => {
 				},
 				() => revision,
 				new TodoLoopGuard(),
+				{
+					getSnapshot: () => ({ revision: 3, timestamp: Date.now() }),
+					invalidateSnapshot: () => {},
+				},
 			);
 
 			const staleResult = await updateTool.execute("call_1", {
@@ -645,6 +653,10 @@ describe("integrated todo tool dispatcher simulation", () => {
 			},
 			() => revision,
 			new TodoLoopGuard(),
+			{
+				getSnapshot: () => ({ revision, timestamp: Date.now() }),
+				invalidateSnapshot: () => {},
+			},
 		);
 
 		// 1. todo_write with 7 items
@@ -738,6 +750,10 @@ describe("truthful tool result sequence", () => {
 			},
 			() => revision,
 			new TodoLoopGuard(),
+			{
+				getSnapshot: () => ({ revision, timestamp: Date.now() }),
+				invalidateSnapshot: () => {},
+			},
 		);
 
 		const results: Array<{
@@ -870,6 +886,10 @@ describe("session isolation for todo tools", () => {
 			},
 			() => revA,
 			new TodoLoopGuard(),
+			{
+				getSnapshot: () => ({ revision: 1, timestamp: Date.now() }),
+				invalidateSnapshot: () => {},
+			},
 		);
 
 		await updateA.execute("call_1", {

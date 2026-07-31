@@ -6,7 +6,7 @@
  */
 
 import type { AgentMessage } from "@apholdings/jensen-agent-core";
-import type { AssistantMessage, ImageContent, Message, TextContent, ToolCall } from "@apholdings/jensen-ai";
+import type { ImageContent, Message, TextContent } from "@apholdings/jensen-ai";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
@@ -150,52 +150,6 @@ export function createCustomMessage(
 	};
 }
 
-const TODO_WRITE_COMPACTED_TEXT =
-	"Todo snapshot omitted from historical call. Current state is available through todo_read." as const;
-
-/**
- * Fold older completed todoWrite spans atomically, preserving the most recent.
- *
- * For each completed todo_write span (assistant.toolCall + matching toolResult),
- * keep the **latest** one entirely intact. All earlier completed spans get their
- * todoWrite toolCalls replaced with a neutral text placeholder and their results
- * removed — atomically, so no half-span survives.
- *
- * Non-todo toolCalls are left untouched regardless of whether their assistant
- * also contained a todoWrite call.
- */
-function compactTodoWriteCalls(
-	message: AssistantMessage,
-	completedToolCalls: ReadonlySet<ToolCall>,
-	maxCompletedIdx: number,
-	msgIdx: number,
-	completedMsgIndices: ReadonlySet<number>,
-): AssistantMessage {
-	// Not an assistant or not part of any completed span → return as-is
-	if (!completedMsgIndices.has(msgIdx)) {
-		return message;
-	}
-
-	// Latest completed span: keep everything intact (call + result stay visible)
-	if (msgIdx === maxCompletedIdx) {
-		return message;
-	}
-
-	let changed = false;
-	const content = message.content.map((block) => {
-		if (block.type !== "toolCall" || !completedToolCalls.has(block)) {
-			return block;
-		}
-		if (block.name !== "todo_write") {
-			return block;
-		}
-		changed = true;
-		return { type: "text" as const, text: TODO_WRITE_COMPACTED_TEXT };
-	});
-
-	return changed ? { ...message, content } : message;
-}
-
 /**
  * Transform AgentMessages (including custom types) to LLM-compatible Messages.
  *
@@ -203,97 +157,61 @@ function compactTodoWriteCalls(
  * - Agent's transormToLlm option (for prompt calls and queued messages)
  * - Compaction's generateSummary (for summarization)
  * - Custom extensions and tools
+ *
+ * For this release candidate, no folding or compaction of tool spans occurs.
+ * All messages are preserved in their original chronological order.
  */
 export function convertToLlm(messages: AgentMessage[]): Message[] {
-	const completedTodoWriteCalls = new Set<ToolCall>();
-	const completedTodoWriteIds = new Map<string, number>(); // id -> messageIndex
-	const pendingResultsByCallId = new Map<string, number>();
-	const completedMsgIndices = new Set<number>(); // assistant msg indices that contain completed todoWrite spans
-	let maxCompletedIndex = -1;
-
-	// Pass 1: identify completed todoWrite spans (reverse iteration)
-	for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex--) {
-		const message = messages[messageIndex];
-		if (message.role === "toolResult" && message.toolName === "todo_write") {
-			pendingResultsByCallId.set(message.toolCallId, (pendingResultsByCallId.get(message.toolCallId) ?? 0) + 1);
-			continue;
-		}
-		if (message.role !== "assistant") {
-			continue;
-		}
-		for (let contentIndex = message.content.length - 1; contentIndex >= 0; contentIndex--) {
-			const block = message.content[contentIndex];
-			if (block.type !== "toolCall" || block.name !== "todo_write") {
-				continue;
-			}
-			const pendingResults = pendingResultsByCallId.get(block.id) ?? 0;
-			if (pendingResults > 0) {
-				completedTodoWriteCalls.add(block);
-				const prevIdx = completedTodoWriteIds.get(block.id) ?? -1;
-				completedTodoWriteIds.set(block.id, Math.max(prevIdx, messageIndex));
-				if (messageIndex > maxCompletedIndex) {
-					maxCompletedIndex = messageIndex;
+	return messages.flatMap((m): Message[] => {
+		switch (m.role) {
+			case "bashExecution":
+				if (m.excludeFromContext) {
+					return [];
 				}
-				pendingResultsByCallId.set(block.id, pendingResults - 1);
-				completedMsgIndices.add(messageIndex);
-			}
-		}
-	}
-
-	// Pass 2: fold historical spans, preserve latest
-	const folded = messages
-		.map((m, mIndex): Message | undefined => {
-			switch (m.role) {
-				case "bashExecution":
-					if (m.excludeFromContext) {
-						return undefined;
-					}
-					return {
+				return [
+					{
 						role: "user",
 						content: [{ type: "text", text: bashExecutionToText(m) }],
 						timestamp: m.timestamp,
-					};
-				case "custom": {
-					const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
-					return { role: "user", content, timestamp: m.timestamp };
-				}
-				case "branchSummary":
-					return {
+					},
+				];
+			case "custom": {
+				const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
+				return [{ role: "user", content, timestamp: m.timestamp }];
+			}
+			case "branchSummary":
+				return [
+					{
 						role: "user",
 						content: [{ type: "text" as const, text: BRANCH_SUMMARY_PREFIX + m.summary + BRANCH_SUMMARY_SUFFIX }],
 						timestamp: m.timestamp,
-					};
-				case "compactionSummary":
-					return {
+					},
+				];
+			case "compactionSummary":
+				return [
+					{
 						role: "user",
 						content: [
 							{ type: "text" as const, text: COMPACTION_SUMMARY_PREFIX + m.summary + COMPACTION_SUMMARY_SUFFIX },
 						],
 						timestamp: m.timestamp,
-					};
-				case "memoryContext":
-					return { role: "user", content: [{ type: "text" as const, text: m.content }], timestamp: m.timestamp };
-				case "user":
-					return m;
-				case "toolResult":
-					// Remove results only for OLDER compacted todo_write spans.
-					// Keep the result for the most-recent span and all non-todo results.
-					if (completedTodoWriteIds.has(m.toolCallId)) {
-						const completedIdx = completedTodoWriteIds.get(m.toolCallId)!;
-						if (completedIdx < maxCompletedIndex) {
-							return undefined;
-						}
-					}
-					return m;
-				case "assistant":
-					return compactTodoWriteCalls(m, completedTodoWriteCalls, maxCompletedIndex, mIndex, completedMsgIndices);
-				default:
-					// biome-ignore lint/correctness/noSwitchDeclarations: fine
-					const _exhaustiveCheck: never = m;
-					return undefined;
-			}
-		})
-		.filter((m): m is Message => m !== undefined);
-
-	return folded;
+					},
+				];
+			case "memoryContext":
+				return [{ role: "user", content: [{ type: "text" as const, text: m.content }], timestamp: m.timestamp }];
+			case "user":
+				return [m];
+			case "toolResult":
+				if ((m as { excludeFromContext?: boolean }).excludeFromContext) {
+					return [];
+				}
+				return [m];
+			case "assistant":
+				return [m];
+			default:
+				// biome-ignore lint/correctness/noSwitchDeclarations: fine
+				const _exhaustiveCheck: never = m;
+				return [];
+		}
+	});
 }

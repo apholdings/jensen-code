@@ -37,6 +37,8 @@ export type TranscriptValidationResult = TranscriptValidationSuccess | Transcrip
  * - No duplicate tool result messages
  * - No orphan tool result messages (result without a preceding tool call)
  * - All required tool results occur before the next user or assistant message
+ * - Tool calls from different assistant turns are not merged
+ * - A tool result appears in the uninterrupted span following its originating assistant
  */
 export function validateChatCompletionsTranscript(
 	messages: Message[],
@@ -49,9 +51,15 @@ export function validateChatCompletionsTranscript(
 	const duplicateCallIds: string[] = [];
 	let errorIndex = -1;
 
-	// Track pending tool call IDs that need results
-	let pendingToolCallIds = new Set<string>();
-	// Track seen tool call IDs to detect duplicates
+	// Track pending tool call IDs grouped by the assistant that emitted them.
+	// Each assistant's tool calls must be resolved before the next assistant or user message.
+	type TurnSpan = {
+		callIds: Set<string>;
+		assistantIndex: number;
+	};
+
+	let currentSpan: TurnSpan | null = null;
+	// Track seen tool call IDs to detect duplicates across spans
 	const seenToolCallIds = new Map<string, number>();
 	// Track seen tool result IDs to detect duplicate results
 	const seenResultIds = new Map<string, number>();
@@ -67,16 +75,20 @@ export function validateChatCompletionsTranscript(
 				continue;
 			}
 
-			const toolCalls = assistantMsg.content.filter((b) => b.type === "toolCall") as ToolCall[];
-
-			if (toolCalls.length > 0) {
-				// If there are still pending tool calls from a previous assistant, they're missing
-				for (const pid of pendingToolCallIds) {
+			// Before starting a new assistant span, flush pending from the previous span
+			if (currentSpan && currentSpan.callIds.size > 0) {
+				for (const pid of currentSpan.callIds) {
 					missingToolCallIds.push(pid);
 					if (errorIndex < 0) errorIndex = i;
 				}
+			}
 
-				// Add new tool call IDs
+			const toolCalls = assistantMsg.content.filter((b) => b.type === "toolCall") as ToolCall[];
+
+			if (toolCalls.length > 0) {
+				// Start a new span for this assistant's tool calls
+				currentSpan = { callIds: new Set(), assistantIndex: i };
+
 				for (const tc of toolCalls) {
 					if (!tc.id || tc.id.trim().length === 0) {
 						missingToolCallIds.push("<empty>");
@@ -90,11 +102,11 @@ export function validateChatCompletionsTranscript(
 					} else {
 						seenToolCallIds.set(tc.id, i);
 					}
-					pendingToolCallIds.add(tc.id);
+					currentSpan!.callIds.add(tc.id);
 				}
-			} else if (pendingToolCallIds.size > 0) {
-				// Assistant has no tool calls but there are pending - that's fine,
-				// the model is responding after tool results
+			} else {
+				// Text-only assistant: the generic span-end handling below reports any
+				// results still missing from the previous span before the next request.
 			}
 		} else if (msg.role === "toolResult") {
 			const toolResult = msg as ToolResultMessage;
@@ -103,34 +115,37 @@ export function validateChatCompletionsTranscript(
 			if (!resultId || resultId.trim().length === 0) {
 				orphanToolResultIds.push("<empty>");
 				if (errorIndex < 0) errorIndex = i;
-			} else if (!pendingToolCallIds.has(resultId)) {
-				// Check if it's a duplicate result
-				if (seenResultIds.has(resultId)) {
-					duplicateToolCallIds.push(resultId);
-					if (errorIndex < 0) errorIndex = i;
-				} else {
-					orphanToolResultIds.push(resultId);
-					if (errorIndex < 0) errorIndex = i;
-				}
-			} else {
-				// Valid result - remove from pending
-				pendingToolCallIds.delete(resultId);
+			} else if (currentSpan?.callIds.has(resultId)) {
+				// Result belongs to current assistant's pending calls — valid
+				currentSpan.callIds.delete(resultId);
 				seenResultIds.set(resultId, i);
-			}
-		} else if (msg.role === "user") {
-			// User message interrupts flow - any pending tool calls are missing results
-			for (const pid of pendingToolCallIds) {
-				missingToolCallIds.push(pid);
+			} else if (seenResultIds.has(resultId)) {
+				duplicateToolCallIds.push(resultId);
+				if (errorIndex < 0) errorIndex = i;
+			} else {
+				// Not in current span and not seen before — orphaned
+				orphanToolResultIds.push(resultId);
 				if (errorIndex < 0) errorIndex = i;
 			}
-			pendingToolCallIds = new Set();
+		} else if (msg.role === "user") {
+			// User message interrupts flow — flush all remaining pending
+			if (currentSpan && currentSpan.callIds.size > 0) {
+				for (const pid of currentSpan.callIds) {
+					missingToolCallIds.push(pid);
+					if (errorIndex < 0) errorIndex = i;
+				}
+			}
+			currentSpan = null;
 		}
 	}
 
-	// Check remaining pending
-	for (const pid of pendingToolCallIds) {
-		missingToolCallIds.push(pid);
-		if (errorIndex < 0) errorIndex = messages.length - 1;
+	// Flush any remaining pending from the last span
+	if (currentSpan && currentSpan.callIds.size > 0) {
+		for (const pid of currentSpan.callIds) {
+			missingToolCallIds.push(pid);
+			if (errorIndex < 0) errorIndex = messages.length - 1;
+		}
+		currentSpan = null;
 	}
 
 	if (
@@ -159,6 +174,9 @@ export function validateChatCompletionsTranscript(
  * Validate a transcript for Responses API protocol.
  * Uses function_call.call_id and function_call_output.call_id pairing.
  * Validates independently from Chat Completions - no protocol mixing.
+ *
+ * Each assistant's function calls form a span that must be resolved before
+ * the next assistant or user message begins a new span.
  */
 export function validateResponsesTranscript(
 	messages: Message[],
@@ -171,8 +189,15 @@ export function validateResponsesTranscript(
 	const duplicateCallIdValues: string[] = [];
 	let errorIndex = -1;
 
-	let pendingCallIds = new Set<string>();
+	type TurnSpan = {
+		callIds: Set<string>;
+		assistantIndex: number;
+	};
+
+	let currentSpan: TurnSpan | null = null;
+	// Track seen call IDs to detect duplicates across spans
 	const seenCallIds = new Map<string, number>();
+	// Track seen output IDs to detect duplicate results
 	const seenOutputIds = new Map<string, number>();
 
 	for (let i = 0; i < messages.length; i++) {
@@ -185,13 +210,18 @@ export function validateResponsesTranscript(
 				continue;
 			}
 
-			const toolCalls = assistantMsg.content.filter((b) => b.type === "toolCall") as ToolCall[];
-
-			if (toolCalls.length > 0) {
-				for (const pid of pendingCallIds) {
+			// Before starting a new assistant span, flush pending from previous
+			if (currentSpan && currentSpan.callIds.size > 0) {
+				for (const pid of currentSpan.callIds) {
 					missingCallIds.push(pid);
 					if (errorIndex < 0) errorIndex = i;
 				}
+			}
+
+			const toolCalls = assistantMsg.content.filter((b) => b.type === "toolCall") as ToolCall[];
+
+			if (toolCalls.length > 0) {
+				currentSpan = { callIds: new Set(), assistantIndex: i };
 
 				for (const tc of toolCalls) {
 					if (!tc.id || tc.id.trim().length === 0) {
@@ -206,8 +236,11 @@ export function validateResponsesTranscript(
 					} else {
 						seenCallIds.set(tc.id, i);
 					}
-					pendingCallIds.add(tc.id);
+					currentSpan!.callIds.add(tc.id);
 				}
+			} else {
+				// Text-only assistant: the generic span-end handling below reports any
+				// results still missing from the previous span before the next request.
 			}
 		} else if (msg.role === "toolResult") {
 			const toolResult = msg as ToolResultMessage;
@@ -216,30 +249,33 @@ export function validateResponsesTranscript(
 			if (!callId || callId.trim().length === 0) {
 				orphanOutputIds.push("<empty>");
 				if (errorIndex < 0) errorIndex = i;
-			} else if (!pendingCallIds.has(callId)) {
-				if (seenOutputIds.has(callId)) {
-					duplicateCallIds.push(callId);
-					if (errorIndex < 0) errorIndex = i;
-				} else {
-					orphanOutputIds.push(callId);
-					if (errorIndex < 0) errorIndex = i;
-				}
-			} else {
-				pendingCallIds.delete(callId);
+			} else if (currentSpan?.callIds.has(callId)) {
+				currentSpan.callIds.delete(callId);
 				seenOutputIds.set(callId, i);
-			}
-		} else if (msg.role === "user") {
-			for (const pid of pendingCallIds) {
-				missingCallIds.push(pid);
+			} else if (seenOutputIds.has(callId)) {
+				duplicateCallIds.push(callId);
+				if (errorIndex < 0) errorIndex = i;
+			} else {
+				orphanOutputIds.push(callId);
 				if (errorIndex < 0) errorIndex = i;
 			}
-			pendingCallIds = new Set();
+		} else if (msg.role === "user") {
+			if (currentSpan && currentSpan.callIds.size > 0) {
+				for (const pid of currentSpan.callIds) {
+					missingCallIds.push(pid);
+					if (errorIndex < 0) errorIndex = i;
+				}
+			}
+			currentSpan = null;
 		}
 	}
 
-	for (const pid of pendingCallIds) {
-		missingCallIds.push(pid);
-		if (errorIndex < 0) errorIndex = messages.length - 1;
+	if (currentSpan && currentSpan.callIds.size > 0) {
+		for (const pid of currentSpan.callIds) {
+			missingCallIds.push(pid);
+			if (errorIndex < 0) errorIndex = messages.length - 1;
+		}
+		currentSpan = null;
 	}
 
 	if (

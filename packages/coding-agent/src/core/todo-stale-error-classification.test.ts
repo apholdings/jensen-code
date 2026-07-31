@@ -23,6 +23,7 @@ import { describe, expect, it } from "vitest";
 import { ToolExecutionComponent } from "../modes/interactive/components/tool-execution.js";
 import { initTheme } from "../modes/interactive/theme/theme.js";
 import { TodoLoopGuard } from "./tools/todo-loop-guard.js";
+import { createTodoReadTool } from "./tools/todo-read.js";
 import { createTodoUpdateTool } from "./tools/todo-update.js";
 import { createTodoWriteTool, type TodoItem } from "./tools/todo-write.js";
 
@@ -105,15 +106,27 @@ function createTodoTools() {
 	let persisted: TodoItem[] = [];
 	let revision = 0;
 	const guard = new TodoLoopGuard();
+	let snapshot: { revision: number; timestamp: number } | null = null;
 
 	const writeTool = createTodoWriteTool(
 		() => persisted,
 		(next) => {
 			persisted = next;
 			revision++;
+			snapshot = null;
 		},
 		guard,
 		() => revision,
+	);
+
+	const readTool = createTodoReadTool(
+		() => persisted,
+		() => revision,
+		{
+			onRead: () => {
+				snapshot = { revision, timestamp: Date.now() };
+			},
+		},
 	);
 
 	const updateTool = createTodoUpdateTool(
@@ -121,12 +134,25 @@ function createTodoTools() {
 		(next) => {
 			persisted = next;
 			revision++;
+			snapshot = null;
 		},
 		() => revision,
 		guard,
+		{
+			getSnapshot: () => snapshot,
+			invalidateSnapshot: () => {
+				snapshot = null;
+			},
+		},
 	);
 
-	return { writeTool, updateTool, getPersisted: () => persisted, getRevision: () => revision };
+	return {
+		writeTool,
+		readTool,
+		updateTool,
+		getPersisted: () => persisted,
+		getRevision: () => revision,
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -135,13 +161,15 @@ function createTodoTools() {
 
 describe("stale todo_update error classification (real agent loop)", () => {
 	it("C01: stale revision → tool_execution_end emits TODO_READ_REQUIRED", async () => {
-		const { writeTool, updateTool, getPersisted } = createTodoTools();
+		const { writeTool, readTool, updateTool, getPersisted } = createTodoTools();
 
 		// Pre-populate: write todos to advance the revision
 		await writeTool.execute("w1", {
 			todos: [{ content: "Task A", activeForm: "Working on A", status: "pending" }],
 		});
 		const firstTodoId = getPersisted()[0].id!;
+		// Fresh read: snapshot at current revision 1
+		await readTool.execute("r1", {});
 
 		// Stale call: revision is already 1, ask with 0
 		const context: AgentContext = {
@@ -215,7 +243,7 @@ describe("stale todo_update error classification (real agent loop)", () => {
 	// -----------------------------------------------------------------------
 
 	it("C02: stale rejection leaves ledger and revision unchanged", async () => {
-		const { writeTool, updateTool, getPersisted, getRevision } = createTodoTools();
+		const { writeTool, readTool, updateTool, getPersisted, getRevision } = createTodoTools();
 
 		await writeTool.execute("w1", {
 			todos: [{ content: "Task A", activeForm: "Working on A", status: "pending" }],
@@ -225,6 +253,7 @@ describe("stale todo_update error classification (real agent loop)", () => {
 		const beforeStatus = getPersisted()[0].status;
 		const beforeRev = getRevision();
 		const beforeIds = getPersisted().map((t) => t.id);
+		await readTool.execute("r1", {});
 
 		// Direct execute: stale revision returns TODO_READ_REQUIRED result
 		const staleResult = await updateTool.execute("stale-dir", {
@@ -241,12 +270,7 @@ describe("stale todo_update error classification (real agent loop)", () => {
 		expect(getPersisted().map((t) => t.id)).toEqual(beforeIds);
 
 		// C02: ledger remains readable
-		const { createTodoReadTool } = await import("./tools/todo-read.js");
-		const readTool = createTodoReadTool(
-			() => getPersisted(),
-			() => getRevision(),
-		);
-		const readResult = await readTool.execute("r1", {});
+		const readResult = await readTool.execute("r2", {});
 		expect(readResult.details).toBeDefined();
 		expect((readResult.details as { todos: TodoItem[] }).todos.length).toBe(1);
 	});
@@ -256,7 +280,7 @@ describe("stale todo_update error classification (real agent loop)", () => {
 	// -----------------------------------------------------------------------
 
 	it("C03: valid expectedRevision updates successfully with isError=false", async () => {
-		const { writeTool, updateTool, getPersisted, getRevision } = createTodoTools();
+		const { writeTool, readTool, updateTool, getPersisted, getRevision } = createTodoTools();
 
 		await writeTool.execute("w1", {
 			todos: [{ content: "Task B", activeForm: "Working on B", status: "pending" }],
@@ -264,6 +288,7 @@ describe("stale todo_update error classification (real agent loop)", () => {
 
 		const firstTodoId = getPersisted()[0].id!;
 		const currentRev = getRevision();
+		await readTool.execute("r1", {});
 
 		const context: AgentContext = {
 			systemPrompt: "You are helpful.",
@@ -333,12 +358,13 @@ describe("stale todo_update error classification (real agent loop)", () => {
 	// -----------------------------------------------------------------------
 
 	it("C04: stale revision produces model-facing error toolResult", async () => {
-		const { writeTool, updateTool, getPersisted } = createTodoTools();
+		const { writeTool, readTool, updateTool, getPersisted } = createTodoTools();
 
 		await writeTool.execute("w1", {
 			todos: [{ content: "Task C", activeForm: "Working on C", status: "pending" }],
 		});
 		const firstTodoId = getPersisted()[0].id!;
+		await readTool.execute("r1", {});
 
 		const context: AgentContext = {
 			systemPrompt: "You are helpful.",
@@ -414,12 +440,13 @@ describe("stale todo_update error classification (real agent loop)", () => {
 	// -----------------------------------------------------------------------
 
 	it("C05: isError=true outcome is rendered with error styling and visible text", async () => {
-		const { writeTool, updateTool, getPersisted } = createTodoTools();
+		const { writeTool, readTool, updateTool, getPersisted } = createTodoTools();
 
 		await writeTool.execute("w1", {
 			todos: [{ content: "Task D", activeForm: "Working on D", status: "pending" }],
 		});
 		const firstTodoId = getPersisted()[0].id!;
+		await readTool.execute("r1", {});
 
 		const context: AgentContext = {
 			systemPrompt: "You are helpful.",
@@ -510,12 +537,13 @@ describe("stale todo_update error classification (real agent loop)", () => {
 	// -----------------------------------------------------------------------
 
 	it("C06: throwing on stale revision does not regress agent-loop completion", async () => {
-		const { writeTool, updateTool, getPersisted } = createTodoTools();
+		const { writeTool, readTool, updateTool, getPersisted } = createTodoTools();
 
 		await writeTool.execute("w1", {
 			todos: [{ content: "Task E", activeForm: "Working on E", status: "pending" }],
 		});
 		const firstTodoId = getPersisted()[0].id!;
+		await readTool.execute("r1", {});
 
 		const context: AgentContext = {
 			systemPrompt: "You are helpful.",
@@ -583,12 +611,13 @@ describe("stale todo_update error classification (real agent loop)", () => {
 	// -----------------------------------------------------------------------
 
 	it("C07: direct todo_update.execute() returns TODO_READ_REQUIRED on stale revision", async () => {
-		const { writeTool, updateTool, getPersisted } = createTodoTools();
+		const { writeTool, readTool, updateTool, getPersisted } = createTodoTools();
 
 		await writeTool.execute("w1", {
 			todos: [{ content: "Task F", activeForm: "Working on F", status: "pending" }],
 		});
 		const firstTodoId = getPersisted()[0].id!;
+		await readTool.execute("r1", {});
 
 		// C07: stale call returns TODO_READ_REQUIRED tool result
 		const result = await updateTool.execute("stale-dir-2", {
@@ -605,12 +634,13 @@ describe("stale todo_update error classification (real agent loop)", () => {
 	// -----------------------------------------------------------------------
 
 	it("C08: stale error message contains expected and current revision numbers", async () => {
-		const { writeTool, updateTool, getPersisted } = createTodoTools();
+		const { writeTool, readTool, updateTool, getPersisted } = createTodoTools();
 
 		await writeTool.execute("w1", {
 			todos: [{ content: "Task G", activeForm: "Working on G", status: "pending" }],
 		});
 		const firstTodoId = getPersisted()[0].id!;
+		await readTool.execute("r1", {});
 
 		const context: AgentContext = {
 			systemPrompt: "You are helpful.",

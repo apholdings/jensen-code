@@ -24,7 +24,15 @@ import type {
 	ThinkingLevel,
 } from "@apholdings/jensen-agent-core";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@apholdings/jensen-ai";
-import { isContextOverflow, modelsAreEqual, resetApiProviders, supportsXhigh } from "@apholdings/jensen-ai";
+import {
+	isContextOverflow,
+	modelsAreEqual,
+	resetApiProviders,
+	supportsXhigh,
+	validateChatCompletionsTranscript,
+	validateResponsesTranscript,
+	validateToolSpanIntegrity,
+} from "@apholdings/jensen-ai";
 import { getDocsPath } from "../config.js";
 import { theme } from "../modes/interactive/theme/theme.js";
 import { stripFrontmatter } from "../utils/frontmatter.js";
@@ -476,6 +484,20 @@ export class AgentSession {
 		});
 
 		this.agent.setAfterToolCall(async ({ toolCall, args, result, isError }) => {
+			// Local run termination for repeated todo_write after the per-turn lock
+			// is active. The tool already threw REPEATED_TOOL_CALL_LOOP; rethrow so
+			// the agent loop surfaces an error assistant message and stops without
+			// another provider request.
+			if (toolCall.name === "todo_write" && isError) {
+				const text = (result.content ?? [])
+					.filter((c) => c.type === "text")
+					.map((c) => (c as { text?: string }).text ?? "")
+					.join(" ");
+				if (/REPEATED_TOOL_CALL_LOOP/.test(text)) {
+					throw new Error(text);
+				}
+			}
+
 			const runner = this._extensionRunner;
 			if (!runner?.hasHandlers("tool_result")) {
 				return undefined;
@@ -639,6 +661,38 @@ export class AgentSession {
 					this._resolveRetry();
 				}
 			}
+
+			// Final wire-payload validation after every context transformation.
+			// Runs on the exact serialized message array just before network transport.
+			// Invalid transcripts fail locally with INVALID_TOOL_TRANSCRIPT and produce
+			// zero network requests, without automatic retry.
+			if (event.message.role === "assistant" || event.message.role === "toolResult") {
+				const model = this.agent.state.model;
+				if (model) {
+					const history = this.agent.state.messages as Message[];
+					const spanCheck = validateToolSpanIntegrity(history);
+					const useResponses =
+						model.api === "openai-responses" ||
+						model.api === "azure-openai-responses" ||
+						model.api === "openai-codex-responses";
+					const result = useResponses
+						? validateResponsesTranscript(history, model.provider, model.id)
+						: validateChatCompletionsTranscript(history, model.provider, model.id);
+					if (
+						"code" in result &&
+						(spanCheck.missingToolCallIds.length > 0 || spanCheck.orphanToolResultIds.length > 0)
+					) {
+						throw new Error(
+							`INVALID_TOOL_TRANSCRIPT: protocol=${result.protocol}, ` +
+								`missingToolCallIds=[${result.missingToolCallIds.join(", ")}], ` +
+								`duplicateToolCallIds=[${result.duplicateToolCallIds.join(", ")}], ` +
+								`orphanToolResultIds=[${result.orphanToolResultIds.join(", ")}], ` +
+								`duplicateCallIds=[${result.duplicateCallIds.join(", ")}], ` +
+								`provider=${result.provider}, model=${result.model}, messageIndex=${result.messageIndex}`,
+						);
+					}
+				}
+			}
 		}
 
 		// Check auto-retry and auto-compaction after agent completes
@@ -757,13 +811,15 @@ export class AgentSession {
 			if (event.toolName === "todo_write") {
 				const details = event.result.details as Record<string, unknown> | undefined;
 
-				if (details?.circuitOpen || details?.todoWriteTemporarilyBlocked) {
-					// Circuit breaker tripped — hide todo_write from future provider requests
-					this._todoPerTurnLock.lockedUntil = this._todoPerTurnLock.currentTurn + 100; // effectively locked forever this turn
+				if (details?.changed) {
+					// Successful state-mutating todo_write — hide from future provider
+					// requests for the rest of this user turn.
+					this._todoPerTurnLock.setLockedForCurrentTurn();
 					const activeNames = this.getActiveToolNames().filter((n) => n !== "todo_write");
 					this.setActiveToolsByName(activeNames);
-				} else if (event.result.details?.changed) {
-					// Successful state-mutating todo_write — hide from future provider requests in this turn
+				} else if (details?.todoWriteAlreadyApplied) {
+					// First duplicate rejection — keep todo_write hidden for the rest of
+					// the turn so the provider cannot call it again.
 					this._todoPerTurnLock.setLockedForCurrentTurn();
 					const activeNames = this.getActiveToolNames().filter((n) => n !== "todo_write");
 					this.setActiveToolsByName(activeNames);

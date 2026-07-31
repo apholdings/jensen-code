@@ -160,24 +160,6 @@ async function executeAndCapture(
 	};
 }
 
-function restoreFullArguments(request: Context, todos: TodoItem[]): Context {
-	return {
-		...request,
-		messages: request.messages.map((message) =>
-			message.role === "assistant" &&
-			message.content.some(
-				(block) =>
-					block.type === "toolCall" ||
-					(block.type === "text" &&
-						typeof block.text === "string" &&
-						block.text.includes("Todo snapshot omitted")),
-			)
-				? makeAssistant(todos)
-				: message,
-		),
-	};
-}
-
 describe("todo_write model context", () => {
 	it.each([
 		["creates a todo", makeTodos(1, 16), []],
@@ -191,7 +173,7 @@ describe("todo_write model context", () => {
 			{
 				type: "text",
 				text: expect.stringMatching(
-					/^Todo list updated \(.*\)\. Revision .*\.?\s*Todo list is locked for this user turn/,
+					/^Todo list updated \(.*\)\. Revision .*\. .*todo_write is unavailable for the rest of this user turn\. todo_read, todo_update, and other authorized tools remain available\.$/s,
 				),
 			},
 		]);
@@ -205,18 +187,15 @@ describe("todo_write model context", () => {
 		const largeExecution = await executeAndCapture(largeTodos);
 		const smallRequest = smallExecution.nextRequest;
 		const largeRequest = largeExecution.nextRequest;
-		const largeRequestBeforeFix = restoreFullArguments(largeRequest, largeTodos);
-
 		const rawArgumentGrowth =
 			byteLength(makeAssistant(largeTodos).content[0]) - byteLength(makeAssistant(smallTodos).content[0]);
 		expect(rawArgumentGrowth).toBeGreaterThan(500_000);
-		// With latest-span retention, large args remain visible in the next request,
-		// so the payload grows proportionally (not exponentially). Still bounded.
-		expect(byteLength(largeExecution.toolResult) - byteLength(smallExecution.toolResult)).toBeLessThan(16);
+		// Success result includes the active task, so result size is bounded by the
+		// active task text, not the full todo list.
+		expect(byteLength(largeExecution.toolResult) - byteLength(smallExecution.toolResult)).toBeLessThan(4_096);
 		expect(byteLength(largeRequest) - byteLength(smallRequest)).toBeLessThan(rawArgumentGrowth * 2);
-		expect(byteLength(largeRequestBeforeFix) - byteLength(largeRequest)).toBeLessThan(16); // no additional compaction difference
 
-		// Latest todo_write call remains visible (not compacted)
+		// todo_write call remains visible (no compaction)
 		const lastCompletedCall = largeRequest.messages.find((message) => message.role === "assistant");
 		if (!lastCompletedCall || lastCompletedCall.role !== "assistant") {
 			throw new Error("Expected assistant message");
