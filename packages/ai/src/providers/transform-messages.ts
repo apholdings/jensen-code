@@ -96,10 +96,13 @@ export function transformMessages<TApi extends Api>(
 	});
 
 	// Second pass: insert synthetic empty tool results for orphaned tool calls
-	// This preserves thinking signatures and satisfies API requirements
+	// AND reject tool results without a preceding assistant tool call.
+	// A valid tool span requires: role=assistant(tool_calls[id=X]) → role=tool(tool_call_id=X).
+	// The convertToLlm layer should remove compacted todo_write results; this pass catches
+	// any remaining orphans from other code paths (historic sessions, compaction artifacts).
 	const result: Message[] = [];
 	let pendingToolCalls: ToolCall[] = [];
-	let existingToolResultIds = new Set<string>();
+	let seenToolResultIds = new Set<string>();
 
 	for (let i = 0; i < transformed.length; i++) {
 		const msg = transformed[i];
@@ -108,7 +111,7 @@ export function transformMessages<TApi extends Api>(
 			// If we have pending orphaned tool calls from a previous assistant, insert synthetic results now
 			if (pendingToolCalls.length > 0) {
 				for (const tc of pendingToolCalls) {
-					if (!existingToolResultIds.has(tc.id)) {
+					if (!seenToolResultIds.has(tc.id)) {
 						result.push({
 							role: "toolResult",
 							toolCallId: tc.id,
@@ -120,7 +123,7 @@ export function transformMessages<TApi extends Api>(
 					}
 				}
 				pendingToolCalls = [];
-				existingToolResultIds = new Set();
+				seenToolResultIds = new Set();
 			}
 
 			// Skip errored/aborted assistant messages entirely.
@@ -137,18 +140,25 @@ export function transformMessages<TApi extends Api>(
 			const toolCalls = assistantMsg.content.filter((b) => b.type === "toolCall") as ToolCall[];
 			if (toolCalls.length > 0) {
 				pendingToolCalls = toolCalls;
-				existingToolResultIds = new Set();
+				seenToolResultIds = new Set();
 			}
 
 			result.push(msg);
 		} else if (msg.role === "toolResult") {
-			existingToolResultIds.add(msg.toolCallId);
-			result.push(msg);
+			// Accept only if there is a matching pending tool call from the current span.
+			// Rejects orphan results that survived earlier transformation layers.
+			const hasMatchingCall = pendingToolCalls.some((tc) => tc.id === msg.toolCallId);
+			if (hasMatchingCall) {
+				seenToolResultIds.add(msg.toolCallId);
+				result.push(msg);
+				pendingToolCalls = pendingToolCalls.filter((tc) => tc.id !== msg.toolCallId);
+			}
+			// Orphan tool results are silently dropped — provider protocol invariant violated
 		} else if (msg.role === "user") {
 			// User message interrupts tool flow - insert synthetic results for orphaned calls
 			if (pendingToolCalls.length > 0) {
 				for (const tc of pendingToolCalls) {
-					if (!existingToolResultIds.has(tc.id)) {
+					if (!seenToolResultIds.has(tc.id)) {
 						result.push({
 							role: "toolResult",
 							toolCallId: tc.id,
@@ -160,7 +170,7 @@ export function transformMessages<TApi extends Api>(
 					}
 				}
 				pendingToolCalls = [];
-				existingToolResultIds = new Set();
+				seenToolResultIds = new Set();
 			}
 			result.push(msg);
 		} else {

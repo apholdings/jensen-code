@@ -237,15 +237,16 @@ async function runLoop(
 
 /**
  * Validate transcript before sending to the LLM.
- * Returns an error if missing tool results are detected (calls without results).
- * Does not block on orphan results (handled by transformMessages synthetic fill-in).
+ * Returns an error if:
+ * - Missing tool results are detected (calls without results)
+ * - Orphan tool results are present (results without preceding tool calls)
  */
 function validateTranscriptForModel(
 	llmMessages: Message[],
 	model: { api?: string; provider?: string; id?: string },
 ): { code: "INVALID_TOOL_TRANSCRIPT"; message: string } | null {
 	const spanCheck = validateToolSpanIntegrity(llmMessages);
-	if (!spanCheck.valid && spanCheck.missingToolCallIds.length > 0) {
+	if (!spanCheck.valid && (spanCheck.missingToolCallIds.length > 0 || spanCheck.orphanToolResultIds.length > 0)) {
 		const provider = model.provider || "unknown";
 		const modelId = model.id || "unknown";
 		const useResponses =
@@ -254,13 +255,14 @@ function validateTranscriptForModel(
 			model.api === "openai-codex-responses";
 		const validator = useResponses ? validateResponsesTranscript : validateChatCompletionsTranscript;
 		const result = validator(llmMessages, provider, modelId);
-		if ("code" in result && result.missingToolCallIds.length > 0) {
+		if ("code" in result && (result.missingToolCallIds.length > 0 || result.orphanToolResultIds.length > 0)) {
 			return {
 				code: "INVALID_TOOL_TRANSCRIPT",
 				message:
 					`Transcript validation failed: protocol=${result.protocol}, ` +
 					`missingToolCallIds=[${result.missingToolCallIds.join(", ")}], ` +
 					`duplicateToolCallIds=[${result.duplicateToolCallIds.join(", ")}], ` +
+					`orphanToolResultIds=[${result.orphanToolResultIds.join(", ")}], ` +
 					`duplicateCallIds=[${result.duplicateCallIds.join(", ")}], ` +
 					`provider=${result.provider}, model=${result.model}, messageIndex=${result.messageIndex}`,
 			};

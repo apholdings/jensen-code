@@ -191,6 +191,7 @@ function compactTodoWriteCalls(message: AssistantMessage, completedToolCalls: Re
  */
 export function convertToLlm(messages: AgentMessage[]): Message[] {
 	const completedTodoWriteCalls = new Set<ToolCall>();
+	const completedTodoWriteIds = new Set<string>();
 	const pendingResultsByCallId = new Map<string, number>();
 	for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex--) {
 		const message = messages[messageIndex];
@@ -209,6 +210,7 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 			const pendingResults = pendingResultsByCallId.get(block.id) ?? 0;
 			if (pendingResults > 0) {
 				completedTodoWriteCalls.add(block);
+				completedTodoWriteIds.add(block.id);
 				pendingResultsByCallId.set(block.id, pendingResults - 1);
 			}
 		}
@@ -256,7 +258,14 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						timestamp: m.timestamp,
 					};
 				case "user":
+					return m;
 				case "toolResult":
+					// Remove orphaned tool results for compacted todo_write spans.
+					// The assistant tool_call was replaced with a text placeholder, so
+					// keeping only the result would break provider protocol invariants.
+					if (completedTodoWriteIds.has(m.toolCallId)) {
+						return undefined;
+					}
 					return m;
 				case "assistant":
 					return compactTodoWriteCalls(m, completedTodoWriteCalls);
