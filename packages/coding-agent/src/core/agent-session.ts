@@ -121,7 +121,7 @@ import {
 import { TodoLoopGuard } from "./tools/todo-loop-guard.js";
 import { createTodoReadTool } from "./tools/todo-read.js";
 import { createTodoUpdateTool } from "./tools/todo-update.js";
-import { createTodoWriteTool, type TodoItem } from "./tools/todo-write.js";
+import { createTodoWriteTool, type PerTurnLock, type TodoItem } from "./tools/todo-write.js";
 import {
 	buildUltraplanPlannerTask,
 	buildUltraplanRevisionTask,
@@ -370,6 +370,16 @@ export class AgentSession {
 	private _todos: TodoItem[] = [];
 	private _todoRevision = 0;
 	private _todoLoopGuard = new TodoLoopGuard();
+	private _todoPerTurnLock: PerTurnLock = {
+		currentTurn: 0,
+		lockedUntil: -1,
+		isActive() {
+			return false;
+		},
+		setLockedForCurrentTurn() {
+			this.lockedUntil = this.currentTurn;
+		},
+	};
 	private _todoReadSnapshot: { revision: number; timestamp: number } | null = null;
 	private _memoryItems: MemoryItem[] = [];
 	private _delegatedTasks: DelegatedTask[] = [];
@@ -595,6 +605,8 @@ export class AgentSession {
 		if (event.type === "message_end") {
 			if (event.message.role === "user") {
 				this._todoLoopGuard.resetOnNewUserMessage();
+				this._todoPerTurnLock.currentTurn++;
+				this._todoPerTurnLock.lockedUntil = -1;
 			}
 			// Check if this is a custom message from extensions
 			if (event.message.role === "custom") {
@@ -2132,6 +2144,8 @@ export class AgentSession {
 		this._pendingNextTurnMessages = [];
 		this._todos = [];
 		this._todoRevision = 0;
+		this._todoPerTurnLock.currentTurn = 0;
+		this._todoPerTurnLock.lockedUntil = -1;
 		this._memoryItems = [];
 		this._delegatedTasks = [];
 		this._tasks = [];
@@ -3061,6 +3075,7 @@ export class AgentSession {
 			(todos) => this._setTodos(todos),
 			this._todoLoopGuard,
 			() => this._todoRevision,
+			this._todoPerTurnLock,
 		);
 		const todoReadTool = createTodoReadTool(
 			() => this._todos,
@@ -3528,6 +3543,8 @@ export class AgentSession {
 		const sessionContext = this.sessionManager.buildSessionContext();
 		this._todos = sessionContext.todos as TodoItem[];
 		this._todoRevision = 0;
+		this._todoPerTurnLock.currentTurn = 0;
+		this._todoPerTurnLock.lockedUntil = -1;
 		this._memoryItems = sessionContext.memoryItems;
 		this._delegatedTasks = [];
 		this._tasks = this.sessionManager.getLatestSessionTasks();

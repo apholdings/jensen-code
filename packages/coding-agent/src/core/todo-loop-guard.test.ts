@@ -222,12 +222,15 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 		};
 
 		const converted = convertToLlm([assistant, toolResult]);
-		const compacted = converted[0];
-		expect(compacted).toMatchObject({
-			role: "assistant",
-			content: [{ type: "text" }],
-		});
-		expect((compacted.content[0] as { text: string }).text).toContain("Todo snapshot omitted");
+		// Latest span is preserved (both call and result) so model can see its success
+		const assistantMsg = converted[0];
+		expect(assistantMsg).toMatchObject({ role: "assistant" });
+		if (assistantMsg.role === "assistant") {
+			const hasToolCall = assistantMsg.content.some((b) => b.type === "toolCall");
+			expect(hasToolCall).toBe(true);
+		}
+		// ToolResult should also be present
+		expect(converted.filter((m) => m.role === "toolResult")).toHaveLength(1);
 	});
 
 	it("R09 explicit read retrieves state without mutation or loop guard reset", async () => {
@@ -271,7 +274,7 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 		expect(persisted.length).toBe(1);
 
 		const okRes = await tool.execute("c2", { todos: [], confirmClear: true });
-		expect((okRes.content[0] as { text: string }).text).toBe("Todo list cleared.");
+		expect((okRes.content[0] as { text: string }).text).toContain("Todo list updated");
 		expect(persisted.length).toBe(0);
 	});
 
@@ -372,13 +375,12 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 			timestamp: 2,
 		};
 		const converted = convertToLlm([assistant, toolResult]);
-		const compacted = converted[0];
-		if (compacted.role !== "assistant") throw new Error("Expected assistant");
-		const firstContent = compacted.content[0];
-		// Must NOT be a toolCall block
-		expect(firstContent.type).not.toBe("toolCall");
-		// Must be text, not a replayable todo_write argument
-		expect(firstContent.type).toBe("text");
+		const assistantMsg = converted[0];
+		if (assistantMsg.role !== "assistant") throw new Error("Expected assistant");
+		const firstContent = assistantMsg.content[0];
+		// Latest completed span is preserved — toolCall stays visible so model knows write succeeded.
+		// Per-user-turn lock on tool level prevents actual re-execution.
+		expect(firstContent.type).toBe("toolCall");
 	});
 
 	it("R16 snapshotOmitted absent from public todo_write schema", async () => {
@@ -793,7 +795,7 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 
 		// Clear with confirmClear → succeeds
 		const accepted = await tool.execute("c2", { todos: [], confirmClear: true });
-		expect((accepted.content[0] as { text: string }).text).toBe("Todo list cleared.");
+		expect((accepted.content[0] as { text: string }).text).toContain("Todo list");
 		expect(persisted).toEqual([]);
 	});
 

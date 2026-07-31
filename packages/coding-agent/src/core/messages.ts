@@ -159,10 +159,28 @@ const TODO_WRITE_COMPACTED_TEXT =
  * Keep persisted assistant messages intact for session replay and UI rendering while
  * excluding full todo snapshots from the model-facing conversation history.
  *
- * Replaces completed todo_write tool-call blocks with a compact text placeholder
+ * Replaces **older** completed todo_write tool-call blocks with a compact text placeholder
  * that cannot be replayed as a valid todo_write invocation.
+ *
+ * Preserves the **most recently completed** todo_write span (call + result) so the model
+ * can observe its own result and continue execution without retrying.
  */
-function compactTodoWriteCalls(message: AssistantMessage, completedToolCalls: ReadonlySet<ToolCall>): AssistantMessage {
+function compactTodoWriteCalls(
+	message: AssistantMessage,
+	completedToolCalls: ReadonlySet<ToolCall>,
+	maxCompletedIdx: number,
+	msgIdx: number,
+	completedMsgIndices: ReadonlySet<number>,
+): AssistantMessage {
+	// If this message isn't in the set of msgs with completed todoWrite calls, skip folding entirely
+	if (!completedMsgIndices.has(msgIdx)) {
+		return message;
+	}
+	// If this message IS the latest completed span, keep everything intact
+	if (msgIdx === maxCompletedIdx) {
+		return message;
+	}
+
 	let changed = false;
 	const content = message.content.map((block) => {
 		if (block.type !== "toolCall" || !completedToolCalls.has(block)) {
@@ -191,8 +209,10 @@ function compactTodoWriteCalls(message: AssistantMessage, completedToolCalls: Re
  */
 export function convertToLlm(messages: AgentMessage[]): Message[] {
 	const completedTodoWriteCalls = new Set<ToolCall>();
-	const completedTodoWriteIds = new Set<string>();
+	const completedTodoWriteIds = new Map<string, number>(); // id -> messageIndex
 	const pendingResultsByCallId = new Map<string, number>();
+	const completedMsgIndices = new Set<number>(); // assistant msg indices that contain completed todoWrite spans
+	let maxCompletedIndex = -1;
 	for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex--) {
 		const message = messages[messageIndex];
 		if (message.role === "toolResult" && message.toolName === "todo_write") {
@@ -210,14 +230,20 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 			const pendingResults = pendingResultsByCallId.get(block.id) ?? 0;
 			if (pendingResults > 0) {
 				completedTodoWriteCalls.add(block);
-				completedTodoWriteIds.add(block.id);
+				// Track index for each call so we can preserve the most recent.
+				const prevIdx = completedTodoWriteIds.get(block.id) ?? -1;
+				completedTodoWriteIds.set(block.id, Math.max(prevIdx, messageIndex));
+				if (messageIndex > maxCompletedIndex) {
+					maxCompletedIndex = messageIndex;
+				}
 				pendingResultsByCallId.set(block.id, pendingResults - 1);
+				completedMsgIndices.add(messageIndex);
 			}
 		}
 	}
 
 	return messages
-		.map((m): Message | undefined => {
+		.map((m, mIndex): Message | undefined => {
 			switch (m.role) {
 				case "bashExecution":
 					// Skip messages excluded from context (!! prefix)
@@ -260,15 +286,19 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 				case "user":
 					return m;
 				case "toolResult":
-					// Remove orphaned tool results for compacted todo_write spans.
-					// The assistant tool_call was replaced with a text placeholder, so
-					// keeping only the result would break provider protocol invariants.
+					// Remove orphaned tool results for **older** compacted todo_write spans.
+					// Preserve the tool result for the most recently completed span so
+					// the model can observe what the write produced.
+					// Only filter if this result belongs to a completed todo_write span.
 					if (completedTodoWriteIds.has(m.toolCallId)) {
-						return undefined;
+						const completedIdx = completedTodoWriteIds.get(m.toolCallId)!;
+						if (completedIdx < maxCompletedIndex) {
+							return undefined;
+						}
 					}
 					return m;
 				case "assistant":
-					return compactTodoWriteCalls(m, completedTodoWriteCalls);
+					return compactTodoWriteCalls(m, completedTodoWriteCalls, maxCompletedIndex, mIndex, completedMsgIndices);
 				default:
 					// biome-ignore lint/correctness/noSwitchDeclarations: fine
 					const _exhaustiveCheck: never = m;
