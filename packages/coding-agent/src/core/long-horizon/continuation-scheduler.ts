@@ -120,6 +120,7 @@ export type ContinuationSchedulerErrorCode =
 	| "INVALID_STATE"
 	| "INVALID_CYCLE"
 	| "CYCLE_NOT_SUPERSEDED"
+	| "CYCLE_SUPERSEDED"
 	| "EXECUTION_REVISION_MISMATCH"
 	| "INVALID_REQUEST"
 	| "CONTRACT_DIGEST_MISMATCH"
@@ -219,7 +220,7 @@ export function scheduleContinuation(
 	}
 
 	// 4. EventId lookup and idempotency
-	const idemResult = checkIdempotency(record, request);
+	const idemResult = checkIdempotency(record, request, "SCHEDULE");
 	if (idemResult) return idemResult;
 
 	// 5. Fresh guards
@@ -289,6 +290,7 @@ export function scheduleContinuation(
 export function dispatchContinuation(
 	record: ContinuationSchedulerRecord | null,
 	request: DispatchContinuationRequest,
+	currentExecutionRevision: number,
 ): ContinuationSchedulerResult {
 	// 1. Request syntax validation
 	const syntaxError = validateDispatchRequest(request);
@@ -304,7 +306,7 @@ export function dispatchContinuation(
 	if (structError) return structError;
 
 	// 4. EventId lookup and idempotency
-	const idemResult = checkIdempotency(record, request);
+	const idemResult = checkIdempotency(record, request, "DISPATCH");
 	if (idemResult) return idemResult;
 
 	// 5. Fresh guards
@@ -327,6 +329,20 @@ export function dispatchContinuation(
 		return errorResult(
 			"INVALID_CYCLE",
 			`cycleId ${request.cycleId} does not match active SCHEDULE event ${activeScheduleEvent.eventId}`,
+		);
+	}
+
+	// 7. Supersession guard
+	if (currentExecutionRevision > activeScheduleEvent.expectedExecutionRevision!) {
+		return errorResult(
+			"CYCLE_SUPERSEDED",
+			`Active cycle expectedExecutionRevision ${activeScheduleEvent.expectedExecutionRevision} is superseded by current execution revision ${currentExecutionRevision}`,
+		);
+	}
+	if (currentExecutionRevision < activeScheduleEvent.expectedExecutionRevision!) {
+		return errorResult(
+			"EXECUTION_REVISION_MISMATCH",
+			`Current execution revision ${currentExecutionRevision} is less than active expectedExecutionRevision ${activeScheduleEvent.expectedExecutionRevision}`,
 		);
 	}
 
@@ -383,6 +399,7 @@ export function dispatchContinuation(
 export function consumeContinuation(
 	record: ContinuationSchedulerRecord | null,
 	request: ConsumeContinuationRequest,
+	currentExecutionRevision: number,
 ): ContinuationSchedulerResult {
 	// 1. Request syntax validation
 	const syntaxError = validateConsumeRequest(request);
@@ -398,7 +415,7 @@ export function consumeContinuation(
 	if (structError) return structError;
 
 	// 4. EventId lookup and idempotency
-	const idemResult = checkIdempotency(record, request);
+	const idemResult = checkIdempotency(record, request, "CONSUME");
 	if (idemResult) return idemResult;
 
 	// 5. Fresh guards
@@ -421,6 +438,20 @@ export function consumeContinuation(
 		return errorResult(
 			"INVALID_CYCLE",
 			`cycleId ${request.cycleId} does not match active SCHEDULE event ${activeScheduleEvent.eventId}`,
+		);
+	}
+
+	// 7. Supersession guard
+	if (currentExecutionRevision > activeScheduleEvent.expectedExecutionRevision!) {
+		return errorResult(
+			"CYCLE_SUPERSEDED",
+			`Active cycle expectedExecutionRevision ${activeScheduleEvent.expectedExecutionRevision} is superseded by current execution revision ${currentExecutionRevision}`,
+		);
+	}
+	if (currentExecutionRevision < activeScheduleEvent.expectedExecutionRevision!) {
+		return errorResult(
+			"EXECUTION_REVISION_MISMATCH",
+			`Current execution revision ${currentExecutionRevision} is less than active expectedExecutionRevision ${activeScheduleEvent.expectedExecutionRevision}`,
 		);
 	}
 
@@ -506,7 +537,7 @@ export function cancelContinuation(
 	if (structError) return structError;
 
 	// 4. EventId lookup and idempotency
-	const idemResult = checkIdempotency(record, request);
+	const idemResult = checkIdempotency(record, request, "CANCEL");
 	if (idemResult) return idemResult;
 
 	// 5. Fresh guards
@@ -606,7 +637,7 @@ export function abandonContinuation(
 	if (structError) return structError;
 
 	// 4. EventId lookup and idempotency
-	const idemResult = checkIdempotency(record, request);
+	const idemResult = checkIdempotency(record, request, "ABANDON");
 	if (idemResult) return idemResult;
 
 	// 5. Fresh guards
@@ -1064,13 +1095,14 @@ function findActiveDispatchEvent(record: ContinuationSchedulerRecord): Continuat
 function checkIdempotency(
 	record: ContinuationSchedulerRecord,
 	request: ContinuationSchedulerRequest,
+	kind: ContinuationSchedulerEventKind,
 ): ContinuationSchedulerResult | null {
 	// Check if an event with this eventId already exists
 	const existingEvent = record.events.find((e) => e.eventId === request.eventId);
 	if (!existingEvent) return null;
 
-	// EventId exists — verify fingerprint matches
-	const fingerprint = computeRequestFingerprint(request);
+	// EventId exists — verify fingerprint matches using the explicit kind
+	const fingerprint = computeRequestFingerprint(request, kind);
 
 	// Also check kind matches
 	if (existingEvent.kind !== fingerprint.kind) {
@@ -1149,65 +1181,52 @@ function checkIdempotency(
 
 function computeRequestFingerprint(
 	request: ContinuationSchedulerRequest,
+	kind: ContinuationSchedulerEventKind,
 ): { kind: ContinuationSchedulerEventKind } & Record<string, unknown> {
-	if (isScheduleRequest(request)) {
+	// Use the explicit kind to determine the fingerprint, not structurally-ambiguous type guards
+	if (kind === "SCHEDULE") {
+		const r = request as ScheduleContinuationRequest;
 		return {
 			kind: "SCHEDULE",
-			cycleId: request.eventId,
-			requestSchedulerRevision: request.expectedSchedulerRevision,
-			expectedExecutionRevision: request.expectedExecutionRevision,
+			cycleId: r.eventId,
+			requestSchedulerRevision: r.expectedSchedulerRevision,
+			expectedExecutionRevision: r.expectedExecutionRevision,
 		};
 	}
-	if (isConsumeRequest(request)) {
-		return {
-			kind: "CONSUME",
-			cycleId: request.cycleId,
-			requestSchedulerRevision: request.expectedSchedulerRevision,
-			dispatchedContinuationId: request.dispatchedContinuationId,
-			resultDigest: request.resultDigest,
-		};
-	}
-	if (isDispatchRequest(request)) {
+	if (kind === "DISPATCH") {
+		const r = request as DispatchContinuationRequest;
 		return {
 			kind: "DISPATCH",
-			cycleId: request.cycleId,
-			requestSchedulerRevision: request.expectedSchedulerRevision,
-			dispatchedContinuationId: request.dispatchedContinuationId,
+			cycleId: r.cycleId,
+			requestSchedulerRevision: r.expectedSchedulerRevision,
+			dispatchedContinuationId: r.dispatchedContinuationId,
 		};
 	}
-	if (isCancelRequest(request)) {
+	if (kind === "CONSUME") {
+		const r = request as ConsumeContinuationRequest;
+		return {
+			kind: "CONSUME",
+			cycleId: r.cycleId,
+			requestSchedulerRevision: r.expectedSchedulerRevision,
+			dispatchedContinuationId: r.dispatchedContinuationId,
+			resultDigest: r.resultDigest,
+		};
+	}
+	if (kind === "CANCEL") {
+		const r = request as CancelContinuationRequest;
 		return {
 			kind: "CANCEL",
-			cycleId: request.cycleId,
-			requestSchedulerRevision: request.expectedSchedulerRevision,
+			cycleId: r.cycleId,
+			requestSchedulerRevision: r.expectedSchedulerRevision,
 		};
 	}
-	// Must be AbandonContinuationRequest
+	// ABANDON
+	const r = request as AbandonContinuationRequest;
 	return {
 		kind: "ABANDON",
-		cycleId: (request as AbandonContinuationRequest).cycleId,
-		requestSchedulerRevision: (request as AbandonContinuationRequest).expectedSchedulerRevision,
+		cycleId: r.cycleId,
+		requestSchedulerRevision: r.expectedSchedulerRevision,
 	};
-}
-
-// =============================================================================
-// Request type guards
-// =============================================================================
-
-function isScheduleRequest(r: ContinuationSchedulerRequest): r is ScheduleContinuationRequest {
-	return "expectedExecutionRevision" in r;
-}
-
-function isConsumeRequest(r: ContinuationSchedulerRequest): r is ConsumeContinuationRequest {
-	return "resultDigest" in r;
-}
-
-function isDispatchRequest(r: ContinuationSchedulerRequest): r is DispatchContinuationRequest {
-	return "dispatchedContinuationId" in r && !("resultDigest" in r) && !("expectedExecutionRevision" in r);
-}
-
-function isCancelRequest(r: ContinuationSchedulerRequest): r is CancelContinuationRequest {
-	return !("expectedExecutionRevision" in r) && !("dispatchedContinuationId" in r) && !("resultDigest" in r);
 }
 
 // =============================================================================

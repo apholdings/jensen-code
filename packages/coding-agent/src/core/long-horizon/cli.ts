@@ -432,10 +432,140 @@ export async function handleLongHorizonCommand(args: string[]): Promise<boolean>
 
 function parseLongHorizonArgs(args: string[]): LongHorizonCommandOptions {
 	const options: LongHorizonCommandOptions = {};
-	let i = 2; // Skip "benchmark" and "long-horizon"
 
-	while (i < args.length) {
+	// Phase 1: Extract the subcommand
+	let commandEnd = -1;
+	for (let i = 2; i < args.length - 1; i++) {
 		const arg = args[i];
+		const next = args[i + 1];
+		if (arg === "mission" && ["validate", "digest"].includes(next)) {
+			options.command = `mission-${next}`;
+			commandEnd = i + 2;
+			break;
+		}
+		if (arg === "ledger" && ["init", "validate", "add-evidence", "transition", "inspect"].includes(next)) {
+			options.command = `ledger-${next}`;
+			commandEnd = i + 2;
+			break;
+		}
+		if (arg === "execution" && ["init", "inspect", "validate", "transition"].includes(next)) {
+			options.command = `execution-${next}`;
+			commandEnd = i + 2;
+			break;
+		}
+		if (
+			arg === "continuation" &&
+			["init", "inspect", "validate", "schedule", "dispatch", "consume", "cancel", "abandon"].includes(next)
+		) {
+			options.command = `continuation-${next}`;
+			commandEnd = i + 2;
+			break;
+		}
+		if (arg === "evaluate") {
+			return options;
+		}
+	}
+
+	// Phase 2: Strict flag parsing with per-operation allowlists
+	const remainingArgs = commandEnd >= 0 ? args.slice(commandEnd) : args.slice(2);
+	const isContinuationCommand = options.command?.startsWith("continuation-") ?? false;
+	const command = options.command ?? "";
+
+	// Define per-operation flag allowlists
+	const continuationAllowlists: Record<string, Set<string>> = {
+		"continuation-init": new Set(["scheduler", "contract", "execution-id", "format", "json"]),
+		"continuation-inspect": new Set(["scheduler", "format", "json"]),
+		"continuation-validate": new Set(["scheduler", "contract", "execution", "format", "json"]),
+		"continuation-schedule": new Set([
+			"scheduler",
+			"contract",
+			"execution",
+			"event-id",
+			"expected-scheduler-revision",
+			"expected-execution-revision",
+			"format",
+			"json",
+		]),
+		"continuation-dispatch": new Set([
+			"scheduler",
+			"contract",
+			"execution",
+			"event-id",
+			"cycle-id",
+			"dispatched-continuation-id",
+			"expected-scheduler-revision",
+			"format",
+			"json",
+		]),
+		"continuation-consume": new Set([
+			"scheduler",
+			"contract",
+			"execution",
+			"event-id",
+			"cycle-id",
+			"dispatched-continuation-id",
+			"expected-scheduler-revision",
+			"result-digest",
+			"format",
+			"json",
+		]),
+		"continuation-cancel": new Set([
+			"scheduler",
+			"contract",
+			"execution",
+			"event-id",
+			"cycle-id",
+			"expected-scheduler-revision",
+			"format",
+			"json",
+		]),
+		"continuation-abandon": new Set([
+			"scheduler",
+			"contract",
+			"execution",
+			"event-id",
+			"cycle-id",
+			"expected-scheduler-revision",
+			"format",
+			"json",
+		]),
+	};
+
+	// Generic flags shared across all non-continuation commands
+	const genericFlags = new Set([
+		"help",
+		"h",
+		"format",
+		"output",
+		"contract",
+		"ledger",
+		"requirement-id",
+		"to-status",
+		"expected-revision",
+		"actor-type",
+		"reason",
+		"evidence-ids",
+		"blocker-reference",
+		"evidence-input",
+		"transition-id",
+		"execution",
+		"execution-id",
+		"kind",
+		"scheduler",
+		"event-id",
+		"cycle-id",
+		"dispatched-continuation-id",
+		"result-digest",
+		"expected-scheduler-revision",
+		"expected-execution-revision",
+	]);
+
+	const allowlist = isContinuationCommand ? continuationAllowlists[command] : null;
+	const seenFlags = new Set<string>();
+	let i = 0;
+
+	while (i < remainingArgs.length) {
+		const arg = remainingArgs[i];
 
 		if (arg === "--help" || arg === "-h") {
 			options.help = true;
@@ -443,291 +573,153 @@ function parseLongHorizonArgs(args: string[]): LongHorizonCommandOptions {
 			continue;
 		}
 
-		if (arg === "--format" && i + 1 < args.length) {
-			const fmt = args[++i];
-			if (fmt === "text" || fmt === "json") {
-				options.format = fmt;
-			} else {
-				console.error(chalk.red(`Unknown format: ${fmt}`));
-				process.exitCode = 1;
+		// All subsequent tokens must be flags (start with --)
+		if (!arg.startsWith("--")) {
+			throw new Error(`unexpected positional argument: ${arg}`);
+		}
+
+		const flagName = arg.slice(2);
+		if (flagName.length === 0) {
+			throw new Error("empty flag name");
+		}
+
+		// Check for duplicate flags
+		if (seenFlags.has(flagName)) {
+			throw new Error(`duplicate flag: --${flagName}`);
+		}
+		seenFlags.add(flagName);
+
+		// Enforce per-operation allowlist
+		if (allowlist !== null && !allowlist.has(flagName)) {
+			// --output on continuation commands is rejected
+			throw new Error(`unknown flag for ${command}: --${flagName}`);
+		}
+
+		// Check if flag is recognized at all (for non-continuation commands)
+		if (allowlist === null && !genericFlags.has(flagName)) {
+			throw new Error(`unknown flag: --${flagName}`);
+		}
+
+		// Known flags that need a value
+		const flagsNeedingValue = new Set([
+			"format",
+			"output",
+			"contract",
+			"ledger",
+			"requirement-id",
+			"to-status",
+			"expected-revision",
+			"actor-type",
+			"reason",
+			"evidence-ids",
+			"blocker-reference",
+			"evidence-input",
+			"transition-id",
+			"execution",
+			"execution-id",
+			"kind",
+			"scheduler",
+			"event-id",
+			"cycle-id",
+			"dispatched-continuation-id",
+			"result-digest",
+			"expected-scheduler-revision",
+			"expected-execution-revision",
+		]);
+
+		if (flagsNeedingValue.has(flagName)) {
+			if (i + 1 >= remainingArgs.length) {
+				throw new Error(`missing value for --${flagName}`);
 			}
+			const value = remainingArgs[i + 1];
+
+			if (flagName === "format") {
+				if (value === "text" || value === "json") {
+					options.format = value;
+				} else {
+					throw new Error(`Unknown format: ${value}`);
+				}
+			} else if (flagName === "output") {
+				options.output = value;
+			} else if (flagName === "contract") {
+				options.contract = value;
+			} else if (flagName === "ledger") {
+				options.ledger = value;
+			} else if (flagName === "requirement-id") {
+				options.requirementId = value;
+			} else if (flagName === "to-status") {
+				options.toStatus = value;
+			} else if (flagName === "expected-revision") {
+				const parsed = parseStrictNonNegativeInteger(value);
+				if (parsed === undefined) {
+					(options as LongHorizonCommandOptions & { _invalidExpectedRevision?: string })._invalidExpectedRevision =
+						value;
+				} else {
+					options.expectedRevision = parsed;
+				}
+			} else if (flagName === "actor-type") {
+				options.actorType = value;
+			} else if (flagName === "reason") {
+				options.reason = value;
+			} else if (flagName === "evidence-ids") {
+				options.evidenceIds = value
+					.split(",")
+					.map((s) => s.trim())
+					.filter((s) => s.length > 0);
+			} else if (flagName === "blocker-reference") {
+				options.blockerReference = value;
+			} else if (flagName === "evidence-input") {
+				options.evidenceInput = value;
+			} else if (flagName === "transition-id") {
+				options.transitionId = value;
+			} else if (flagName === "execution") {
+				options.execution = value;
+			} else if (flagName === "execution-id") {
+				options.executionId = value;
+			} else if (flagName === "kind") {
+				options.kind = value;
+			} else if (flagName === "scheduler") {
+				options.scheduler = value;
+			} else if (flagName === "event-id") {
+				options.eventId = value;
+			} else if (flagName === "cycle-id") {
+				options.cycleId = value;
+			} else if (flagName === "dispatched-continuation-id") {
+				options.dispatchedContinuationId = value;
+			} else if (flagName === "result-digest") {
+				options.resultDigest = value;
+			} else if (flagName === "expected-scheduler-revision") {
+				const parsed = parseStrictNonNegativeInteger(value);
+				if (parsed === undefined) {
+					(
+						options as LongHorizonCommandOptions & { _invalidExpectedSchedulerRevision?: string }
+					)._invalidExpectedSchedulerRevision = value;
+				} else {
+					options.expectedSchedulerRevision = parsed;
+				}
+			} else if (flagName === "expected-execution-revision") {
+				const parsed = parseStrictNonNegativeInteger(value);
+				if (parsed === undefined) {
+					(
+						options as LongHorizonCommandOptions & { _invalidExpectedExecutionRevision?: string }
+					)._invalidExpectedExecutionRevision = value;
+				} else {
+					options.expectedExecutionRevision = parsed;
+				}
+			}
+
+			i += 2;
+			continue;
+		}
+
+		// Flags that don't need a value (json is a boolean-style flag)
+		if (flagName === "json") {
+			options.format = "json";
 			i++;
 			continue;
 		}
 
-		if (arg === "--output" && i + 1 < args.length) {
-			options.output = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--contract" && i + 1 < args.length) {
-			options.contract = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--ledger" && i + 1 < args.length) {
-			options.ledger = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--requirement-id" && i + 1 < args.length) {
-			options.requirementId = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--to-status" && i + 1 < args.length) {
-			options.toStatus = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--expected-revision" && i + 1 < args.length) {
-			const raw = args[++i];
-			const parsed = parseStrictNonNegativeInteger(raw);
-			if (parsed === undefined) {
-				// Store a sentinel so the handler can produce a typed error
-				(options as LongHorizonCommandOptions & { _invalidExpectedRevision?: string })._invalidExpectedRevision =
-					raw;
-			} else {
-				options.expectedRevision = parsed;
-			}
-			i++;
-			continue;
-		}
-
-		if (arg === "--actor-type" && i + 1 < args.length) {
-			options.actorType = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--reason" && i + 1 < args.length) {
-			options.reason = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--evidence-ids" && i + 1 < args.length) {
-			options.evidenceIds = args[++i]
-				.split(",")
-				.map((s) => s.trim())
-				.filter((s) => s.length > 0);
-			i++;
-			continue;
-		}
-
-		if (arg === "--blocker-reference" && i + 1 < args.length) {
-			options.blockerReference = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--evidence-input" && i + 1 < args.length) {
-			options.evidenceInput = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--transition-id" && i + 1 < args.length) {
-			options.transitionId = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--execution" && i + 1 < args.length) {
-			options.execution = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--execution-id" && i + 1 < args.length) {
-			options.executionId = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--kind" && i + 1 < args.length) {
-			options.kind = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--scheduler" && i + 1 < args.length) {
-			options.scheduler = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--event-id" && i + 1 < args.length) {
-			options.eventId = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--cycle-id" && i + 1 < args.length) {
-			options.cycleId = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--dispatched-continuation-id" && i + 1 < args.length) {
-			options.dispatchedContinuationId = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--result-digest" && i + 1 < args.length) {
-			options.resultDigest = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--expected-scheduler-revision" && i + 1 < args.length) {
-			const raw = args[++i];
-			const parsed = parseStrictNonNegativeInteger(raw);
-			if (parsed === undefined) {
-				(
-					options as LongHorizonCommandOptions & { _invalidExpectedSchedulerRevision?: string }
-				)._invalidExpectedSchedulerRevision = raw;
-			} else {
-				options.expectedSchedulerRevision = parsed;
-			}
-			i++;
-			continue;
-		}
-
-		if (arg === "--expected-execution-revision" && i + 1 < args.length) {
-			const raw = args[++i];
-			const parsed = parseStrictNonNegativeInteger(raw);
-			if (parsed === undefined) {
-				(
-					options as LongHorizonCommandOptions & { _invalidExpectedExecutionRevision?: string }
-				)._invalidExpectedExecutionRevision = raw;
-			} else {
-				options.expectedExecutionRevision = parsed;
-			}
-			i++;
-			continue;
-		}
-
-		// Subcommand detection
-		if (arg === "mission") {
-			if (i + 1 < args.length && args[i + 1] === "validate") {
-				options.command = "mission-validate";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "digest") {
-				options.command = "mission-digest";
-				i += 2;
-				continue;
-			}
-		}
-
-		if (arg === "ledger") {
-			if (i + 1 < args.length && args[i + 1] === "init") {
-				options.command = "ledger-init";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "validate") {
-				options.command = "ledger-validate";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "add-evidence") {
-				options.command = "ledger-add-evidence";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "transition") {
-				options.command = "ledger-transition";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "inspect") {
-				options.command = "ledger-inspect";
-				i += 2;
-				continue;
-			}
-		}
-
-		if (arg === "execution") {
-			if (i + 1 < args.length && args[i + 1] === "init") {
-				options.command = "execution-init";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "inspect") {
-				options.command = "execution-inspect";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "validate") {
-				options.command = "execution-validate";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "transition") {
-				options.command = "execution-transition";
-				i += 2;
-				continue;
-			}
-		}
-
-		if (arg === "continuation") {
-			if (i + 1 < args.length && args[i + 1] === "init") {
-				options.command = "continuation-init";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "inspect") {
-				options.command = "continuation-inspect";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "validate") {
-				options.command = "continuation-validate";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "schedule") {
-				options.command = "continuation-schedule";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "dispatch") {
-				options.command = "continuation-dispatch";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "consume") {
-				options.command = "continuation-consume";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "cancel") {
-				options.command = "continuation-cancel";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "abandon") {
-				options.command = "continuation-abandon";
-				i += 2;
-				continue;
-			}
-		}
-
-		// "evaluate" subcommand — let existing handler take over
-		if (arg === "evaluate") {
-			return options; // No command set, fall through to existing handler
-		}
-
-		// Unknown
+		// Unknown unrecognized
 		i++;
 	}
 
@@ -1609,12 +1601,16 @@ async function handleContinuationDispatch(options: LongHorizonCommandOptions): P
 		return true;
 	}
 
-	const result = dispatchContinuation(record, {
-		eventId: options.eventId,
-		cycleId: options.cycleId,
-		expectedSchedulerRevision: options.expectedSchedulerRevision,
-		dispatchedContinuationId: options.dispatchedContinuationId,
-	});
+	const result = dispatchContinuation(
+		record,
+		{
+			eventId: options.eventId,
+			cycleId: options.cycleId,
+			expectedSchedulerRevision: options.expectedSchedulerRevision,
+			dispatchedContinuationId: options.dispatchedContinuationId,
+		},
+		execBinding.revision,
+	);
 
 	if (!result.ok) {
 		console.error(chalk.red(`Error: ${result.code ? `${result.code}: ` : ""}${result.error}`));
@@ -1693,13 +1689,17 @@ async function handleContinuationConsume(options: LongHorizonCommandOptions): Pr
 		return true;
 	}
 
-	const result = consumeContinuation(record, {
-		eventId: options.eventId,
-		cycleId: options.cycleId,
-		expectedSchedulerRevision: options.expectedSchedulerRevision,
-		dispatchedContinuationId: options.dispatchedContinuationId,
-		resultDigest: options.resultDigest,
-	});
+	const result = consumeContinuation(
+		record,
+		{
+			eventId: options.eventId,
+			cycleId: options.cycleId,
+			expectedSchedulerRevision: options.expectedSchedulerRevision,
+			dispatchedContinuationId: options.dispatchedContinuationId,
+			resultDigest: options.resultDigest,
+		},
+		execBinding.revision,
+	);
 
 	if (!result.ok) {
 		console.error(chalk.red(`Error: ${result.code ? `${result.code}: ` : ""}${result.error}`));

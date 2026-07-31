@@ -6,7 +6,7 @@
  */
 
 import type { AgentMessage } from "@apholdings/jensen-agent-core";
-import type { AssistantMessage, Model, Usage } from "@apholdings/jensen-ai";
+import type { AssistantMessage, Model, ToolResultMessage, Usage } from "@apholdings/jensen-ai";
 import { completeSimple } from "@apholdings/jensen-ai";
 import {
 	convertToLlm,
@@ -280,6 +280,69 @@ export function estimateTokens(message: AgentMessage): number {
 	}
 
 	return 0;
+}
+
+/**
+ * Validate that no tool call/result span is split across the cut boundary.
+ * A cut at index `cutIdx` must not leave an assistant message with tool_calls
+ * in the summarized region while its tool results are in the retained region,
+ * or vice versa.
+ */
+export function validateCompactionSpanIntegrity(
+	messagesToSummarize: AgentMessage[],
+	retainedMessages: AgentMessage[],
+): { valid: boolean; violation?: string } {
+	// Collect tool call IDs from summarized region
+	const summarizedToolCallIds = new Set<string>();
+	const summarizedToolResultIds = new Set<string>();
+	for (const msg of messagesToSummarize) {
+		if (msg.role === "assistant") {
+			for (const block of (msg as AssistantMessage).content) {
+				if (block.type === "toolCall" && block.id) {
+					summarizedToolCallIds.add(block.id);
+				}
+			}
+		} else if (msg.role === "toolResult") {
+			summarizedToolResultIds.add((msg as ToolResultMessage).toolCallId);
+		}
+	}
+
+	// Collect tool call/result IDs from retained region
+	const retainedToolCallIds = new Set<string>();
+	const retainedToolResultIds = new Set<string>();
+	for (const msg of retainedMessages) {
+		if (msg.role === "assistant") {
+			for (const block of (msg as AssistantMessage).content) {
+				if (block.type === "toolCall" && block.id) {
+					retainedToolCallIds.add(block.id);
+				}
+			}
+		} else if (msg.role === "toolResult") {
+			retainedToolResultIds.add((msg as ToolResultMessage).toolCallId);
+		}
+	}
+
+	// Check: any tool call in summarized region must have its result there too
+	for (const callId of summarizedToolCallIds) {
+		if (!summarizedToolResultIds.has(callId) && retainedToolResultIds.has(callId)) {
+			return {
+				valid: false,
+				violation: `Tool call ${callId} in summarized region but its result is in retained region (split span)`,
+			};
+		}
+	}
+
+	// Check: any tool result in retained region must have its call there too
+	for (const resultId of retainedToolResultIds) {
+		if (!retainedToolCallIds.has(resultId) && summarizedToolCallIds.has(resultId)) {
+			return {
+				valid: false,
+				violation: `Tool result ${resultId} in retained region but its call is in summarized region (split span)`,
+			};
+		}
+	}
+
+	return { valid: true };
 }
 
 /**

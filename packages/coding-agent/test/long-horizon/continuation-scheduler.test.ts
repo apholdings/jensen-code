@@ -109,12 +109,16 @@ describe("full cycle", () => {
 		s = schR.record!;
 
 		// DISPATCH
-		const dispR = dispatchContinuation(s, {
-			eventId: "ev-disp-1",
-			cycleId: "ev-sched-1",
-			expectedSchedulerRevision: 1,
-			dispatchedContinuationId: "cont-001",
-		});
+		const dispR = dispatchContinuation(
+			s,
+			{
+				eventId: "ev-disp-1",
+				cycleId: "ev-sched-1",
+				expectedSchedulerRevision: 1,
+				dispatchedContinuationId: "cont-001",
+			},
+			5,
+		);
 		expect(dispR.ok).toBe(true);
 		expect(dispR.record!.state).toBe("DISPATCHED");
 		expect(dispR.record!.schedulerRevision).toBe(2);
@@ -122,13 +126,17 @@ describe("full cycle", () => {
 		s = dispR.record!;
 
 		// CONSUME
-		const conR = consumeContinuation(s, {
-			eventId: "ev-consume-1",
-			cycleId: "ev-sched-1",
-			expectedSchedulerRevision: 2,
-			dispatchedContinuationId: "cont-001",
-			resultDigest: "result-digest-here",
-		});
+		const conR = consumeContinuation(
+			s,
+			{
+				eventId: "ev-consume-1",
+				cycleId: "ev-sched-1",
+				expectedSchedulerRevision: 2,
+				dispatchedContinuationId: "cont-001",
+				resultDigest: "result-digest-here",
+			},
+			5,
+		);
 		expect(conR.ok).toBe(true);
 		expect(conR.record!.state).toBe("IDLE");
 		expect(conR.record!.schedulerRevision).toBe(3);
@@ -148,21 +156,29 @@ describe("multiple cycles", () => {
 		let r = scheduleContinuation(s, { eventId: "s1", expectedSchedulerRevision: 0, expectedExecutionRevision: 1 });
 		expect(r.ok).toBe(true);
 		s = r.record!;
-		r = dispatchContinuation(s, {
-			eventId: "d1",
-			cycleId: "s1",
-			expectedSchedulerRevision: 1,
-			dispatchedContinuationId: "c1",
-		});
+		r = dispatchContinuation(
+			s,
+			{
+				eventId: "d1",
+				cycleId: "s1",
+				expectedSchedulerRevision: 1,
+				dispatchedContinuationId: "c1",
+			},
+			1,
+		);
 		expect(r.ok).toBe(true);
 		s = r.record!;
-		r = consumeContinuation(s, {
-			eventId: "con1",
-			cycleId: "s1",
-			expectedSchedulerRevision: 2,
-			dispatchedContinuationId: "c1",
-			resultDigest: "r1",
-		});
+		r = consumeContinuation(
+			s,
+			{
+				eventId: "con1",
+				cycleId: "s1",
+				expectedSchedulerRevision: 2,
+				dispatchedContinuationId: "c1",
+				resultDigest: "r1",
+			},
+			1,
+		);
 		expect(r.ok).toBe(true);
 		s = r.record!;
 		expect(s.state).toBe("IDLE");
@@ -172,21 +188,29 @@ describe("multiple cycles", () => {
 		r = scheduleContinuation(s, { eventId: "s2", expectedSchedulerRevision: 3, expectedExecutionRevision: 2 });
 		expect(r.ok).toBe(true);
 		s = r.record!;
-		r = dispatchContinuation(s, {
-			eventId: "d2",
-			cycleId: "s2",
-			expectedSchedulerRevision: 4,
-			dispatchedContinuationId: "c2",
-		});
+		r = dispatchContinuation(
+			s,
+			{
+				eventId: "d2",
+				cycleId: "s2",
+				expectedSchedulerRevision: 4,
+				dispatchedContinuationId: "c2",
+			},
+			2,
+		);
 		expect(r.ok).toBe(true);
 		s = r.record!;
-		r = consumeContinuation(s, {
-			eventId: "con2",
-			cycleId: "s2",
-			expectedSchedulerRevision: 5,
-			dispatchedContinuationId: "c2",
-			resultDigest: "r2",
-		});
+		r = consumeContinuation(
+			s,
+			{
+				eventId: "con2",
+				cycleId: "s2",
+				expectedSchedulerRevision: 5,
+				dispatchedContinuationId: "c2",
+				resultDigest: "r2",
+			},
+			2,
+		);
 		expect(r.ok).toBe(true);
 		s = r.record!;
 		expect(s.state).toBe("IDLE");
@@ -217,12 +241,16 @@ describe("cancel", () => {
 		let s = freshScheduler();
 		let r = scheduleContinuation(s, { eventId: "s1", expectedSchedulerRevision: 0, expectedExecutionRevision: 5 });
 		s = r.record!;
-		r = dispatchContinuation(s, {
-			eventId: "d1",
-			cycleId: "s1",
-			expectedSchedulerRevision: 1,
-			dispatchedContinuationId: "c1",
-		});
+		r = dispatchContinuation(
+			s,
+			{
+				eventId: "d1",
+				cycleId: "s1",
+				expectedSchedulerRevision: 1,
+				dispatchedContinuationId: "c1",
+			},
+			5,
+		);
 		s = r.record!;
 
 		r = cancelContinuation(s, { eventId: "cancel-1", cycleId: "s1", expectedSchedulerRevision: 2 }, 10);
@@ -353,20 +381,28 @@ describe("canonical replay", () => {
 		let s = freshScheduler();
 		let r = scheduleContinuation(s, { eventId: "s1", expectedSchedulerRevision: 0, expectedExecutionRevision: 5 });
 		s = r.record!;
-		r = dispatchContinuation(s, {
-			eventId: "d1",
-			cycleId: "s1",
-			expectedSchedulerRevision: 1,
-			dispatchedContinuationId: "c1",
-		});
+		r = dispatchContinuation(
+			s,
+			{
+				eventId: "d1",
+				cycleId: "s1",
+				expectedSchedulerRevision: 1,
+				dispatchedContinuationId: "c1",
+			},
+			5,
+		);
 		s = r.record!;
-		r = consumeContinuation(s, {
-			eventId: "con1",
-			cycleId: "s1",
-			expectedSchedulerRevision: 2,
-			dispatchedContinuationId: "c1",
-			resultDigest: "r1",
-		});
+		r = consumeContinuation(
+			s,
+			{
+				eventId: "con1",
+				cycleId: "s1",
+				expectedSchedulerRevision: 2,
+				dispatchedContinuationId: "c1",
+				resultDigest: "r1",
+			},
+			5,
+		);
 		s = r.record!;
 
 		const insp = inspectContinuationScheduler(s);
@@ -379,12 +415,16 @@ describe("canonical replay", () => {
 		let s = freshScheduler();
 		let r = scheduleContinuation(s, { eventId: "s1", expectedSchedulerRevision: 0, expectedExecutionRevision: 5 });
 		s = r.record!;
-		r = dispatchContinuation(s, {
-			eventId: "d1",
-			cycleId: "s1",
-			expectedSchedulerRevision: 1,
-			dispatchedContinuationId: "c1",
-		});
+		r = dispatchContinuation(
+			s,
+			{
+				eventId: "d1",
+				cycleId: "s1",
+				expectedSchedulerRevision: 1,
+				dispatchedContinuationId: "c1",
+			},
+			5,
+		);
 		s = r.record!;
 
 		// Corrupt an event digest
@@ -437,12 +477,16 @@ describe("revision checks", () => {
 		let r = scheduleContinuation(s, { eventId: "s1", expectedSchedulerRevision: 0, expectedExecutionRevision: 5 });
 		s = r.record!;
 
-		r = dispatchContinuation(s, {
-			eventId: "d1",
-			cycleId: "s1",
-			expectedSchedulerRevision: 0,
-			dispatchedContinuationId: "c1",
-		});
+		r = dispatchContinuation(
+			s,
+			{
+				eventId: "d1",
+				cycleId: "s1",
+				expectedSchedulerRevision: 0,
+				dispatchedContinuationId: "c1",
+			},
+			5,
+		);
 		expect(r.ok).toBe(false);
 		expect(r.code).toBe("STALE_SCHEDULER_REVISION");
 	});
@@ -528,31 +572,43 @@ describe("idempotent exact retries", () => {
 		let s = freshScheduler();
 		let r = scheduleContinuation(s, { eventId: "s1", expectedSchedulerRevision: 0, expectedExecutionRevision: 5 });
 		s = r.record!;
-		r = dispatchContinuation(s, {
-			eventId: "d1",
-			cycleId: "s1",
-			expectedSchedulerRevision: 1,
-			dispatchedContinuationId: "c1",
-		});
+		r = dispatchContinuation(
+			s,
+			{
+				eventId: "d1",
+				cycleId: "s1",
+				expectedSchedulerRevision: 1,
+				dispatchedContinuationId: "c1",
+			},
+			5,
+		);
 		s = r.record!;
-		r = consumeContinuation(s, {
-			eventId: "con1",
-			cycleId: "s1",
-			expectedSchedulerRevision: 2,
-			dispatchedContinuationId: "c1",
-			resultDigest: "r1",
-		});
+		r = consumeContinuation(
+			s,
+			{
+				eventId: "con1",
+				cycleId: "s1",
+				expectedSchedulerRevision: 2,
+				dispatchedContinuationId: "c1",
+				resultDigest: "r1",
+			},
+			5,
+		);
 		s = r.record!;
 		expect(s.state).toBe("IDLE");
 
 		// Exact retry of the CONSUME with same fingerprint
-		const retry = consumeContinuation(s, {
-			eventId: "con1",
-			cycleId: "s1",
-			expectedSchedulerRevision: 2,
-			dispatchedContinuationId: "c1",
-			resultDigest: "r1",
-		});
+		const retry = consumeContinuation(
+			s,
+			{
+				eventId: "con1",
+				cycleId: "s1",
+				expectedSchedulerRevision: 2,
+				dispatchedContinuationId: "c1",
+				resultDigest: "r1",
+			},
+			5,
+		);
 		expect(retry.ok).toBe(true);
 		expect(retry.record!.schedulerRevision).toBe(3);
 	});
@@ -593,12 +649,16 @@ describe("cycle bindings", () => {
 		let r = scheduleContinuation(s, { eventId: "s1", expectedSchedulerRevision: 0, expectedExecutionRevision: 5 });
 		s = r.record!;
 
-		r = dispatchContinuation(s, {
-			eventId: "d1",
-			cycleId: "wrong-cycle",
-			expectedSchedulerRevision: 1,
-			dispatchedContinuationId: "c1",
-		});
+		r = dispatchContinuation(
+			s,
+			{
+				eventId: "d1",
+				cycleId: "wrong-cycle",
+				expectedSchedulerRevision: 1,
+				dispatchedContinuationId: "c1",
+			},
+			5,
+		);
 		expect(r.ok).toBe(false);
 		expect(r.code).toBe("INVALID_CYCLE");
 	});
@@ -607,21 +667,29 @@ describe("cycle bindings", () => {
 		let s = freshScheduler();
 		let r = scheduleContinuation(s, { eventId: "s1", expectedSchedulerRevision: 0, expectedExecutionRevision: 5 });
 		s = r.record!;
-		r = dispatchContinuation(s, {
-			eventId: "d1",
-			cycleId: "s1",
-			expectedSchedulerRevision: 1,
-			dispatchedContinuationId: "c1",
-		});
+		r = dispatchContinuation(
+			s,
+			{
+				eventId: "d1",
+				cycleId: "s1",
+				expectedSchedulerRevision: 1,
+				dispatchedContinuationId: "c1",
+			},
+			5,
+		);
 		s = r.record!;
 
-		r = consumeContinuation(s, {
-			eventId: "con1",
-			cycleId: "s1",
-			expectedSchedulerRevision: 2,
-			dispatchedContinuationId: "wrong-c",
-			resultDigest: "r1",
-		});
+		r = consumeContinuation(
+			s,
+			{
+				eventId: "con1",
+				cycleId: "s1",
+				expectedSchedulerRevision: 2,
+				dispatchedContinuationId: "wrong-c",
+				resultDigest: "r1",
+			},
+			5,
+		);
 		expect(r.ok).toBe(false);
 		expect(r.code).toBe("INVALID_REQUEST");
 	});
@@ -667,24 +735,32 @@ describe("missing scheduler", () => {
 	});
 
 	it("dispatch with null fails ENOENT", () => {
-		const r = dispatchContinuation(null, {
-			eventId: "d1",
-			cycleId: "s1",
-			expectedSchedulerRevision: 0,
-			dispatchedContinuationId: "c1",
-		});
+		const r = dispatchContinuation(
+			null,
+			{
+				eventId: "d1",
+				cycleId: "s1",
+				expectedSchedulerRevision: 0,
+				dispatchedContinuationId: "c1",
+			},
+			5,
+		);
 		expect(r.ok).toBe(false);
 		expect(r.code).toBe("ENOENT");
 	});
 
 	it("consume with null fails ENOENT", () => {
-		const r = consumeContinuation(null, {
-			eventId: "c1",
-			cycleId: "s1",
-			expectedSchedulerRevision: 0,
-			dispatchedContinuationId: "c1",
-			resultDigest: "r1",
-		});
+		const r = consumeContinuation(
+			null,
+			{
+				eventId: "c1",
+				cycleId: "s1",
+				expectedSchedulerRevision: 0,
+				dispatchedContinuationId: "c1",
+				resultDigest: "r1",
+			},
+			5,
+		);
 		expect(r.ok).toBe(false);
 		expect(r.code).toBe("ENOENT");
 	});
@@ -757,21 +833,29 @@ describe("request syntax validation", () => {
 		let s = freshScheduler();
 		let r = scheduleContinuation(s, { eventId: "s1", expectedSchedulerRevision: 0, expectedExecutionRevision: 5 });
 		s = r.record!;
-		r = dispatchContinuation(s, {
-			eventId: "d1",
-			cycleId: "s1",
-			expectedSchedulerRevision: 1,
-			dispatchedContinuationId: "c1",
-		});
+		r = dispatchContinuation(
+			s,
+			{
+				eventId: "d1",
+				cycleId: "s1",
+				expectedSchedulerRevision: 1,
+				dispatchedContinuationId: "c1",
+			},
+			5,
+		);
 		s = r.record!;
 
-		r = consumeContinuation(s, {
-			eventId: "con1",
-			cycleId: "s1",
-			expectedSchedulerRevision: 2,
-			dispatchedContinuationId: "c1",
-			resultDigest: "",
-		});
+		r = consumeContinuation(
+			s,
+			{
+				eventId: "con1",
+				cycleId: "s1",
+				expectedSchedulerRevision: 2,
+				dispatchedContinuationId: "c1",
+				resultDigest: "",
+			},
+			5,
+		);
 		expect(r.ok).toBe(false);
 		expect(r.code).toBe("INVALID_REQUEST");
 	});
@@ -814,12 +898,16 @@ describe("previousEventDigest", () => {
 		let s = freshScheduler();
 		let r = scheduleContinuation(s, { eventId: "s1", expectedSchedulerRevision: 0, expectedExecutionRevision: 5 });
 		s = r.record!;
-		r = dispatchContinuation(s, {
-			eventId: "d1",
-			cycleId: "s1",
-			expectedSchedulerRevision: 1,
-			dispatchedContinuationId: "c1",
-		});
+		r = dispatchContinuation(
+			s,
+			{
+				eventId: "d1",
+				cycleId: "s1",
+				expectedSchedulerRevision: 1,
+				dispatchedContinuationId: "c1",
+			},
+			5,
+		);
 		expect(r.ok).toBe(true);
 		// previousEventDigest is the history digest of the prior record, which for a single-event record
 		// equals sha256(firstEvent.eventDigest)

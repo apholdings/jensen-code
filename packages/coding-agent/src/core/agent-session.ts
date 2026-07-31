@@ -3168,6 +3168,7 @@ export class AgentSession {
 	/**
 	 * Check if an error is retryable (overloaded, rate limit, server errors).
 	 * Context overflow errors are NOT retryable (handled by compaction instead).
+	 * Transcript structure errors are NOT retryable (same payload would fail again).
 	 */
 	private _isRetryableError(message: AssistantMessage): boolean {
 		if (message.stopReason !== "error" || !message.errorMessage) return false;
@@ -3177,6 +3178,18 @@ export class AgentSession {
 		if (isContextOverflow(message, contextWindow)) return false;
 
 		const err = message.errorMessage;
+
+		// Non-retryable transcript errors: deterministic failures from invalid tool call/result structure
+		// These fail with 400 and the same payload would produce the same error again
+		if (
+			/INVALID_TOOL_TRANSCRIPT/i.test(err) ||
+			/must be followed by tool messages/i.test(err) ||
+			/invalid_request_error/i.test(err) ||
+			/Invalid parameter/i.test(err)
+		) {
+			return false;
+		}
+
 		// Match: overloaded_error, provider returned error, rate limit, 429, 500, 502, 503, 504, service unavailable, network/connection errors, fetch failed, terminated, retry delay exceeded
 		return /overloaded|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|other side closed|fetch failed|upstream.?connect|reset before headers|socket hang up|timed? out|timeout|terminated|retry delay/i.test(
 			err,
