@@ -29,6 +29,166 @@ export interface TranscriptValidationSuccess {
 
 export type TranscriptValidationResult = TranscriptValidationSuccess | TranscriptValidationError;
 
+function throwValidationError(result: TranscriptValidationResult, field: string): void {
+	if (!("code" in result)) return;
+	throw new Error(
+		`INVALID_TOOL_TRANSCRIPT: protocol=${result.protocol}, ` +
+			`missingToolCallIds=[${result.missingToolCallIds.join(", ")}], ` +
+			`duplicateToolCallIds=[${result.duplicateToolCallIds.join(", ")}], ` +
+			`orphanToolResultIds=[${result.orphanToolResultIds.join(", ")}], ` +
+			`duplicateCallIds=[${result.duplicateCallIds.join(", ")}], ` +
+			`provider=${result.provider}, model=${result.model}, messageIndex=${result.messageIndex}, field=${field}`,
+	);
+}
+
+export function assertValidChatCompletionsPayload(payload: unknown, provider: string, model: string): void {
+	const messages = isRecord(payload) ? payload.messages : undefined;
+	if (!Array.isArray(messages)) {
+		throw new Error(`INVALID_TOOL_TRANSCRIPT: protocol=chat-completions, missing messages`);
+	}
+	throwValidationError(validateChatCompletionsTranscript(messages, provider, model), "messages");
+}
+
+export function assertValidResponsesPayload(payload: unknown, provider: string, model: string): void {
+	const input = isRecord(payload) ? payload.input : undefined;
+	if (!Array.isArray(input)) {
+		throw new Error(`INVALID_TOOL_TRANSCRIPT: protocol=responses, missing input`);
+	}
+	throwValidationError(validateResponsesTranscript(input, provider, model), "input");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function asToolCall(id: unknown, name: unknown): ToolCall {
+	return {
+		type: "toolCall",
+		id: typeof id === "string" ? id : "",
+		name: typeof name === "string" ? name : "",
+		arguments: {},
+	};
+}
+
+function asAssistantMessage(content: ToolCall[]): AssistantMessage {
+	return {
+		role: "assistant",
+		content,
+		api: "openai-completions",
+		provider: "unknown",
+		model: "unknown",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "stop",
+		timestamp: 0,
+	};
+}
+
+function asToolResult(toolCallId: unknown): ToolResultMessage {
+	return {
+		role: "toolResult",
+		toolCallId: typeof toolCallId === "string" ? toolCallId : "",
+		toolName: "",
+		content: [],
+		isError: false,
+		timestamp: 0,
+	};
+}
+
+function normalizeChatCompletionsMessages(messages: readonly unknown[]): Message[] {
+	const normalized: Message[] = [];
+	for (const raw of messages) {
+		if (!isRecord(raw)) continue;
+		if (raw.role === "assistant") {
+			const toolCalls = Array.isArray(raw.tool_calls)
+				? raw.tool_calls.map((call) => {
+						if (!isRecord(call)) return asToolCall(undefined, undefined);
+						const functionData = isRecord(call.function) ? call.function : undefined;
+						return asToolCall(call.id, functionData?.name);
+					})
+				: [];
+			normalized.push(asAssistantMessage(toolCalls));
+		} else if (raw.role === "tool") {
+			normalized.push(asToolResult(raw.tool_call_id));
+		} else if (raw.role === "user") {
+			normalized.push({ role: "user", content: "", timestamp: 0 });
+		}
+	}
+	return normalized;
+}
+
+function normalizeResponsesMessages(messages: readonly unknown[]): Message[] {
+	const normalized: Message[] = [];
+	let pendingCalls: ToolCall[] = [];
+	const flushCalls = () => {
+		if (pendingCalls.length > 0) {
+			normalized.push(asAssistantMessage(pendingCalls));
+			pendingCalls = [];
+		}
+	};
+
+	for (const raw of messages) {
+		if (!isRecord(raw)) continue;
+		if (raw.type === "function_call") {
+			pendingCalls.push(asToolCall(raw.call_id, raw.name));
+		} else {
+			flushCalls();
+			if (raw.type === "function_call_output") {
+				normalized.push(asToolResult(raw.call_id));
+			} else if (raw.role === "user") {
+				normalized.push({ role: "user", content: "", timestamp: 0 });
+			}
+		}
+	}
+	flushCalls();
+	return normalized;
+}
+
+function normalizeMessages(messages: readonly unknown[], protocol: "chat-completions" | "responses"): Message[] {
+	if (messages.some((message) => isRecord(message) && message.role === "toolResult")) {
+		return messages as Message[];
+	}
+	if (
+		messages.some(
+			(message) =>
+				isRecord(message) &&
+				message.role === "assistant" &&
+				Array.isArray(message.content) &&
+				message.content.some((block) => isRecord(block) && block.type === "toolCall"),
+		)
+	) {
+		return messages as Message[];
+	}
+	if (messages.some((message) => isRecord(message) && message.role === "assistant" && !("api" in message))) {
+		return normalizeChatCompletionsMessages(messages);
+	}
+	if (
+		messages.some(
+			(message) =>
+				isRecord(message) && (message.type === "function_call" || message.type === "function_call_output"),
+		)
+	) {
+		return normalizeResponsesMessages(messages);
+	}
+	if (
+		messages.some(
+			(message) =>
+				isRecord(message) &&
+				(message.role === "tool" || Array.isArray(message.tool_calls) || message.role === "toolResult"),
+		)
+	) {
+		return normalizeChatCompletionsMessages(messages);
+	}
+	if (protocol === "responses") return normalizeResponsesMessages(messages);
+	return messages as Message[];
+}
+
 /**
  * Validate a transcript for Chat Completions protocol.
  * For every assistant message with tool_calls, checks:
@@ -41,10 +201,11 @@ export type TranscriptValidationResult = TranscriptValidationSuccess | Transcrip
  * - A tool result appears in the uninterrupted span following its originating assistant
  */
 export function validateChatCompletionsTranscript(
-	messages: Message[],
+	messages: readonly unknown[],
 	provider: string,
 	model: string,
 ): TranscriptValidationResult {
+	const normalizedMessages = normalizeMessages(messages, "chat-completions");
 	const missingToolCallIds: string[] = [];
 	const duplicateToolCallIds: string[] = [];
 	const orphanToolResultIds: string[] = [];
@@ -64,8 +225,8 @@ export function validateChatCompletionsTranscript(
 	// Track seen tool result IDs to detect duplicate results
 	const seenResultIds = new Map<string, number>();
 
-	for (let i = 0; i < messages.length; i++) {
-		const msg = messages[i];
+	for (let i = 0; i < normalizedMessages.length; i++) {
+		const msg = normalizedMessages[i];
 
 		if (msg.role === "assistant") {
 			const assistantMsg = msg as AssistantMessage;
@@ -143,7 +304,7 @@ export function validateChatCompletionsTranscript(
 	if (currentSpan && currentSpan.callIds.size > 0) {
 		for (const pid of currentSpan.callIds) {
 			missingToolCallIds.push(pid);
-			if (errorIndex < 0) errorIndex = messages.length - 1;
+			if (errorIndex < 0) errorIndex = normalizedMessages.length - 1;
 		}
 		currentSpan = null;
 	}
@@ -179,10 +340,11 @@ export function validateChatCompletionsTranscript(
  * the next assistant or user message begins a new span.
  */
 export function validateResponsesTranscript(
-	messages: Message[],
+	messages: readonly unknown[],
 	provider: string,
 	model: string,
 ): TranscriptValidationResult {
+	const normalizedMessages = normalizeMessages(messages, "responses");
 	const missingCallIds: string[] = [];
 	const duplicateCallIds: string[] = [];
 	const orphanOutputIds: string[] = [];
@@ -200,8 +362,8 @@ export function validateResponsesTranscript(
 	// Track seen output IDs to detect duplicate results
 	const seenOutputIds = new Map<string, number>();
 
-	for (let i = 0; i < messages.length; i++) {
-		const msg = messages[i];
+	for (let i = 0; i < normalizedMessages.length; i++) {
+		const msg = normalizedMessages[i];
 
 		if (msg.role === "assistant") {
 			const assistantMsg = msg as AssistantMessage;
@@ -273,7 +435,7 @@ export function validateResponsesTranscript(
 	if (currentSpan && currentSpan.callIds.size > 0) {
 		for (const pid of currentSpan.callIds) {
 			missingCallIds.push(pid);
-			if (errorIndex < 0) errorIndex = messages.length - 1;
+			if (errorIndex < 0) errorIndex = normalizedMessages.length - 1;
 		}
 		currentSpan = null;
 	}

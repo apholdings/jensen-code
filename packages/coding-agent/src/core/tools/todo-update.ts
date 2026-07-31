@@ -39,6 +39,10 @@ export interface TodoUpdateSnapshotEnforcement {
 	invalidateSnapshot: () => void;
 }
 
+export interface TodoUpdateRejectionState {
+	count: number;
+}
+
 function normaliseUpdateField(value: string | undefined): string | undefined {
 	if (value === undefined) return undefined;
 	return value.trim();
@@ -58,12 +62,8 @@ export function createTodoUpdateTool(
 	getRevision: () => number,
 	_loopGuard: TodoLoopGuard,
 	snapshotEnforcement?: TodoUpdateSnapshotEnforcement,
+	rejectionState: TodoUpdateRejectionState = { count: 0 },
 ): AgentTool<typeof todoUpdateSchema> {
-	// Counts todo_update rejections since the last successful mutation or reset.
-	// The second rejection in a row requires a fresh todo_read before any further
-	// todo_update attempt.
-	let rejectionCount = 0;
-
 	return {
 		name: "todo_update",
 		label: "todo_update",
@@ -76,28 +76,32 @@ export function createTodoUpdateTool(
 		parameters: todoUpdateSchema,
 		execute: async (_toolCallId: string, input: TodoUpdateInput, _signal?: AbortSignal) => {
 			const { updates, expectedRevision } = input;
+			const rejectReadRequired = (details: Record<string, unknown>) => {
+				rejectionState.count++;
+				if (rejectionState.count > 1) {
+					throw new Error(
+						"REPEATED_TODO_UPDATE_LOOP: todo_update was rejected twice without a successful todo_read. The active agent run is terminated. Start a new user message to continue.",
+					);
+				}
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text:
+								details.reason === "stale_revision"
+									? `TODO_READ_REQUIRED: Stale revision. Snapshot was at revision ${String(details.snapshotRevision)} but current is ${String(details.currentRevision)}. Call todo_read to get the current state before retrying.`
+									: "TODO_READ_REQUIRED: Call todo_read to get the current state before retrying.",
+						},
+					],
+					details: { ...details, errorCode: "TODO_READ_REQUIRED", consecutiveRejections: rejectionState.count },
+				};
+			};
 
 			// Host-side snapshot enforcement: require a fresh todo_read before any update
 			if (snapshotEnforcement) {
 				const snapshot = snapshotEnforcement.getSnapshot();
 				if (!snapshot) {
-					rejectionCount++;
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text:
-									rejectionCount > 1
-										? "TODO_READ_REQUIRED: No read snapshot is available and a previous todo_update was rejected. You must call todo_read before the next todo_update."
-										: "TODO_READ_REQUIRED: You must call todo_read before using todo_update. No read snapshot is available.",
-							},
-						],
-						details: {
-							errorCode: "TODO_READ_REQUIRED",
-							reason: "no_snapshot",
-							consecutiveRejections: rejectionCount,
-						},
-					};
+					return rejectReadRequired({ reason: "no_snapshot" });
 				}
 			}
 
@@ -146,30 +150,15 @@ export function createTodoUpdateTool(
 			if (expectedRevision !== currentRevision) {
 				// Invalidate the cached snapshot so further updates are blocked
 				snapshotEnforcement?.invalidateSnapshot();
-				rejectionCount++;
-				return {
-					content: [
-						{
-							type: "text" as const,
-							text:
-								`TODO_READ_REQUIRED: Stale revision. Snapshot was at revision ${expectedRevision} but current is ${currentRevision}. ` +
-								(rejectionCount > 1
-									? "The stale revision was rejected before. You must call todo_read to get the current state before the next todo_update."
-									: "Call todo_read to get the current state before retrying."),
-						},
-					],
-					details: {
-						errorCode: "TODO_READ_REQUIRED",
-						reason: "stale_revision",
-						snapshotRevision: expectedRevision,
-						currentRevision,
-						consecutiveRejections: rejectionCount,
-					},
-				};
+				return rejectReadRequired({
+					reason: "stale_revision",
+					snapshotRevision: expectedRevision,
+					currentRevision,
+				});
 			}
 
 			// A fresh snapshot with a matching revision is a valid precondition.
-			rejectionCount = 0;
+			rejectionState.count = 0;
 
 			if (!snapshotEnforcement) {
 				return {
@@ -253,6 +242,7 @@ export function createTodoUpdateTool(
 
 			// Persist updated todos
 			setSessionTodos(current);
+			rejectionState.count = 0;
 			// Invalidate snapshot after mutation - subsequent updates need fresh read
 			snapshotEnforcement?.invalidateSnapshot();
 			const newRevision = getRevision();

@@ -31,7 +31,6 @@ import {
 	supportsXhigh,
 	validateChatCompletionsTranscript,
 	validateResponsesTranscript,
-	validateToolSpanIntegrity,
 } from "@apholdings/jensen-ai";
 import { getDocsPath } from "../config.js";
 import { theme } from "../modes/interactive/theme/theme.js";
@@ -380,6 +379,7 @@ export class AgentSession {
 	private _todoLoopGuard = new TodoLoopGuard();
 	private _todoPerTurnLock = createPerTurnLock();
 	private _todoReadSnapshot: { revision: number; timestamp: number } | null = null;
+	private _todoUpdateRejectionState = { count: 0 };
 	private _memoryItems: MemoryItem[] = [];
 	private _delegatedTasks: DelegatedTask[] = [];
 	private _tasks: Task[] = [];
@@ -488,12 +488,12 @@ export class AgentSession {
 			// is active. The tool already threw REPEATED_TOOL_CALL_LOOP; rethrow so
 			// the agent loop surfaces an error assistant message and stops without
 			// another provider request.
-			if (toolCall.name === "todo_write" && isError) {
+			if ((toolCall.name === "todo_write" || toolCall.name === "todo_update") && isError) {
 				const text = (result.content ?? [])
 					.filter((c) => c.type === "text")
 					.map((c) => (c as { text?: string }).text ?? "")
 					.join(" ");
-				if (/REPEATED_TOOL_CALL_LOOP/.test(text)) {
+				if (/REPEATED_TOOL_CALL_LOOP|REPEATED_TODO_UPDATE_LOOP/.test(text)) {
 					throw new Error(text);
 				}
 			}
@@ -618,8 +618,10 @@ export class AgentSession {
 		if (event.type === "message_end") {
 			if (event.message.role === "user") {
 				this._todoLoopGuard.resetOnNewUserMessage();
+				this._todoUpdateRejectionState.count = 0;
 				this._todoPerTurnLock.currentTurn++;
 				this._todoPerTurnLock.lockedUntil = -1;
+				this._todoPerTurnLock.reservedUntil = -1;
 			}
 			// Check if this is a custom message from extensions
 			if (event.message.role === "custom") {
@@ -670,7 +672,6 @@ export class AgentSession {
 				const model = this.agent.state.model;
 				if (model) {
 					const history = this.agent.state.messages as Message[];
-					const spanCheck = validateToolSpanIntegrity(history);
 					const useResponses =
 						model.api === "openai-responses" ||
 						model.api === "azure-openai-responses" ||
@@ -678,10 +679,7 @@ export class AgentSession {
 					const result = useResponses
 						? validateResponsesTranscript(history, model.provider, model.id)
 						: validateChatCompletionsTranscript(history, model.provider, model.id);
-					if (
-						"code" in result &&
-						(spanCheck.missingToolCallIds.length > 0 || spanCheck.orphanToolResultIds.length > 0)
-					) {
+					if ("code" in result) {
 						throw new Error(
 							`INVALID_TOOL_TRANSCRIPT: protocol=${result.protocol}, ` +
 								`missingToolCallIds=[${result.missingToolCallIds.join(", ")}], ` +
@@ -2206,8 +2204,11 @@ export class AgentSession {
 		this._pendingNextTurnMessages = [];
 		this._todos = [];
 		this._todoRevision = 0;
+		this._todoReadSnapshot = null;
+		this._todoUpdateRejectionState.count = 0;
 		this._todoPerTurnLock.currentTurn = 0;
 		this._todoPerTurnLock.lockedUntil = -1;
+		this._todoPerTurnLock.reservedUntil = -1;
 		this._memoryItems = [];
 		this._delegatedTasks = [];
 		this._tasks = [];
@@ -3148,6 +3149,7 @@ export class AgentSession {
 						revision: this._todoRevision,
 						timestamp: Date.now(),
 					};
+					this._todoUpdateRejectionState.count = 0;
 				},
 			},
 		);
@@ -3162,6 +3164,7 @@ export class AgentSession {
 					this._todoReadSnapshot = null;
 				},
 			},
+			this._todoUpdateRejectionState,
 		);
 		this._baseToolRegistry.set("todo_write", todoWriteTool as unknown as AgentTool);
 		this._baseToolRegistry.set("todo_read", todoReadTool as unknown as AgentTool);
@@ -3605,8 +3608,11 @@ export class AgentSession {
 		const sessionContext = this.sessionManager.buildSessionContext();
 		this._todos = sessionContext.todos as TodoItem[];
 		this._todoRevision = 0;
+		this._todoReadSnapshot = null;
+		this._todoUpdateRejectionState.count = 0;
 		this._todoPerTurnLock.currentTurn = 0;
 		this._todoPerTurnLock.lockedUntil = -1;
+		this._todoPerTurnLock.reservedUntil = -1;
 		this._memoryItems = sessionContext.memoryItems;
 		this._delegatedTasks = [];
 		this._tasks = this.sessionManager.getLatestSessionTasks();

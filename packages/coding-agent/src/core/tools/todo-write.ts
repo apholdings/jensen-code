@@ -44,11 +44,21 @@ export function createPerTurnLock(): PerTurnLock {
 	return {
 		currentTurn: 0,
 		lockedUntil: -1,
+		reservedUntil: -1,
 		isActive() {
-			return this.lockedUntil === this.currentTurn;
+			return this.lockedUntil === this.currentTurn || this.reservedUntil === this.currentTurn;
+		},
+		tryReserveForCurrentTurn() {
+			if (this.isActive()) return false;
+			this.reservedUntil = this.currentTurn;
+			return true;
 		},
 		setLockedForCurrentTurn() {
 			this.lockedUntil = this.currentTurn;
+			this.reservedUntil = -1;
+		},
+		releaseReservation() {
+			if (this.reservedUntil === this.currentTurn) this.reservedUntil = -1;
 		},
 	};
 }
@@ -56,8 +66,11 @@ export function createPerTurnLock(): PerTurnLock {
 export interface PerTurnLock {
 	currentTurn: number;
 	lockedUntil: number;
+	reservedUntil: number;
 	isActive(): boolean;
+	tryReserveForCurrentTurn(): boolean;
 	setLockedForCurrentTurn(): void;
+	releaseReservation(): void;
 }
 
 /** Redact sensitive credentials from text string. */
@@ -117,8 +130,8 @@ export function createTodoWriteTool(
 		{ todos, confirmClear }: TodoWriteInput,
 		_signal?: AbortSignal,
 	): Promise<{ content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> }> => {
-		// Per-user-turn lock: reject duplicate todo_write within the same turn.
-		if (perTurnLock?.isActive()) {
+		// Per-user-turn lock: reserve the write before validation and mutation.
+		if (perTurnLock && !perTurnLock.tryReserveForCurrentTurn()) {
 			const firstDuplicate = loopGuard.recordDuplicate();
 			const list = [...getSessionTodos()];
 			const pending = list.filter((t) => t.status === "pending").length;
@@ -152,117 +165,123 @@ export function createTodoWriteTool(
 			};
 		}
 
-		// Validate input
-		if (!Array.isArray(todos)) {
-			return {
-				content: [{ type: "text", text: "Error: todos must be an array" }],
-				details: {},
-			};
-		}
+		try {
+			// Validate input
+			if (!Array.isArray(todos)) {
+				return {
+					content: [{ type: "text", text: "Error: todos must be an array" }],
+					details: {},
+				};
+			}
 
-		// Validate each todo item
-		const normalized: TodoItem[] = [];
-		for (const todo of todos) {
-			if (typeof todo.content !== "string" || !todo.content.trim()) {
-				return {
-					content: [{ type: "text", text: "Error: each todo must have a non-empty content field" }],
-					details: {},
-				};
+			// Validate each todo item
+			const normalized: TodoItem[] = [];
+			for (const todo of todos) {
+				if (typeof todo.content !== "string" || !todo.content.trim()) {
+					return {
+						content: [{ type: "text", text: "Error: each todo must have a non-empty content field" }],
+						details: {},
+					};
+				}
+				if (typeof todo.activeForm !== "string" || !todo.activeForm.trim()) {
+					return {
+						content: [{ type: "text", text: "Error: each todo must have a non-empty activeForm field" }],
+						details: {},
+					};
+				}
+				if (!["pending", "in_progress", "completed"].includes(todo.status)) {
+					return {
+						content: [
+							{
+								type: "text",
+								text: "Error: each todo must have status of 'pending', 'in_progress', or 'completed'",
+							},
+						],
+						details: {},
+					};
+				}
+				normalized.push(normalizeTodoItem(todo as TodoItem));
 			}
-			if (typeof todo.activeForm !== "string" || !todo.activeForm.trim()) {
-				return {
-					content: [{ type: "text", text: "Error: each todo must have a non-empty activeForm field" }],
-					details: {},
-				};
-			}
-			if (!["pending", "in_progress", "completed"].includes(todo.status)) {
+
+			// Empty list requires explicit confirmation
+			if (normalized.length === 0 && confirmClear !== true) {
 				return {
 					content: [
 						{
 							type: "text",
-							text: "Error: each todo must have status of 'pending', 'in_progress', or 'completed'",
+							text: "Error: Clearing all todos requires explicit confirmation (set confirmClear: true). To view current todos without modifying them, call todo_read.",
 						},
 					],
 					details: {},
 				};
 			}
-			normalized.push(normalizeTodoItem(todo as TodoItem));
-		}
 
-		// Empty list requires explicit confirmation
-		if (normalized.length === 0 && confirmClear !== true) {
-			return {
-				content: [
-					{
-						type: "text",
-						text: "Error: Clearing all todos requires explicit confirmation (set confirmClear: true). To view current todos without modifying them, call todo_read.",
+			const current = getSessionTodos().map(normalizeTodoItem);
+			const isNoOp = areTodosEqual(normalized, current);
+
+			if (isNoOp) {
+				perTurnLock?.releaseReservation();
+				const pending = current.filter((t) => t.status === "pending").length;
+				const inProgress = current.filter((t) => t.status === "in_progress").length;
+				const completedCount = current.filter((t) => t.status === "completed").length;
+				const total = current.length;
+				const lockNote =
+					"\n\nTodo list is locked for this user turn. Next permitted operations: todo_read, todo_update.";
+
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Todo list unchanged (${total} total: ${pending} pending, ${inProgress} in progress, ${completedCount} completed). Continue executing the active task.${lockNote}`,
+						},
+					],
+					details: {
+						changed: false,
+						total,
+						pending,
+						inProgress,
+						completed: completedCount,
 					},
-				],
-				details: {},
-			};
-		}
+				};
+			}
 
-		const current = getSessionTodos().map(normalizeTodoItem);
-		const isNoOp = areTodosEqual(normalized, current);
+			// Update session state
+			setSessionTodos(normalized);
 
-		if (isNoOp) {
-			const pending = current.filter((t) => t.status === "pending").length;
-			const inProgress = current.filter((t) => t.status === "in_progress").length;
-			const completedCount = current.filter((t) => t.status === "completed").length;
-			const total = current.length;
-			const lockNote =
-				"\n\nTodo list is locked for this user turn. Next permitted operations: todo_read, todo_update.";
+			const pending = normalized.filter((t) => t.status === "pending").length;
+			const inProgress = normalized.filter((t) => t.status === "in_progress").length;
+			const completedCount = normalized.filter((t) => t.status === "completed").length;
+			const total = normalized.length;
+
+			// Apply per-user-turn lock (only on successful mutations)
+			if (perTurnLock) perTurnLock.setLockedForCurrentTurn();
+
+			const revision = getRevision?.();
+
+			const activeTask = normalized.find((t) => t.status === "in_progress");
+			const activeText = activeTask ? ` Active task: ${activeTask.activeForm || activeTask.content}.` : "";
+			const summary =
+				`Todo list updated (${total} total: ${pending} pending, ${inProgress} in progress, ${completedCount} completed). Revision ${revision ?? "new"}.` +
+				activeText +
+				"\n\ntodo_write is unavailable for the rest of this user turn. todo_read, todo_update, and other authorized tools remain available.";
 
 			return {
-				content: [
-					{
-						type: "text",
-						text: `Todo list unchanged (${total} total: ${pending} pending, ${inProgress} in progress, ${completedCount} completed). Continue executing the active task.${lockNote}`,
-					},
-				],
+				content: [{ type: "text", text: summary }],
 				details: {
-					changed: false,
+					changed: true,
 					total,
 					pending,
 					inProgress,
 					completed: completedCount,
+					revision,
 				},
 			};
+		} catch (error) {
+			perTurnLock?.releaseReservation();
+			throw error;
+		} finally {
+			perTurnLock?.releaseReservation();
 		}
-
-		// Update session state
-		setSessionTodos(normalized);
-
-		const pending = normalized.filter((t) => t.status === "pending").length;
-		const inProgress = normalized.filter((t) => t.status === "in_progress").length;
-		const completedCount = normalized.filter((t) => t.status === "completed").length;
-		const total = normalized.length;
-
-		// Apply per-user-turn lock (only on successful mutations)
-		if (perTurnLock) {
-			perTurnLock.setLockedForCurrentTurn();
-		}
-
-		const revision = getRevision?.();
-
-		const activeTask = normalized.find((t) => t.status === "in_progress");
-		const activeText = activeTask ? ` Active task: ${activeTask.activeForm || activeTask.content}.` : "";
-		const summary =
-			`Todo list updated (${total} total: ${pending} pending, ${inProgress} in progress, ${completedCount} completed). Revision ${revision ?? "new"}.` +
-			activeText +
-			"\n\ntodo_write is unavailable for the rest of this user turn. todo_read, todo_update, and other authorized tools remain available.";
-
-		return {
-			content: [{ type: "text", text: summary }],
-			details: {
-				changed: true,
-				total,
-				pending,
-				inProgress,
-				completed: completedCount,
-				revision,
-			},
-		};
 	};
 
 	return {

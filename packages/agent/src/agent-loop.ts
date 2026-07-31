@@ -13,7 +13,6 @@ import {
 	validateChatCompletionsTranscript,
 	validateResponsesTranscript,
 	validateToolArguments,
-	validateToolSpanIntegrity,
 } from "@apholdings/jensen-ai";
 import type {
 	AgentContext,
@@ -245,28 +244,25 @@ function validateTranscriptForModel(
 	llmMessages: Message[],
 	model: { api?: string; provider?: string; id?: string },
 ): { code: "INVALID_TOOL_TRANSCRIPT"; message: string } | null {
-	const spanCheck = validateToolSpanIntegrity(llmMessages);
-	if (!spanCheck.valid && (spanCheck.missingToolCallIds.length > 0 || spanCheck.orphanToolResultIds.length > 0)) {
-		const provider = model.provider || "unknown";
-		const modelId = model.id || "unknown";
-		const useResponses =
-			model.api === "openai-responses" ||
-			model.api === "azure-openai-responses" ||
-			model.api === "openai-codex-responses";
-		const validator = useResponses ? validateResponsesTranscript : validateChatCompletionsTranscript;
-		const result = validator(llmMessages, provider, modelId);
-		if ("code" in result && (result.missingToolCallIds.length > 0 || result.orphanToolResultIds.length > 0)) {
-			return {
-				code: "INVALID_TOOL_TRANSCRIPT",
-				message:
-					`Transcript validation failed: protocol=${result.protocol}, ` +
-					`missingToolCallIds=[${result.missingToolCallIds.join(", ")}], ` +
-					`duplicateToolCallIds=[${result.duplicateToolCallIds.join(", ")}], ` +
-					`orphanToolResultIds=[${result.orphanToolResultIds.join(", ")}], ` +
-					`duplicateCallIds=[${result.duplicateCallIds.join(", ")}], ` +
-					`provider=${result.provider}, model=${result.model}, messageIndex=${result.messageIndex}`,
-			};
-		}
+	const provider = model.provider || "unknown";
+	const modelId = model.id || "unknown";
+	const useResponses =
+		model.api === "openai-responses" ||
+		model.api === "azure-openai-responses" ||
+		model.api === "openai-codex-responses";
+	const validator = useResponses ? validateResponsesTranscript : validateChatCompletionsTranscript;
+	const result = validator(llmMessages, provider, modelId);
+	if ("code" in result) {
+		return {
+			code: "INVALID_TOOL_TRANSCRIPT",
+			message:
+				`Transcript validation failed: protocol=${result.protocol}, ` +
+				`missingToolCallIds=[${result.missingToolCallIds.join(", ")}], ` +
+				`duplicateToolCallIds=[${result.duplicateToolCallIds.join(", ")}], ` +
+				`orphanToolResultIds=[${result.orphanToolResultIds.join(", ")}], ` +
+				`duplicateCallIds=[${result.duplicateCallIds.join(", ")}], ` +
+				`provider=${result.provider}, model=${result.model}, messageIndex=${result.messageIndex}`,
+		};
 	}
 	return null;
 }

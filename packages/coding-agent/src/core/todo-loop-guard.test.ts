@@ -865,4 +865,84 @@ describe("Todo write per-user-turn duplicate contract (R01-R14)", () => {
 		// IDs should differ
 		expect(persisted[0].id).not.toBe(persisted[1].id);
 	});
+
+	it("repeated stale todo_update terminates after one rejection and recovers after read", async () => {
+		let persisted: TodoItem[] = [{ id: "todo-1", content: "Task", activeForm: "Doing", status: "pending" }];
+		let revision = 1;
+		let snapshot: { revision: number; timestamp: number } | null = { revision: 0, timestamp: Date.now() };
+		const rejectionState = { count: 0 };
+		let mutations = 0;
+		const recordRead = () => {
+			snapshot = { revision, timestamp: Date.now() };
+		};
+		const invalidateSnapshot = () => {
+			snapshot = null;
+		};
+		const readTool = createTodoReadTool(
+			() => persisted,
+			() => revision,
+			{ onRead: recordRead },
+		);
+		const updateTool = createTodoUpdateTool(
+			() => persisted,
+			(next) => {
+				persisted = next;
+				revision++;
+				mutations++;
+				snapshot = null;
+			},
+			() => revision,
+			new TodoLoopGuard(),
+			{
+				getSnapshot: () => snapshot,
+				invalidateSnapshot,
+			},
+			rejectionState,
+		);
+
+		const first = await updateTool.execute("u1", {
+			updates: [{ id: "todo-1", status: "completed" }],
+			expectedRevision: 0,
+		});
+		expect((first.details as { errorCode?: string }).errorCode).toBe("TODO_READ_REQUIRED");
+		expect(mutations).toBe(0);
+		await expect(
+			updateTool.execute("u2", { updates: [{ id: "todo-1", status: "completed" }], expectedRevision: 0 }),
+		).rejects.toThrow("REPEATED_TODO_UPDATE_LOOP");
+		expect(mutations).toBe(0);
+
+		const read = await readTool.execute("r1", {});
+		const readDetails = read.details as { revision: number; todos: TodoItem[] };
+		const recovered = await updateTool.execute("u3", {
+			updates: [{ id: "todo-1", status: "completed" }],
+			expectedRevision: readDetails.revision,
+		});
+		expect((recovered.details as { changed?: boolean }).changed).toBe(true);
+		expect(mutations).toBe(1);
+	});
+
+	it("reserves todo_write atomically for parallel calls", async () => {
+		const lock = createPerTurnLock();
+		let persisted: TodoItem[] = [];
+		let mutations = 0;
+		const tool = createTodoWriteTool(
+			() => persisted,
+			(next) => {
+				persisted = next;
+				mutations++;
+			},
+			new TodoLoopGuard(),
+			() => mutations,
+			lock,
+		);
+
+		const results = await Promise.all([
+			tool.execute("w1", { todos: [{ id: "a", content: "A", activeForm: "Doing A", status: "pending" }] }),
+			tool.execute("w2", { todos: [{ id: "b", content: "B", activeForm: "Doing B", status: "pending" }] }),
+		]);
+
+		expect(mutations).toBe(1);
+		expect(lock.lockedUntil).toBe(lock.currentTurn);
+		expect(results.filter((result) => (result.details as { changed?: boolean }).changed).length).toBe(1);
+	});
 });

@@ -1,11 +1,10 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, type ThinkingLevel } from "@apholdings/jensen-agent-core";
 import {
+	assertValidChatCompletionsPayload,
+	assertValidResponsesPayload,
 	type Message,
 	type Model,
-	validateChatCompletionsTranscript,
-	validateResponsesTranscript,
-	validateToolSpanIntegrity,
 } from "@apholdings/jensen-ai";
 import { getAgentDir, getDocsPath } from "../config.js";
 import { AgentSession } from "./agent-session.js";
@@ -317,45 +316,17 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		},
 		convertToLlm: convertToLlmWithBlockImages,
 		onPayload: async (payload, model) => {
-			// Final wire-payload validation immediately before network transport.
-			// This is the last guard after every context transformation: any invalid
-			// tool span produces zero network requests and no automatic retry.
-			if (model && payload && typeof payload === "object") {
-				const p = payload as {
-					messages?: Array<{ role?: string }>;
-					input?: Array<{ role?: string }>;
-				};
-				if (Array.isArray(p.messages)) {
-					const messages = p.messages as unknown as Message[];
-					const spanCheck = validateToolSpanIntegrity(messages);
-					const useResponses =
-						model.api === "openai-responses" ||
-						model.api === "azure-openai-responses" ||
-						model.api === "openai-codex-responses";
-					const result = useResponses
-						? validateResponsesTranscript(messages, model.provider, model.id)
-						: validateChatCompletionsTranscript(messages, model.provider, model.id);
-					if (
-						"code" in result &&
-						(spanCheck.missingToolCallIds.length > 0 || spanCheck.orphanToolResultIds.length > 0)
-					) {
-						throw new Error(
-							`INVALID_TOOL_TRANSCRIPT: protocol=${result.protocol}, ` +
-								`missingToolCallIds=[${result.missingToolCallIds.join(", ")}], ` +
-								`duplicateToolCallIds=[${result.duplicateToolCallIds.join(", ")}], ` +
-								`orphanToolResultIds=[${result.orphanToolResultIds.join(", ")}], ` +
-								`duplicateCallIds=[${result.duplicateCallIds.join(", ")}], ` +
-								`provider=${result.provider}, model=${result.model}, messageIndex=${result.messageIndex}`,
-						);
-					}
-				}
-			}
-
 			const runner = extensionRunnerRef.current;
-			if (!runner?.hasHandlers("before_provider_request")) {
-				return payload;
+			let finalPayload = payload;
+			if (runner?.hasHandlers("before_provider_request")) {
+				finalPayload = await runner.emitBeforeProviderRequest(payload);
 			}
-			return runner.emitBeforeProviderRequest(payload);
+			if (model.api === "openai-completions") {
+				assertValidChatCompletionsPayload(finalPayload, model.provider, model.id);
+			} else if (model.api.endsWith("-responses")) {
+				assertValidResponsesPayload(finalPayload, model.provider, model.id);
+			}
+			return finalPayload;
 		},
 		sessionId: sessionManager.getSessionId(),
 		transformContext: async (messages) => {

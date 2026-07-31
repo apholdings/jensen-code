@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
 	type AssistantMessage,
+	assertValidChatCompletionsPayload,
+	assertValidResponsesPayload,
 	type Message,
 	type ToolResultMessage,
 	validateChatCompletionsTranscript,
@@ -252,5 +254,91 @@ describe("validateToolSpanIntegrity", () => {
 			makeAssistantText("partial"),
 		];
 		expect(validateToolSpanIntegrity(messages).valid).toBe(false);
+	});
+});
+
+describe("final serialized payload validation", () => {
+	test("accepts ordinary non-tool wire turns", () => {
+		expect(() =>
+			assertValidChatCompletionsPayload(
+				{
+					messages: [
+						{ role: "user", content: "hello" },
+						{ role: "assistant", content: "done" },
+					],
+				},
+				"openai",
+				"gpt-5.6-luna",
+			),
+		).not.toThrow();
+		expect(() =>
+			assertValidResponsesPayload(
+				{
+					input: [
+						{ role: "user", content: "hello" },
+						{ type: "message", role: "assistant", content: [] },
+					],
+				},
+				"openai",
+				"gpt-5.6-luna",
+			),
+		).not.toThrow();
+	});
+
+	test("rejects Chat Completions duplicate call and result IDs", () => {
+		const duplicateCallPayload = {
+			messages: [
+				{
+					role: "assistant",
+					tool_calls: [{ id: "call_1", type: "function", function: { name: "a", arguments: "{}" } }],
+				},
+				{ role: "tool", tool_call_id: "call_1", content: "ok" },
+				{
+					role: "assistant",
+					tool_calls: [{ id: "call_1", type: "function", function: { name: "b", arguments: "{}" } }],
+				},
+				{ role: "tool", tool_call_id: "call_1", content: "ok" },
+			],
+		};
+		const duplicateResultPayload = {
+			messages: [
+				{
+					role: "assistant",
+					tool_calls: [{ id: "call_2", type: "function", function: { name: "a", arguments: "{}" } }],
+				},
+				{ role: "tool", tool_call_id: "call_2", content: "ok" },
+				{ role: "tool", tool_call_id: "call_2", content: "again" },
+			],
+		};
+		const orphanPayload = { messages: [{ role: "tool", tool_call_id: "orphan", content: "bad" }] };
+
+		expect(() => assertValidChatCompletionsPayload(duplicateCallPayload, "openai", "gpt-5.6-luna")).toThrow(
+			"INVALID_TOOL_TRANSCRIPT",
+		);
+		expect(() => assertValidChatCompletionsPayload(duplicateResultPayload, "openai", "gpt-5.6-luna")).toThrow(
+			"INVALID_TOOL_TRANSCRIPT",
+		);
+		expect(() => assertValidChatCompletionsPayload(orphanPayload, "openai", "gpt-5.6-luna")).toThrow(
+			"INVALID_TOOL_TRANSCRIPT",
+		);
+	});
+
+	test("rejects Responses duplicate call IDs and orphan outputs", () => {
+		const duplicateCallPayload = {
+			input: [
+				{ type: "function_call", call_id: "call_1", name: "a", arguments: "{}" },
+				{ type: "function_call_output", call_id: "call_1", output: "ok" },
+				{ type: "function_call", call_id: "call_1", name: "b", arguments: "{}" },
+				{ type: "function_call_output", call_id: "call_1", output: "ok" },
+			],
+		};
+		const orphanPayload = { input: [{ type: "function_call_output", call_id: "orphan", output: "bad" }] };
+
+		expect(() => assertValidResponsesPayload(duplicateCallPayload, "openai", "gpt-5.6-luna")).toThrow(
+			"INVALID_TOOL_TRANSCRIPT",
+		);
+		expect(() => assertValidResponsesPayload(orphanPayload, "openai", "gpt-5.6-luna")).toThrow(
+			"INVALID_TOOL_TRANSCRIPT",
+		);
 	});
 });
