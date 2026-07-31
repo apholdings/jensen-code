@@ -9,6 +9,33 @@
 export { toCanonicalJson } from "./canonical-json.js";
 // CLI
 export { handleLongHorizonCommand } from "./cli.js";
+export type {
+	AbandonContinuationRequest,
+	CancelContinuationRequest,
+	ConsumeContinuationRequest,
+	ContinuationSchedulerErrorCode,
+	ContinuationSchedulerEvent,
+	ContinuationSchedulerEventKind,
+	ContinuationSchedulerInspection,
+	ContinuationSchedulerRecord,
+	ContinuationSchedulerRequest,
+	ContinuationSchedulerResult,
+	ContinuationSchedulerState,
+	ContinuationSchedulerValidation,
+	DispatchContinuationRequest,
+	ScheduleContinuationRequest,
+} from "./continuation-scheduler.js";
+// Continuation Scheduler
+export {
+	abandonContinuation,
+	cancelContinuation,
+	consumeContinuation,
+	dispatchContinuation,
+	initializeContinuationScheduler,
+	inspectContinuationScheduler,
+	scheduleContinuation,
+	validateContinuationScheduler,
+} from "./continuation-scheduler.js";
 export { computeMissionContractDigest } from "./contract-digest.js";
 // Execution State Machine types
 export type {
