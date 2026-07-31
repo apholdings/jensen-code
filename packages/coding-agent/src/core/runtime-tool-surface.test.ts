@@ -249,12 +249,13 @@ describe("runtime tool surface through the jensen-test launcher configuration", 
 		expect(details2.revision).toBe(details.revision + 1);
 
 		// Stale update: must not mutate
-		await expect(
-			updateTool.execute("call-5", {
-				updates: [{ id: ids[1], status: "completed" }],
-				expectedRevision: details.revision as number,
-			}),
-		).rejects.toThrow("Stale revision");
+		const staleResult = await updateTool.execute("call-5", {
+			updates: [{ id: ids[1], status: "completed" }],
+			expectedRevision: details.revision as number,
+		});
+		const staleText = staleResult.content[0] as any;
+		expect(staleText.type).toBe("text");
+		expect(staleText.text).toContain("TODO_READ_REQUIRED");
 
 		// Confirm zero mutation: revision unchanged since update was stale
 		const readResult3 = await readTool.execute("call-6", {});
@@ -333,12 +334,13 @@ describe("runtime tool surface through the jensen-test launcher configuration", 
 		expect(readText).toContain("empty");
 		expect(readText).toContain("todo");
 
-		await expect(
-			updateTool.execute("call-auth-3", {
-				updates: [{ id: "nonexistent", status: "completed" }],
-				expectedRevision: 999,
-			}),
-		).rejects.toThrow("Stale revision");
+		const staleResult = await updateTool.execute("call-auth-3", {
+			updates: [{ id: "nonexistent", status: "completed" }],
+			expectedRevision: 999,
+		});
+		const staleText = staleResult.content[0] as any;
+		expect(staleText.type).toBe("text");
+		expect(staleText.text).toContain("TODO_READ_REQUIRED");
 	});
 
 	it("V24 same session: shared store, distinct tool identities", async () => {

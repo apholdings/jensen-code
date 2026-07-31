@@ -698,8 +698,27 @@ export function prepareCompaction(
 
 	const historyEnd = cutPoint.isSplitTurn ? cutPoint.turnStartIndex : cutPoint.firstKeptEntryIndex;
 
+	// Collect summarized and retained messages for span integrity check
+	const summarizedMsgs: AgentMessage[] = [];
+	for (let i = boundaryStart; i < historyEnd; i++) {
+		const msg = getMessageFromEntry(pathEntries[i]);
+		if (msg) summarizedMsgs.push(msg);
+	}
+	const retainedMsgs: AgentMessage[] = [];
+	for (let i = cutPoint.firstKeptEntryIndex; i < boundaryEnd; i++) {
+		const msg = getMessageFromEntry(pathEntries[i]);
+		if (msg) retainedMsgs.push(msg);
+	}
+
+	// Validate that no tool call/result span is split across the compaction boundary
+	const spanCheck = validateCompactionSpanIntegrity(summarizedMsgs, retainedMsgs);
+	if (!spanCheck.valid) {
+		// Reject compaction if it would split a tool span
+		return undefined;
+	}
+
 	// Messages to summarize (will be discarded after summary)
-	const messagesToSummarize: AgentMessage[] = [];
+	const messagesToSummarize: AgentMessage[] = summarizedMsgs;
 	for (let i = boundaryStart; i < historyEnd; i++) {
 		const msg = getMessageFromEntry(pathEntries[i]);
 		if (msg) messagesToSummarize.push(msg);

@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@apholdings/jensen-agent-core";
 import type { ImageContent, Message, TextContent } from "@apholdings/jensen-ai";
+import { validateToolSpanIntegrity } from "@apholdings/jensen-ai";
 import { randomUUID } from "crypto";
 import {
 	appendFileSync,
@@ -390,7 +391,7 @@ export function buildSessionContext(
 	// 1. Emit summary first (entry = compaction)
 	// 2. Emit kept messages (from firstKeptEntryId up to compaction)
 	// 3. Emit messages after compaction
-	const messages: AgentMessage[] = [];
+	let messages: AgentMessage[] = [];
 	const memoryMessage = memoryItems.length > 0 ? createMemoryContextMessage(memoryItems) : undefined;
 	if (memoryMessage) {
 		messages.push(memoryMessage);
@@ -436,6 +437,43 @@ export function buildSessionContext(
 		// No compaction - emit all messages, handle branch summaries and custom messages
 		for (const entry of path) {
 			appendMessage(entry);
+		}
+	}
+
+	// Validate tool span integrity on restored messages.
+	// If the last assistant message has unresolved tool calls (missing results),
+	// trim it so the agent loop doesn't send a malformed transcript.
+	if (messages.length > 0) {
+		const spanCheck = validateToolSpanIntegrity(messages as Message[]);
+		if (!spanCheck.valid && spanCheck.missingToolCallIds.length > 0) {
+			// Find and remove the last assistant message that introduced unresolved calls
+			let lastBadAssistantIdx = -1;
+			for (let i = messages.length - 1; i >= 0; i--) {
+				const msg = messages[i];
+				if (msg.role === "assistant" && (msg as any).content?.some((b: any) => b.type === "toolCall")) {
+					const toolCallIds = (msg as any).content
+						.filter((b: any) => b.type === "toolCall")
+						.map((tc: any) => tc.id);
+					if (toolCallIds.some((id: string) => spanCheck.missingToolCallIds.includes(id))) {
+						lastBadAssistantIdx = i;
+						break;
+					}
+				}
+			}
+			if (lastBadAssistantIdx >= 0) {
+				// Also remove any orphan tool results after the bad assistant
+				const trailingResults: number[] = [];
+				for (let i = lastBadAssistantIdx + 1; i < messages.length; i++) {
+					if (messages[i].role === "toolResult") {
+						if (spanCheck.orphanToolResultIds.includes((messages[i] as any).toolCallId)) {
+							trailingResults.push(i);
+						}
+					}
+				}
+				// Remove from end to preserve indices
+				const toRemove = new Set([lastBadAssistantIdx, ...trailingResults]);
+				messages = messages.filter((_, idx) => !toRemove.has(idx));
+			}
 		}
 	}
 

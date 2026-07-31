@@ -322,13 +322,13 @@ describe("todo runtime tool registration", () => {
 				new TodoLoopGuard(),
 			);
 
-			await expect(
-				updateTool.execute("call_1", {
-					updates: [{ id: "t1", status: "completed" }],
-					expectedRevision: 2, // stale
-				}),
-			).rejects.toThrow("Stale revision");
-
+			const staleResult = await updateTool.execute("call_1", {
+				updates: [{ id: "t1", status: "completed" }],
+				expectedRevision: 2, // stale
+			});
+			const staleText = staleResult.content[0];
+			if (staleText.type !== "text") throw new Error("expected text content");
+			expect(staleText.text).toContain("TODO_READ_REQUIRED");
 			expect(mutated).toBe(false);
 		});
 	});
@@ -694,12 +694,13 @@ describe("integrated todo tool dispatcher simulation", () => {
 		expect(readResult2.details!.todos.length).toBe(7);
 
 		// 7. Stale revision update
-		await expect(
-			updateTool.execute("call_5", {
-				updates: [{ id: ids[2], status: "completed" }],
-				expectedRevision: readRevision, // stale
-			}),
-		).rejects.toThrow("Stale revision");
+		const staleResult = await updateTool.execute("call_5", {
+			updates: [{ id: ids[2], status: "completed" }],
+			expectedRevision: readRevision, // stale
+		});
+		const staleText = staleResult.content[0];
+		if (staleText.type !== "text") throw new Error("expected text content");
+		expect(staleText.text).toContain("TODO_READ_REQUIRED");
 
 		// 8. Confirm no mutation from stale update
 		expect(todos[2].status).toBe("pending");

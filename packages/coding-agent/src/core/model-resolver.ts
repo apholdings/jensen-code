@@ -44,8 +44,8 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
  * Used when resolving user configurations that reference old aliases.
  */
 export const MODEL_ID_ALIASES: Record<string, string> = {
-	// deepseek-v4-flash-0731 was a Jensen local alias for deepseek/deepseek-v4-flash
-	"deepseek-v4-flash-0731": "deepseek-v4-flash",
+	// deepseek-v4-flash is an alias for the dated canonical deepseek-v4-flash-0731
+	"deepseek-v4-flash": "deepseek-v4-flash-0731",
 };
 
 export interface ScopedModel {

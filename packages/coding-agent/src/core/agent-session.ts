@@ -370,6 +370,7 @@ export class AgentSession {
 	private _todos: TodoItem[] = [];
 	private _todoRevision = 0;
 	private _todoLoopGuard = new TodoLoopGuard();
+	private _todoReadSnapshot: { revision: number; timestamp: number } | null = null;
 	private _memoryItems: MemoryItem[] = [];
 	private _delegatedTasks: DelegatedTask[] = [];
 	private _tasks: Task[] = [];
@@ -1008,6 +1009,8 @@ export class AgentSession {
 		}));
 		this._todos = withIds;
 		this._todoRevision++;
+		// Invalidate read snapshot - external revision changed, any cached read is stale
+		this._todoReadSnapshot = null;
 		this.sessionManager.appendSessionTodos(withIds);
 		this._emit({ type: "todo_update", todos: this._todos });
 	}
@@ -3062,12 +3065,26 @@ export class AgentSession {
 		const todoReadTool = createTodoReadTool(
 			() => this._todos,
 			() => this._todoRevision,
+			{
+				onRead: () => {
+					this._todoReadSnapshot = {
+						revision: this._todoRevision,
+						timestamp: Date.now(),
+					};
+				},
+			},
 		);
 		const todoUpdateTool = createTodoUpdateTool(
 			() => this._todos,
 			(todos) => this._setTodos(todos),
 			() => this._todoRevision,
 			this._todoLoopGuard,
+			{
+				getSnapshot: () => this._todoReadSnapshot,
+				invalidateSnapshot: () => {
+					this._todoReadSnapshot = null;
+				},
+			},
 		);
 		this._baseToolRegistry.set("todo_write", todoWriteTool as unknown as AgentTool);
 		this._baseToolRegistry.set("todo_read", todoReadTool as unknown as AgentTool);

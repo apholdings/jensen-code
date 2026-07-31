@@ -11,14 +11,21 @@ function formatTodoItem(todo: TodoItem): string {
 	return `- [${statusMark}] ${todo.status === "in_progress" ? todo.activeForm : todo.content}  (id: ${todo.id})`;
 }
 
+export interface TodoReadOptions {
+	/** Called after a successful read to record the read snapshot */
+	onRead?: () => void;
+}
+
 /**
  * Create the todo_read tool.
  * @param getSessionTodos - Callback to get the current todos from session
  * @param getRevision - Callback to get the current revision number
+ * @param options - Optional callbacks for snapshot tracking
  */
 export function createTodoReadTool(
 	getSessionTodos: () => TodoItem[],
 	getRevision?: () => number,
+	options?: TodoReadOptions,
 ): AgentTool<typeof todoReadSchema> {
 	return {
 		name: "todo_read",
@@ -31,6 +38,8 @@ export function createTodoReadTool(
 		execute: async (_toolCallId: string, _input: TodoReadInput, _signal?: AbortSignal) => {
 			const current = getSessionTodos();
 			const revision = getRevision?.();
+			// Record the read snapshot for host-side enforcement
+			options?.onRead?.();
 			if (current.length === 0) {
 				return {
 					content: [
