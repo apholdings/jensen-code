@@ -276,8 +276,8 @@ it("P06: tag already exists at expected commit — no duplicate, success", async
 	const publish = publishCollector();
 	const tagCalls = [];
 
-	const existingTagFn = (version) => {
-		tagCalls.push(version);
+	const existingTagFn = (version, options) => {
+		tagCalls.push({ version, options });
 		return false; // not newly created
 	};
 
@@ -292,7 +292,7 @@ it("P06: tag already exists at expected commit — no duplicate, success", async
 	});
 
 	assert.equal(publish.calls.length, 0); // all already published
-	assert.deepEqual(tagCalls, ["1.1.7"]);
+	assert.deepEqual(tagCalls, [{ version: "1.1.7", options: { allowExistingRelease: true } }]);
 	assert.equal(result.allPackagesVerified, true);
 	assert.equal(result.tagCreated, false); // not newly created
 	assert.equal(result.releaseTag, "v1.1.7");
@@ -302,10 +302,12 @@ it("P06: tag already exists at expected commit — no duplicate, success", async
 // P07 — Tag exists at wrong commit
 // ============================================================================
 
-it("P07: tag at wrong commit — fail, tag unchanged", async () => {
+it("P07: tag at wrong commit during real publication — fail, tag unchanged", async () => {
 	const publish = publishCollector();
+	let createTagOptions;
 
-	const wrongTagFn = (_version) => {
+	const wrongTagFn = (_version, options) => {
+		createTagOptions = options;
 		throw new Error("Tag already exists at different commit");
 	};
 
@@ -313,7 +315,7 @@ it("P07: tag at wrong commit — fail, tag unchanged", async () => {
 		orchestratePublish({
 			packages: ALL_SEVEN,
 			publishTag: "latest",
-			checkVersion: checkAllPublished(),
+			checkVersion: checkInitiallyNoneThenVerified(),
 			waitForVersion: waitImmediate(),
 			publishFn: publish.fn,
 			createTag: wrongTagFn,
@@ -322,7 +324,8 @@ it("P07: tag at wrong commit — fail, tag unchanged", async () => {
 		/Tag already exists at different commit/,
 	);
 
-	assert.equal(publish.calls.length, 0);
+	assert.equal(publish.calls.length, 7);
+	assert.deepEqual(createTagOptions, { allowExistingRelease: false });
 });
 
 // ============================================================================

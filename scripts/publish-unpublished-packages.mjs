@@ -447,9 +447,12 @@ function getHeadCommit() {
  * Create a single lockstep lightweight tag `v<version>`.
  *
  * If the tag already exists at the expected commit, it is left in place.
- * If the tag exists at a different commit, the function throws.
+ * If the tag exists at a different commit, the function throws unless the
+ * registry release was already complete before this run. In that case the
+ * existing immutable release tag is preserved.
  */
-function createLockstepTag(version) {
+function createLockstepTag(version, options = {}) {
+	const { allowExistingRelease = false } = options;
 	const tagName = `v${version}`;
 
 	if (hasTag(tagName)) {
@@ -458,6 +461,12 @@ function createLockstepTag(version) {
 		if (tagCommit === headCommit) {
 			console.log(`[tag] ${tagName} already exists at expected commit ${headCommit.slice(0, 7)}`);
 			return false; // not newly created
+		}
+		if (allowExistingRelease) {
+			console.log(
+				`[tag] ${tagName} already identifies the completed release at ${tagCommit.slice(0, 7)}; preserving it while HEAD is ${headCommit.slice(0, 7)}`,
+			);
+			return false;
 		}
 		throw new Error(
 			`Tag ${tagName} already exists at commit ${tagCommit.slice(0, 7)} but HEAD is ${headCommit.slice(0, 7)}. ` +
@@ -494,7 +503,7 @@ function writeOutput(result) {
  * @param {(name: string, version: string, opts: object) => Promise<void>} options.waitForVersion
  * @param {(pkg: object, authMode: string, publishTag: string) => void} options.publishFn
  * @param {(packages: Array<object>, releaseVersion: string) => void} [options.promoteTags]
- * @param {(version: string) => boolean} options.createTag
+ * @param {(version: string, options: {allowExistingRelease: boolean}) => boolean} options.createTag
  * @param {(result: object) => void} options.writeOutput
  * @param {string} options.packageDirsModule — for topology assertion only
  * @returns {Promise<object>} the result object
@@ -610,7 +619,9 @@ export async function orchestratePublish(options) {
 	promoteTags(packages, releaseVersion);
 
 	// Create the single lockstep tag
-	const tagCreated = createTag(releaseVersion);
+	const tagCreated = createTag(releaseVersion, {
+		allowExistingRelease: publishedDuringRun.length === 0,
+	});
 
 	const result = {
 		releaseVersion,
