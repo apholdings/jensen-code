@@ -97,6 +97,26 @@ test("release workflow runs npm run validate before version/publish", () => {
 	ok(validateIndex < changesetsIndex, "validate must run before changesets/action in release.yml");
 });
 
+test("release workflow exposes npm failures and retains secure automated authentication", () => {
+	const content = readText(".github/workflows/release.yml");
+	ok(!content.includes("continue-on-error"), "release.yml must not suppress failures");
+	ok(content.includes("id-token: write"), "release.yml must retain trusted-publishing permission");
+	ok(content.includes("secrets.NPM_TOKEN"), "release.yml must retain token fallback");
+	ok(!content.includes("npm publish") || content.match(/npm publish/gu)?.length === 1, "release.yml must not publish twice");
+});
+
+test("publisher promotes the verified fixed group to fork and latest before creating the Git tag", () => {
+	const content = readText("scripts/publish-unpublished-packages.mjs");
+	ok(content.includes('const STABLE_DIST_TAGS = ["fork", "latest"]'), "stable dist-tags must include fork and latest");
+	ok(content.includes("promoteTags: promoteStableDistTags"), "main must wire stable dist-tag promotion");
+	const verifiedIndex = content.indexOf("[verify] All seven packages confirmed on npm registry");
+	const promoteIndex = content.indexOf("promoteTags(packages, releaseVersion)");
+	const gitTagIndex = content.indexOf("createTag(releaseVersion)");
+	ok(verifiedIndex >= 0, "publisher must verify complete fixed group");
+	ok(promoteIndex > verifiedIndex, "dist-tag promotion must follow registry verification");
+	ok(gitTagIndex > promoteIndex, "Git tag creation must follow dist-tag promotion");
+});
+
 // ============================================================================
 // Fixed group and private/exclude
 // ============================================================================
