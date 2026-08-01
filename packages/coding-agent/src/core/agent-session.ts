@@ -498,6 +498,14 @@ export class AgentSession {
 				}
 			}
 
+			if (toolCall.name === "todo_write" && !isError) {
+				const details = result.details as Record<string, unknown> | undefined;
+				if (details?.changed === true || details?.todoWriteAlreadyApplied === true) {
+					this._todoPerTurnLock.setLockedForCurrentTurn();
+					this.setActiveToolsByName(this.getActiveToolNames().filter((name) => name !== "todo_write"));
+				}
+			}
+
 			const runner = this._extensionRunner;
 			if (!runner?.hasHandlers("tool_result")) {
 				return undefined;
@@ -1881,6 +1889,15 @@ export class AgentSession {
 				// Ensure we're using the base prompt (in case previous turn had modifications)
 				this.agent.setSystemPrompt(this._baseSystemPrompt);
 			}
+		}
+
+		this._todoLoopGuard.resetOnNewUserMessage();
+		this._todoUpdateRejectionState.count = 0;
+		this._todoPerTurnLock.currentTurn++;
+		this._todoPerTurnLock.lockedUntil = -1;
+		this._todoPerTurnLock.reservedUntil = -1;
+		if (this._toolRegistry.has("todo_write") && !this.getActiveToolNames().includes("todo_write")) {
+			this.setActiveToolsByName([...this.getActiveToolNames(), "todo_write"]);
 		}
 
 		await this.agent.prompt(messages);

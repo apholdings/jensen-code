@@ -96,6 +96,9 @@ export interface AfterToolCallContext {
 export interface AgentLoopConfig extends SimpleStreamOptions {
 	model: Model<any>;
 
+	/** Returns the current provider-visible tools without changing the execution snapshot. */
+	getTools?: () => AgentTool[];
+
 	/**
 	 * Converts AgentMessage[] to LLM-compatible Message[] before each LLM call.
 	 *

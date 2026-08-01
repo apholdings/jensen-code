@@ -317,7 +317,7 @@ async function streamAssistantResponse(
 	const llmContext: Context = {
 		systemPrompt: context.systemPrompt,
 		messages: llmMessages,
-		tools: context.tools,
+		tools: config.getTools?.() ?? context.tools,
 	};
 
 	const streamFunction = streamFn || streamSimple;
@@ -651,23 +651,33 @@ async function finalizeExecutedToolCall(
 	let isError = executed.isError;
 
 	if (config.afterToolCall) {
-		const afterResult = await config.afterToolCall(
-			{
-				assistantMessage,
-				toolCall: prepared.toolCall,
-				args: prepared.args,
-				result,
-				isError,
-				context: currentContext,
-			},
-			signal,
-		);
-		if (afterResult) {
-			result = {
-				content: afterResult.content ?? result.content,
-				details: afterResult.details ?? result.details,
-			};
-			isError = afterResult.isError ?? isError;
+		try {
+			const afterResult = await config.afterToolCall(
+				{
+					assistantMessage,
+					toolCall: prepared.toolCall,
+					args: prepared.args,
+					result,
+					isError,
+					context: currentContext,
+				},
+				signal,
+			);
+			if (afterResult) {
+				result = {
+					content: afterResult.content ?? result.content,
+					details: afterResult.details ?? result.details,
+				};
+				isError = afterResult.isError ?? isError;
+			}
+		} catch (error) {
+			await emitToolCallOutcome(
+				prepared.toolCall,
+				createErrorToolResult(error instanceof Error ? error.message : String(error)),
+				true,
+				emit,
+			);
+			throw error;
 		}
 	}
 
