@@ -1,80 +1,52 @@
-export interface LoopGuardResult {
-	blocked: boolean;
-	loopGuardTriggered?: boolean;
-	todoWriteTemporarilyBlocked?: boolean;
-	requiredNextAction?: string;
-	message?: string;
-}
-
 /**
- * Guard against consecutive todo_write calls without real non-todo progress.
+ * Guard against duplicate todo_write calls within a single user turn.
+ *
+ * - The first write after the per-turn lock is active is blocked and returns a
+ *   paired TODO_WRITE_ALREADY_APPLIED rejection result.
+ * - The second equivalent duplicate terminates the active agent run locally with
+ *   REPEATED_TOOL_CALL_LOOP. The tool layer throws for this case.
+ *
+ * Counts reset on non-todo tool success or a new user message.
  */
 export class TodoLoopGuard {
-	private consecutiveWriteCount = 0;
-	private isBlocked = false;
+	private duplicateRejectionCount = 0;
 
 	/**
-	 * Record a write attempt to todo_write.
-	 * Returns LoopGuardResult indicating whether the call is blocked.
+	 * Record a todo_write attempt that was already rejected by the per-turn lock.
+	 * Returns whether the call may return a rejection result (first duplicate)
+	 * or must terminate the run (second equivalent duplicate).
 	 */
-	recordWrite(_isNoOp: boolean): LoopGuardResult {
-		if (this.isBlocked) {
-			return {
-				blocked: true,
-				loopGuardTriggered: true,
-				todoWriteTemporarilyBlocked: true,
-				requiredNextAction: "execute a non-todo tool or return a useful response",
-				message:
-					"Todo loop guard triggered. Do not update the plan again. Execute the current in-progress task now.",
-			};
-		}
-
-		this.consecutiveWriteCount++;
-
-		if (this.consecutiveWriteCount >= 3) {
-			this.isBlocked = true;
-			return {
-				blocked: true,
-				loopGuardTriggered: true,
-				todoWriteTemporarilyBlocked: true,
-				requiredNextAction: "execute a non-todo tool or return a useful response",
-				message:
-					"Todo loop guard triggered. Do not update the plan again. Execute the current in-progress task now.",
-			};
-		}
-
-		return { blocked: false };
+	recordDuplicate(): boolean {
+		this.duplicateRejectionCount++;
+		return this.duplicateRejectionCount <= 1;
 	}
 
 	/**
 	 * Reset loop guard after a successful non-todo tool call.
 	 */
 	resetOnNonTodoToolSuccess(_toolName: string): void {
-		this.consecutiveWriteCount = 0;
-		this.isBlocked = false;
+		this.duplicateRejectionCount = 0;
 	}
 
 	/**
 	 * Reset loop guard when a new user message arrives.
 	 */
 	resetOnNewUserMessage(): void {
-		this.consecutiveWriteCount = 0;
-		this.isBlocked = false;
+		this.duplicateRejectionCount = 0;
 	}
 
 	/**
 	 * Reset loop guard manually.
 	 */
 	reset(): void {
-		this.consecutiveWriteCount = 0;
-		this.isBlocked = false;
+		this.duplicateRejectionCount = 0;
 	}
 
-	getConsecutiveCount(): number {
-		return this.consecutiveWriteCount;
+	getDuplicateRejectionCount(): number {
+		return this.duplicateRejectionCount;
 	}
 
-	isGuardActive(): boolean {
-		return this.isBlocked;
+	isDuplicateLoop(): boolean {
+		return this.duplicateRejectionCount >= 2;
 	}
 }

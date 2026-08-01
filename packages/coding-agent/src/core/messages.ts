@@ -6,7 +6,7 @@
  */
 
 import type { AgentMessage } from "@apholdings/jensen-agent-core";
-import type { AssistantMessage, ImageContent, Message, TextContent, ToolCall } from "@apholdings/jensen-ai";
+import type { ImageContent, Message, TextContent } from "@apholdings/jensen-ai";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
@@ -83,9 +83,7 @@ declare module "@apholdings/jensen-agent-core" {
 	}
 }
 
-/**
- * Convert a BashExecutionMessage to user message text for LLM context.
- */
+/** Convert a BashExecutionMessage to user message text for LLM context. */
 export function bashExecutionToText(msg: BashExecutionMessage): string {
 	let text = `Ran \`${msg.command}\`\n`;
 	if (msg.output) {
@@ -120,7 +118,7 @@ export function createCompactionSummaryMessage(
 ): CompactionSummaryMessage {
 	return {
 		role: "compactionSummary",
-		summary: summary,
+		summary,
 		tokensBefore,
 		timestamp: new Date(timestamp).getTime(),
 	};
@@ -152,35 +150,6 @@ export function createCustomMessage(
 	};
 }
 
-const TODO_WRITE_COMPACTED_TEXT =
-	"Todo snapshot omitted from historical call. Current state is available through todo_read." as const;
-
-/**
- * Keep persisted assistant messages intact for session replay and UI rendering while
- * excluding full todo snapshots from the model-facing conversation history.
- *
- * Replaces completed todo_write tool-call blocks with a compact text placeholder
- * that cannot be replayed as a valid todo_write invocation.
- */
-function compactTodoWriteCalls(message: AssistantMessage, completedToolCalls: ReadonlySet<ToolCall>): AssistantMessage {
-	let changed = false;
-	const content = message.content.map((block) => {
-		if (block.type !== "toolCall" || !completedToolCalls.has(block)) {
-			return block;
-		}
-		if (block.name !== "todo_write") {
-			return block;
-		}
-		changed = true;
-		return {
-			type: "text" as const,
-			text: TODO_WRITE_COMPACTED_TEXT,
-		};
-	});
-
-	return changed ? { ...message, content } : message;
-}
-
 /**
  * Transform AgentMessages (including custom types) to LLM-compatible Messages.
  *
@@ -188,83 +157,61 @@ function compactTodoWriteCalls(message: AssistantMessage, completedToolCalls: Re
  * - Agent's transormToLlm option (for prompt calls and queued messages)
  * - Compaction's generateSummary (for summarization)
  * - Custom extensions and tools
+ *
+ * For this release candidate, no folding or compaction of tool spans occurs.
+ * All messages are preserved in their original chronological order.
  */
 export function convertToLlm(messages: AgentMessage[]): Message[] {
-	const completedTodoWriteCalls = new Set<ToolCall>();
-	const pendingResultsByCallId = new Map<string, number>();
-	for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex--) {
-		const message = messages[messageIndex];
-		if (message.role === "toolResult" && message.toolName === "todo_write") {
-			pendingResultsByCallId.set(message.toolCallId, (pendingResultsByCallId.get(message.toolCallId) ?? 0) + 1);
-			continue;
-		}
-		if (message.role !== "assistant") {
-			continue;
-		}
-		for (let contentIndex = message.content.length - 1; contentIndex >= 0; contentIndex--) {
-			const block = message.content[contentIndex];
-			if (block.type !== "toolCall" || block.name !== "todo_write") {
-				continue;
-			}
-			const pendingResults = pendingResultsByCallId.get(block.id) ?? 0;
-			if (pendingResults > 0) {
-				completedTodoWriteCalls.add(block);
-				pendingResultsByCallId.set(block.id, pendingResults - 1);
-			}
-		}
-	}
-
-	return messages
-		.map((m): Message | undefined => {
-			switch (m.role) {
-				case "bashExecution":
-					// Skip messages excluded from context (!! prefix)
-					if (m.excludeFromContext) {
-						return undefined;
-					}
-					return {
+	return messages.flatMap((m): Message[] => {
+		switch (m.role) {
+			case "bashExecution":
+				if (m.excludeFromContext) {
+					return [];
+				}
+				return [
+					{
 						role: "user",
 						content: [{ type: "text", text: bashExecutionToText(m) }],
 						timestamp: m.timestamp,
-					};
-				case "custom": {
-					const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
-					return {
-						role: "user",
-						content,
-						timestamp: m.timestamp,
-					};
-				}
-				case "branchSummary":
-					return {
+					},
+				];
+			case "custom": {
+				const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
+				return [{ role: "user", content, timestamp: m.timestamp }];
+			}
+			case "branchSummary":
+				return [
+					{
 						role: "user",
 						content: [{ type: "text" as const, text: BRANCH_SUMMARY_PREFIX + m.summary + BRANCH_SUMMARY_SUFFIX }],
 						timestamp: m.timestamp,
-					};
-				case "compactionSummary":
-					return {
+					},
+				];
+			case "compactionSummary":
+				return [
+					{
 						role: "user",
 						content: [
 							{ type: "text" as const, text: COMPACTION_SUMMARY_PREFIX + m.summary + COMPACTION_SUMMARY_SUFFIX },
 						],
 						timestamp: m.timestamp,
-					};
-				case "memoryContext":
-					return {
-						role: "user",
-						content: [{ type: "text" as const, text: m.content }],
-						timestamp: m.timestamp,
-					};
-				case "user":
-				case "toolResult":
-					return m;
-				case "assistant":
-					return compactTodoWriteCalls(m, completedTodoWriteCalls);
-				default:
-					// biome-ignore lint/correctness/noSwitchDeclarations: fine
-					const _exhaustiveCheck: never = m;
-					return undefined;
-			}
-		})
-		.filter((m) => m !== undefined);
+					},
+				];
+			case "memoryContext":
+				return [{ role: "user", content: [{ type: "text" as const, text: m.content }], timestamp: m.timestamp }];
+			case "user":
+				return [m];
+			case "toolResult":
+				if ((m as { excludeFromContext?: boolean }).excludeFromContext) {
+					return [];
+				}
+				return [m];
+			case "assistant":
+				return [m];
+			default:
+				// biome-ignore lint/correctness/noSwitchDeclarations: fine
+				const _exhaustiveCheck: never = m;
+				return [];
+		}
+	});
 }

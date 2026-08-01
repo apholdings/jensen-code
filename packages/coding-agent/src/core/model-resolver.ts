@@ -23,7 +23,7 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	"google-antigravity": "gemini-3.1-pro-high",
 	"google-vertex": "gemini-3-pro-preview",
 	"github-copilot": "gpt-4o",
-	openrouter: "openai/gpt-5.1-codex",
+	openrouter: "deepseek/deepseek-v4-flash",
 	"vercel-ai-gateway": "anthropic/claude-opus-4-6",
 	xai: "grok-4-fast-non-reasoning",
 	groq: "openai/gpt-oss-120b",
@@ -36,6 +36,16 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	opencode: "claude-opus-4-6",
 	"opencode-go": "kimi-k2.5",
 	"kimi-coding": "kimi-k2-thinking",
+};
+
+/**
+ * Minimal alias map for backward compatibility.
+ * Maps stale/deprecated model IDs to their current canonical equivalents.
+ * Used when resolving user configurations that reference old aliases.
+ */
+export const MODEL_ID_ALIASES: Record<string, string> = {
+	// deepseek-v4-flash is an alias for the dated canonical deepseek-v4-flash-0731
+	"deepseek-v4-flash": "deepseek-v4-flash-0731",
 };
 
 export interface ScopedModel {
@@ -111,6 +121,12 @@ export function findExactModelReferenceMatch(
  * Returns the matched model or undefined if no match found.
  */
 function tryMatchModel(modelPattern: string, availableModels: Model<Api>[]): Model<Api> | undefined {
+	// Check aliases first (e.g., deepseek-v4-flash-0731 -> deepseek-v4-flash)
+	const resolvedAlias = MODEL_ID_ALIASES[modelPattern];
+	if (resolvedAlias) {
+		modelPattern = resolvedAlias;
+	}
+
 	const exactMatch = findExactModelReferenceMatch(modelPattern, availableModels);
 	if (exactMatch) {
 		return exactMatch;

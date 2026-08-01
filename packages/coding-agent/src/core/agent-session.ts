@@ -24,7 +24,14 @@ import type {
 	ThinkingLevel,
 } from "@apholdings/jensen-agent-core";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@apholdings/jensen-ai";
-import { isContextOverflow, modelsAreEqual, resetApiProviders, supportsXhigh } from "@apholdings/jensen-ai";
+import {
+	isContextOverflow,
+	modelsAreEqual,
+	resetApiProviders,
+	supportsXhigh,
+	validateChatCompletionsTranscript,
+	validateResponsesTranscript,
+} from "@apholdings/jensen-ai";
 import { getDocsPath } from "../config.js";
 import { theme } from "../modes/interactive/theme/theme.js";
 import { stripFrontmatter } from "../utils/frontmatter.js";
@@ -121,7 +128,7 @@ import {
 import { TodoLoopGuard } from "./tools/todo-loop-guard.js";
 import { createTodoReadTool } from "./tools/todo-read.js";
 import { createTodoUpdateTool } from "./tools/todo-update.js";
-import { createTodoWriteTool, type TodoItem } from "./tools/todo-write.js";
+import { createPerTurnLock, createTodoWriteTool, type TodoItem } from "./tools/todo-write.js";
 import {
 	buildUltraplanPlannerTask,
 	buildUltraplanRevisionTask,
@@ -370,6 +377,9 @@ export class AgentSession {
 	private _todos: TodoItem[] = [];
 	private _todoRevision = 0;
 	private _todoLoopGuard = new TodoLoopGuard();
+	private _todoPerTurnLock = createPerTurnLock();
+	private _todoReadSnapshot: { revision: number; timestamp: number } | null = null;
+	private _todoUpdateRejectionState = { count: 0 };
 	private _memoryItems: MemoryItem[] = [];
 	private _delegatedTasks: DelegatedTask[] = [];
 	private _tasks: Task[] = [];
@@ -474,6 +484,28 @@ export class AgentSession {
 		});
 
 		this.agent.setAfterToolCall(async ({ toolCall, args, result, isError }) => {
+			// Local run termination for repeated todo_write after the per-turn lock
+			// is active. The tool already threw REPEATED_TOOL_CALL_LOOP; rethrow so
+			// the agent loop surfaces an error assistant message and stops without
+			// another provider request.
+			if ((toolCall.name === "todo_write" || toolCall.name === "todo_update") && isError) {
+				const text = (result.content ?? [])
+					.filter((c) => c.type === "text")
+					.map((c) => (c as { text?: string }).text ?? "")
+					.join(" ");
+				if (/REPEATED_TOOL_CALL_LOOP|REPEATED_TODO_UPDATE_LOOP/.test(text)) {
+					throw new Error(text);
+				}
+			}
+
+			if (toolCall.name === "todo_write" && !isError) {
+				const details = result.details as Record<string, unknown> | undefined;
+				if (details?.changed === true || details?.todoWriteAlreadyApplied === true) {
+					this._todoPerTurnLock.setLockedForCurrentTurn();
+					this.setActiveToolsByName(this.getActiveToolNames().filter((name) => name !== "todo_write"));
+				}
+			}
+
 			const runner = this._extensionRunner;
 			if (!runner?.hasHandlers("tool_result")) {
 				return undefined;
@@ -594,6 +626,10 @@ export class AgentSession {
 		if (event.type === "message_end") {
 			if (event.message.role === "user") {
 				this._todoLoopGuard.resetOnNewUserMessage();
+				this._todoUpdateRejectionState.count = 0;
+				this._todoPerTurnLock.currentTurn++;
+				this._todoPerTurnLock.lockedUntil = -1;
+				this._todoPerTurnLock.reservedUntil = -1;
 			}
 			// Check if this is a custom message from extensions
 			if (event.message.role === "custom") {
@@ -633,6 +669,34 @@ export class AgentSession {
 					});
 					this._retryAttempt = 0;
 					this._resolveRetry();
+				}
+			}
+
+			// Final wire-payload validation after every context transformation.
+			// Runs on the exact serialized message array just before network transport.
+			// Invalid transcripts fail locally with INVALID_TOOL_TRANSCRIPT and produce
+			// zero network requests, without automatic retry.
+			if (event.message.role === "assistant" || event.message.role === "toolResult") {
+				const model = this.agent.state.model;
+				if (model) {
+					const history = this.agent.state.messages as Message[];
+					const useResponses =
+						model.api === "openai-responses" ||
+						model.api === "azure-openai-responses" ||
+						model.api === "openai-codex-responses";
+					const result = useResponses
+						? validateResponsesTranscript(history, model.provider, model.id)
+						: validateChatCompletionsTranscript(history, model.provider, model.id);
+					if ("code" in result) {
+						throw new Error(
+							`INVALID_TOOL_TRANSCRIPT: protocol=${result.protocol}, ` +
+								`missingToolCallIds=[${result.missingToolCallIds.join(", ")}], ` +
+								`duplicateToolCallIds=[${result.duplicateToolCallIds.join(", ")}], ` +
+								`orphanToolResultIds=[${result.orphanToolResultIds.join(", ")}], ` +
+								`duplicateCallIds=[${result.duplicateCallIds.join(", ")}], ` +
+								`provider=${result.provider}, model=${result.model}, messageIndex=${result.messageIndex}`,
+						);
+					}
 				}
 			}
 		}
@@ -750,6 +814,23 @@ export class AgentSession {
 			};
 			await this._extensionRunner.emit(extensionEvent);
 		} else if (event.type === "tool_execution_end") {
+			if (event.toolName === "todo_write") {
+				const details = event.result.details as Record<string, unknown> | undefined;
+
+				if (details?.changed) {
+					// Successful state-mutating todo_write — hide from future provider
+					// requests for the rest of this user turn.
+					this._todoPerTurnLock.setLockedForCurrentTurn();
+					const activeNames = this.getActiveToolNames().filter((n) => n !== "todo_write");
+					this.setActiveToolsByName(activeNames);
+				} else if (details?.todoWriteAlreadyApplied) {
+					// First duplicate rejection — keep todo_write hidden for the rest of
+					// the turn so the provider cannot call it again.
+					this._todoPerTurnLock.setLockedForCurrentTurn();
+					const activeNames = this.getActiveToolNames().filter((n) => n !== "todo_write");
+					this.setActiveToolsByName(activeNames);
+				}
+			}
 			if (!event.isError && event.toolName !== "todo_write" && event.toolName !== "todo_read") {
 				this._todoLoopGuard.resetOnNonTodoToolSuccess(event.toolName);
 			}
@@ -1008,6 +1089,8 @@ export class AgentSession {
 		}));
 		this._todos = withIds;
 		this._todoRevision++;
+		// Invalidate read snapshot - external revision changed, any cached read is stale
+		this._todoReadSnapshot = null;
 		this.sessionManager.appendSessionTodos(withIds);
 		this._emit({ type: "todo_update", todos: this._todos });
 	}
@@ -1808,6 +1891,15 @@ export class AgentSession {
 			}
 		}
 
+		this._todoLoopGuard.resetOnNewUserMessage();
+		this._todoUpdateRejectionState.count = 0;
+		this._todoPerTurnLock.currentTurn++;
+		this._todoPerTurnLock.lockedUntil = -1;
+		this._todoPerTurnLock.reservedUntil = -1;
+		if (this._toolRegistry.has("todo_write") && !this.getActiveToolNames().includes("todo_write")) {
+			this.setActiveToolsByName([...this.getActiveToolNames(), "todo_write"]);
+		}
+
 		await this.agent.prompt(messages);
 		await this.waitForRetry();
 	}
@@ -2129,6 +2221,11 @@ export class AgentSession {
 		this._pendingNextTurnMessages = [];
 		this._todos = [];
 		this._todoRevision = 0;
+		this._todoReadSnapshot = null;
+		this._todoUpdateRejectionState.count = 0;
+		this._todoPerTurnLock.currentTurn = 0;
+		this._todoPerTurnLock.lockedUntil = -1;
+		this._todoPerTurnLock.reservedUntil = -1;
 		this._memoryItems = [];
 		this._delegatedTasks = [];
 		this._tasks = [];
@@ -3058,16 +3155,33 @@ export class AgentSession {
 			(todos) => this._setTodos(todos),
 			this._todoLoopGuard,
 			() => this._todoRevision,
+			this._todoPerTurnLock,
 		);
 		const todoReadTool = createTodoReadTool(
 			() => this._todos,
 			() => this._todoRevision,
+			{
+				onRead: () => {
+					this._todoReadSnapshot = {
+						revision: this._todoRevision,
+						timestamp: Date.now(),
+					};
+					this._todoUpdateRejectionState.count = 0;
+				},
+			},
 		);
 		const todoUpdateTool = createTodoUpdateTool(
 			() => this._todos,
 			(todos) => this._setTodos(todos),
 			() => this._todoRevision,
 			this._todoLoopGuard,
+			{
+				getSnapshot: () => this._todoReadSnapshot,
+				invalidateSnapshot: () => {
+					this._todoReadSnapshot = null;
+				},
+			},
+			this._todoUpdateRejectionState,
 		);
 		this._baseToolRegistry.set("todo_write", todoWriteTool as unknown as AgentTool);
 		this._baseToolRegistry.set("todo_read", todoReadTool as unknown as AgentTool);
@@ -3168,6 +3282,7 @@ export class AgentSession {
 	/**
 	 * Check if an error is retryable (overloaded, rate limit, server errors).
 	 * Context overflow errors are NOT retryable (handled by compaction instead).
+	 * Transcript structure errors are NOT retryable (same payload would fail again).
 	 */
 	private _isRetryableError(message: AssistantMessage): boolean {
 		if (message.stopReason !== "error" || !message.errorMessage) return false;
@@ -3177,6 +3292,18 @@ export class AgentSession {
 		if (isContextOverflow(message, contextWindow)) return false;
 
 		const err = message.errorMessage;
+
+		// Non-retryable transcript errors: deterministic failures from invalid tool call/result structure
+		// These fail with 400 and the same payload would produce the same error again
+		if (
+			/INVALID_TOOL_TRANSCRIPT/i.test(err) ||
+			/must be followed by tool messages/i.test(err) ||
+			/invalid_request_error/i.test(err) ||
+			/Invalid parameter/i.test(err)
+		) {
+			return false;
+		}
+
 		// Match: overloaded_error, provider returned error, rate limit, 429, 500, 502, 503, 504, service unavailable, network/connection errors, fetch failed, terminated, retry delay exceeded
 		return /overloaded|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|other side closed|fetch failed|upstream.?connect|reset before headers|socket hang up|timed? out|timeout|terminated|retry delay/i.test(
 			err,
@@ -3498,6 +3625,11 @@ export class AgentSession {
 		const sessionContext = this.sessionManager.buildSessionContext();
 		this._todos = sessionContext.todos as TodoItem[];
 		this._todoRevision = 0;
+		this._todoReadSnapshot = null;
+		this._todoUpdateRejectionState.count = 0;
+		this._todoPerTurnLock.currentTurn = 0;
+		this._todoPerTurnLock.lockedUntil = -1;
+		this._todoPerTurnLock.reservedUntil = -1;
 		this._memoryItems = sessionContext.memoryItems;
 		this._delegatedTasks = [];
 		this._tasks = this.sessionManager.getLatestSessionTasks();

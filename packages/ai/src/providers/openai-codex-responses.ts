@@ -27,6 +27,7 @@ import type {
 	StreamOptions,
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
+import { assertValidResponsesPayload } from "../utils/transcript-validation.js";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.js";
 import { buildBaseOptions, clampReasoning } from "./simple-options.js";
 
@@ -145,6 +146,7 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 			if (nextBody !== undefined) {
 				body = nextBody as RequestBody;
 			}
+			assertValidResponsesPayload(body, model.provider, model.id);
 			const websocketRequestId = options?.sessionId || createCodexRequestId();
 			const sseHeaders = buildSSEHeaders(model.headers, options?.headers, accountId, apiKey, options?.sessionId);
 			const websocketHeaders = buildWebSocketHeaders(

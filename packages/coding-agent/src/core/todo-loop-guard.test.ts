@@ -3,49 +3,40 @@ import { convertToLlm } from "./messages.js";
 import { TodoLoopGuard } from "./tools/todo-loop-guard.js";
 import { createTodoReadTool } from "./tools/todo-read.js";
 import { createTodoUpdateTool } from "./tools/todo-update.js";
-import { createTodoWriteTool, redactSecrets, type TodoItem } from "./tools/todo-write.js";
+import { createPerTurnLock, createTodoWriteTool, redactSecrets, type TodoItem } from "./tools/todo-write.js";
 
-describe("Todo write loop guard and contracts (R01-R14)", () => {
-	it("R01 exact transcript regression: repeated writes without non-todo progress trigger loop guard", async () => {
+describe("Todo write per-user-turn duplicate contract (R01-R14)", () => {
+	it("R01 writes mutate exactly once; duplicate is rejected; repeat terminates", async () => {
 		let persisted: TodoItem[] = [];
 		const guard = new TodoLoopGuard();
+		const lock = createPerTurnLock();
 		const tool = createTodoWriteTool(
 			() => persisted,
 			(next) => {
 				persisted = next;
 			},
 			guard,
+			undefined,
+			lock,
 		);
 
-		const items1: TodoItem[] = [
-			{ content: "Phase 1", activeForm: "Doing 1", status: "in_progress" },
-			{ content: "Phase 2", activeForm: "Doing 2", status: "pending" },
-		];
+		const items1: TodoItem[] = [{ content: "Phase 1", activeForm: "Doing 1", status: "in_progress" }];
 		const res1 = await tool.execute("w01", { todos: items1 });
 		expect((res1.details as { changed?: boolean }).changed).toBe(true);
+		expect(lock.isActive()).toBe(true);
 
-		const items2: TodoItem[] = [
-			{ content: "Phase 1 - revised", activeForm: "Doing 1", status: "in_progress" },
-			{ content: "Phase 2", activeForm: "Doing 2", status: "pending" },
-		];
-		const res2 = await tool.execute("w02", { todos: items2 });
-		expect((res2.details as { changed?: boolean }).changed).toBe(true);
+		// First duplicate: rejection result, no mutation
+		const res2 = await tool.execute("w02", { todos: items1 });
+		expect((res2.details as { changed?: boolean }).changed).toBe(false);
+		expect((res2.details as { todoWriteAlreadyApplied?: boolean }).todoWriteAlreadyApplied).toBe(true);
+		expect(persisted).toMatchObject(items1);
+		expect(persisted).toHaveLength(1);
 
-		const items3: TodoItem[] = [
-			{ content: "Phase 1 - re-revised", activeForm: "Doing 1", status: "in_progress" },
-			{ content: "Phase 2", activeForm: "Doing 2", status: "pending" },
-		];
-		const res3 = await tool.execute("w03", { todos: items3 });
-		expect((res3.details as { loopGuardTriggered?: boolean }).loopGuardTriggered).toBe(true);
-
-		const items4: TodoItem[] = [
-			{ content: "Phase 1 - attempt 4", activeForm: "Doing 1", status: "in_progress" },
-			{ content: "Phase 2", activeForm: "Doing 2", status: "pending" },
-		];
-		const res4 = await tool.execute("w04", { todos: items4 });
-		expect((res4.details as { loopGuardTriggered?: boolean }).loopGuardTriggered).toBe(true);
-
-		expect(persisted).toMatchObject(items2);
+		// Second equivalent duplicate: terminates with REPEATED_TOOL_CALL_LOOP
+		await expect(tool.execute("w03", { todos: items1 })).rejects.toThrow("REPEATED_TOOL_CALL_LOOP");
+		// State unchanged
+		expect(persisted).toMatchObject(items1);
+		expect(persisted).toHaveLength(1);
 	});
 
 	it("R02 recursive response text absent", async () => {
@@ -70,7 +61,7 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 		expect(text).toContain("Todo list updated");
 	});
 
-	it("R03 no-op duplicate write returns changed=false without store mutation", async () => {
+	it("R03 no-op duplicate write before lock returns changed=false without store mutation", async () => {
 		let persisted: TodoItem[] = [];
 		let writeCount = 0;
 		const tool = createTodoWriteTool(
@@ -91,47 +82,47 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 		expect((res2.content[0] as { text: string }).text).toContain("Todo list unchanged");
 	});
 
-	it("R04 rewritten consecutive plans trigger guard", async () => {
-		const guard = new TodoLoopGuard();
+	it("R04 rewritten consecutive plans without lock remain allowed", async () => {
 		let persisted: TodoItem[] = [];
 		const tool = createTodoWriteTool(
 			() => persisted,
 			(next) => {
 				persisted = next;
 			},
-			guard,
 		);
 
 		await tool.execute("w1", { todos: [{ content: "Plan A", activeForm: "A", status: "pending" }] });
 		await tool.execute("w2", { todos: [{ content: "Plan B", activeForm: "B", status: "pending" }] });
 		const res3 = await tool.execute("w3", { todos: [{ content: "Plan C", activeForm: "C", status: "pending" }] });
-
-		expect((res3.details as { loopGuardTriggered?: boolean }).loopGuardTriggered).toBe(true);
+		expect((res3.details as { changed?: boolean }).changed).toBe(true);
 	});
 
-	it("R05 no store mutation after guard is active", async () => {
-		const guard = new TodoLoopGuard();
+	it("R05 no store mutation after duplicate rejection", async () => {
+		const lock = createPerTurnLock();
 		let persisted: TodoItem[] = [];
 		const tool = createTodoWriteTool(
 			() => persisted,
 			(next) => {
 				persisted = next;
 			},
-			guard,
+			new TodoLoopGuard(),
+			undefined,
+			lock,
 		);
 
 		await tool.execute("w1", { todos: [{ content: "Plan 1", activeForm: "Doing 1", status: "pending" }] });
-		await tool.execute("w2", { todos: [{ content: "Plan 2", activeForm: "Doing 2", status: "pending" }] });
 		const lastValid = [...persisted];
 
-		await tool.execute("w3", { todos: [{ content: "Plan 3", activeForm: "Doing 3", status: "pending" }] });
-		await tool.execute("w4", { todos: [{ content: "Plan 4", activeForm: "Doing 4", status: "pending" }] });
-
+		const dup = await tool.execute("w2", {
+			todos: [{ content: "Plan 2", activeForm: "Doing 2", status: "pending" }],
+		});
+		expect((dup.details as { todoWriteAlreadyApplied?: boolean }).todoWriteAlreadyApplied).toBe(true);
 		expect(persisted).toEqual(lastValid);
 	});
 
-	it("R06 guard resets after real non-todo tool progress", async () => {
+	it("R07 duplicate rejection count resets on non-todo tool success", async () => {
 		const guard = new TodoLoopGuard();
+		const lock = createPerTurnLock();
 		let persisted: TodoItem[] = [];
 		const tool = createTodoWriteTool(
 			() => persisted,
@@ -139,49 +130,23 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 				persisted = next;
 			},
 			guard,
+			undefined,
+			lock,
 		);
 
 		await tool.execute("w1", { todos: [{ content: "Plan 1", activeForm: "1", status: "pending" }] });
-		await tool.execute("w2", { todos: [{ content: "Plan 2", activeForm: "2", status: "pending" }] });
-		const res3 = await tool.execute("w3", { todos: [{ content: "Plan 3", activeForm: "3", status: "pending" }] });
-		expect((res3.details as { loopGuardTriggered?: boolean }).loopGuardTriggered).toBe(true);
+		const dup = await tool.execute("w2", { todos: [{ content: "Plan 1", activeForm: "1", status: "pending" }] });
+		expect((dup.details as { todoWriteAlreadyApplied?: boolean }).todoWriteAlreadyApplied).toBe(true);
 
-		// Non-todo tool execution succeeds (e.g., bash/read)
 		guard.resetOnNonTodoToolSuccess("bash");
+		lock.currentTurn++;
+		lock.lockedUntil = -1;
 
 		const res4 = await tool.execute("w4", { todos: [{ content: "Plan 4", activeForm: "4", status: "pending" }] });
 		expect((res4.details as { changed?: boolean }).changed).toBe(true);
 	});
 
-	it("R07 legitimate status transition accepted across non-todo tool executions", async () => {
-		const guard = new TodoLoopGuard();
-		let persisted: TodoItem[] = [];
-		const tool = createTodoWriteTool(
-			() => persisted,
-			(next) => {
-				persisted = next;
-			},
-			guard,
-		);
-
-		// 1. Write plan
-		await tool.execute("w1", { todos: [{ content: "Step 1", activeForm: "Doing 1", status: "pending" }] });
-		// 2. Shell tool success
-		guard.resetOnNonTodoToolSuccess("bash");
-		// 3. Status update
-		await tool.execute("w2", { todos: [{ content: "Step 1", activeForm: "Doing 1", status: "in_progress" }] });
-		// 4. Shell tool success
-		guard.resetOnNonTodoToolSuccess("bash");
-		// 5. Status update
-		const res3 = await tool.execute("w3", {
-			todos: [{ content: "Step 1", activeForm: "Doing 1", status: "completed" }],
-		});
-
-		expect((res3.details as { changed?: boolean }).changed).toBe(true);
-		expect((res3.details as { loopGuardTriggered?: boolean }).loopGuardTriggered).toBeUndefined();
-	});
-
-	it("R08 snapshot omission keeps context payload bounded", () => {
+	it("R08 completed span preserved by convertToLlm", () => {
 		const assistant = {
 			role: "assistant" as const,
 			content: [
@@ -222,37 +187,20 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 		};
 
 		const converted = convertToLlm([assistant, toolResult]);
-		const compacted = converted[0];
-		expect(compacted).toMatchObject({
-			role: "assistant",
-			content: [{ type: "text" }],
-		});
-		expect((compacted.content[0] as { text: string }).text).toContain("Todo snapshot omitted");
+		const assistantMsg = converted[0];
+		expect(assistantMsg).toMatchObject({ role: "assistant" });
+		if (assistantMsg.role === "assistant") {
+			const hasToolCall = assistantMsg.content.some((b) => b.type === "toolCall");
+			expect(hasToolCall).toBe(true);
+		}
+		expect(converted.filter((m) => m.role === "toolResult")).toHaveLength(1);
 	});
 
-	it("R09 explicit read retrieves state without mutation or loop guard reset", async () => {
-		const guard = new TodoLoopGuard();
-		let persisted: TodoItem[] = [{ content: "Item A", activeForm: "Doing A", status: "pending" }];
+	it("R09 explicit read retrieves state without mutation", async () => {
+		const persisted: TodoItem[] = [{ content: "Item A", activeForm: "Doing A", status: "pending" }];
 		const readTool = createTodoReadTool(() => persisted);
-		const writeTool = createTodoWriteTool(
-			() => persisted,
-			(next) => {
-				persisted = next;
-			},
-			guard,
-		);
-
-		await writeTool.execute("w1", { todos: [{ content: "Item B", activeForm: "Doing B", status: "pending" }] });
-		await writeTool.execute("w2", { todos: [{ content: "Item C", activeForm: "Doing C", status: "pending" }] });
-
 		const readRes = await readTool.execute("r1", {});
 		expect(readRes.details).toMatchObject({ todos: persisted });
-
-		// Read did not reset guard count
-		const writeRes3 = await writeTool.execute("w3", {
-			todos: [{ content: "Item D", activeForm: "Doing D", status: "pending" }],
-		});
-		expect((writeRes3.details as { loopGuardTriggered?: boolean }).loopGuardTriggered).toBe(true);
 	});
 
 	it("R10 clear requires explicit confirmation", async () => {
@@ -271,7 +219,7 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 		expect(persisted.length).toBe(1);
 
 		const okRes = await tool.execute("c2", { todos: [], confirmClear: true });
-		expect((okRes.content[0] as { text: string }).text).toBe("Todo list cleared.");
+		expect((okRes.content[0] as { text: string }).text).toContain("Todo list updated");
 		expect(persisted.length).toBe(0);
 	});
 
@@ -295,43 +243,47 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 		expect(redacted).toContain("[REDACTED_SECRET]");
 	});
 
-	it("R13 no tool-call infinite loop: blocked response directs model to execute task", async () => {
-		const guard = new TodoLoopGuard();
+	it("R13 first duplicate rejection directs model to execute task", async () => {
+		const lock = createPerTurnLock();
 		let persisted: TodoItem[] = [];
 		const tool = createTodoWriteTool(
 			() => persisted,
 			(next) => {
 				persisted = next;
 			},
-			guard,
+			new TodoLoopGuard(),
+			undefined,
+			lock,
 		);
 
 		await tool.execute("w1", { todos: [{ content: "A", activeForm: "A", status: "pending" }] });
-		await tool.execute("w2", { todos: [{ content: "B", activeForm: "B", status: "pending" }] });
-		const blocked = await tool.execute("w3", { todos: [{ content: "C", activeForm: "C", status: "pending" }] });
-
-		expect((blocked.details as { todoWriteTemporarilyBlocked?: boolean }).todoWriteTemporarilyBlocked).toBe(true);
-		expect((blocked.content[0] as { text: string }).text).toContain("Execute the current in-progress task now");
+		const dup = await tool.execute("w2", { todos: [{ content: "A", activeForm: "A", status: "pending" }] });
+		const text = (dup.content[0] as { type: "text"; text: string }).text;
+		expect(text).toContain("The plan already exists. Do not call todo_write again during this user turn.");
+		expect(text).toContain("Continue using another available tool or execute the active task.");
+		expect(text.includes("call it again")).toBe(false);
 	});
 
-	it("R14 operation aborted is not required to terminate loop", async () => {
-		const guard = new TodoLoopGuard();
+	it("R14 second equivalent duplicate terminates with REPEATED_TOOL_CALL_LOOP", async () => {
+		const lock = createPerTurnLock();
 		let persisted: TodoItem[] = [];
 		const tool = createTodoWriteTool(
 			() => persisted,
 			(next) => {
 				persisted = next;
 			},
-			guard,
+			new TodoLoopGuard(),
+			undefined,
+			lock,
 		);
 
 		await tool.execute("w1", { todos: [{ content: "A", activeForm: "A", status: "pending" }] });
-		await tool.execute("w2", { todos: [{ content: "B", activeForm: "B", status: "pending" }] });
+		await tool.execute("w2", { todos: [{ content: "A", activeForm: "A", status: "pending" }] });
 
-		// The 3rd execution does not throw or abort, it returns structured blocking outcome
-		const result = await tool.execute("w3", { todos: [{ content: "C", activeForm: "C", status: "pending" }] });
-		expect(result).toBeDefined();
-		expect((result.details as { loopGuardTriggered?: boolean }).loopGuardTriggered).toBe(true);
+		await expect(
+			tool.execute("w3", { todos: [{ content: "A", activeForm: "A", status: "pending" }] }),
+		).rejects.toThrow("REPEATED_TOOL_CALL_LOOP");
+		expect(persisted).toHaveLength(1);
 	});
 
 	// =========================================================================
@@ -372,13 +324,11 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 			timestamp: 2,
 		};
 		const converted = convertToLlm([assistant, toolResult]);
-		const compacted = converted[0];
-		if (compacted.role !== "assistant") throw new Error("Expected assistant");
-		const firstContent = compacted.content[0];
-		// Must NOT be a toolCall block
-		expect(firstContent.type).not.toBe("toolCall");
-		// Must be text, not a replayable todo_write argument
-		expect(firstContent.type).toBe("text");
+		// Latest completed span is preserved — toolCall stays visible so model knows write succeeded.
+		// Per-user-turn lock on tool level prevents actual re-execution.
+		const assistantMsg = converted[0];
+		if (assistantMsg.role !== "assistant") throw new Error("Expected assistant");
+		expect(assistantMsg.content.some((b: { type: string }) => b.type === "toolCall")).toBe(true);
 	});
 
 	it("R16 snapshotOmitted absent from public todo_write schema", async () => {
@@ -446,6 +396,10 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 			},
 			() => revision,
 			guard,
+			{
+				getSnapshot: () => ({ revision: initialRevision, timestamp: Date.now() }),
+				invalidateSnapshot: () => {},
+			},
 		);
 
 		// Create initial list
@@ -487,6 +441,10 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 			},
 			() => revision,
 			guard,
+			{
+				getSnapshot: () => ({ revision: initialRev, timestamp: Date.now() }),
+				invalidateSnapshot: () => {},
+			},
 		);
 
 		// Set up persisted state with known IDs
@@ -522,6 +480,10 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 			},
 			() => revision,
 			guard,
+			{
+				getSnapshot: () => ({ revision: initialRev, timestamp: Date.now() }),
+				invalidateSnapshot: () => {},
+			},
 		);
 
 		persisted = [{ id: "id-a", content: "A", activeForm: "A", status: "pending" }];
@@ -550,18 +512,24 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 			},
 			() => revision,
 			guard,
+			{
+				getSnapshot: () => ({ revision: 5, timestamp: Date.now() }),
+				invalidateSnapshot: () => {},
+			},
 		);
 
 		persisted = [{ id: "id-a", content: "A", activeForm: "A", status: "pending" }];
 		const before = [...persisted];
 		const beforeRev = revision;
 
-		await expect(
-			updateTool.execute("u1", {
-				updates: [{ id: "id-a", status: "completed" }],
-				expectedRevision: 3, // stale
-			}),
-		).rejects.toThrow("Stale revision");
+		const result = await updateTool.execute("u1", {
+			updates: [{ id: "id-a", status: "completed" }],
+			expectedRevision: 3, // stale
+		});
+		// Stale revision returns a tool result with TODO_READ_REQUIRED
+		const text = result.content[0];
+		if (text.type !== "text") throw new Error("expected text content");
+		expect(text.text).toContain("TODO_READ_REQUIRED");
 		expect(persisted).toEqual(before);
 		expect(revision).toBe(beforeRev);
 	});
@@ -578,6 +546,10 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 			},
 			() => revision,
 			guard,
+			{
+				getSnapshot: () => ({ revision: beforeRev, timestamp: Date.now() }),
+				invalidateSnapshot: () => {},
+			},
 		);
 
 		persisted = [{ id: "id-a", content: "A", activeForm: "A", status: "in_progress" }];
@@ -592,18 +564,29 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 		expect(revision).toBe(beforeRev);
 	});
 
-	it("R23 todo_update participates in loop guard", async () => {
+	it("R23 todo_update after a fresh read mutates successfully", async () => {
 		let persisted: TodoItem[] = [];
 		let revision = 0;
 		const guard = new TodoLoopGuard();
+		let snapshot: { revision: number; timestamp: number } | null = null;
 		const writeTool = createTodoWriteTool(
 			() => persisted,
 			(next) => {
 				persisted = next;
 				revision++;
+				snapshot = null;
 			},
 			guard,
 			() => revision,
+		);
+		const readTool = createTodoReadTool(
+			() => persisted,
+			() => revision,
+			{
+				onRead: () => {
+					snapshot = { revision, timestamp: Date.now() };
+				},
+			},
 		);
 		const updateTool = createTodoUpdateTool(
 			() => persisted,
@@ -613,45 +596,67 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 			},
 			() => revision,
 			guard,
+			{
+				getSnapshot: () => snapshot,
+				invalidateSnapshot: () => {
+					snapshot = null;
+				},
+			},
 		);
 
 		await writeTool.execute("w1", {
 			todos: [{ content: "A", activeForm: "A", status: "pending" }],
 		});
 		const itemId = persisted[0].id!;
+		await readTool.execute("r1", {});
 
-		// Second: todo_update (2nd consecutive Todo-family call, not blocked yet)
 		await updateTool.execute("u1", {
 			updates: [{ id: itemId, status: "in_progress" }],
 			expectedRevision: revision,
 		});
-
-		// Third: todo_update (3rd consecutive → blocked)
-		const rev2 = revision;
-		const blocked = await updateTool.execute("u2", {
-			updates: [{ id: itemId, activeForm: "Blocked" }],
-			expectedRevision: rev2,
-		});
-		expect((blocked.details as { loopGuardTriggered?: boolean }).loopGuardTriggered).toBe(true);
+		expect(persisted[0].status).toBe("in_progress");
 	});
 
-	it("R24 todo_read does not reset loop guard", async () => {
+	it("R24 second update without a fresh read is rejected", async () => {
+		let persisted: TodoItem[] = [];
+		let revision = 0;
+		let snapshot: { revision: number; timestamp: number } | null = null;
 		const guard = new TodoLoopGuard();
-		let persisted: TodoItem[] = [{ content: "A", activeForm: "A", status: "pending" }];
-		const readTool = createTodoReadTool(() => persisted);
-		const writeTool = createTodoWriteTool(
+		const updateTool = createTodoUpdateTool(
 			() => persisted,
 			(next) => {
 				persisted = next;
+				revision++;
 			},
+			() => revision,
 			guard,
+			{
+				getSnapshot: () => snapshot,
+				invalidateSnapshot: () => {
+					snapshot = null;
+				},
+			},
 		);
 
-		await writeTool.execute("w1", { todos: [{ content: "B", activeForm: "B", status: "pending" }] });
-		await writeTool.execute("w2", { todos: [{ content: "C", activeForm: "C", status: "pending" }] });
-		await readTool.execute("r1", {});
-		const res = await writeTool.execute("w3", { todos: [{ content: "D", activeForm: "D", status: "pending" }] });
-		expect((res.details as { loopGuardTriggered?: boolean }).loopGuardTriggered).toBe(true);
+		persisted = [{ id: "id-a", content: "A", activeForm: "A", status: "pending" }];
+		snapshot = { revision: 0, timestamp: Date.now() };
+
+		// First update succeeds and invalidates the snapshot
+		const res1 = await updateTool.execute("u1", {
+			updates: [{ id: "id-a", status: "in_progress" }],
+			expectedRevision: 0,
+		});
+		expect((res1.details as { changed?: boolean }).changed).toBe(true);
+
+		// Second update without a fresh read is rejected
+		const res2 = await updateTool.execute("u2", {
+			updates: [{ id: "id-a", status: "completed" }],
+			expectedRevision: 1,
+		});
+		const text2 = res2.content[0];
+		if (text2.type !== "text") throw new Error("expected text content");
+		expect(text2.text).toContain("TODO_READ_REQUIRED");
+		expect(persisted[0].status).toBe("in_progress");
 	});
 
 	it("R25 exact black-box transcript regression", async () => {
@@ -675,6 +680,10 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 			},
 			() => revision,
 			guard,
+			{
+				getSnapshot: () => ({ revision: initialRev, timestamp: Date.now() }),
+				invalidateSnapshot: () => {},
+			},
 		);
 
 		// Initial seven-item todo_write (simulating the black-box scenario)
@@ -730,11 +739,13 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 		let persisted: TodoItem[] = [];
 		let revision = 0;
 		const guard = new TodoLoopGuard();
+		let snapshot: { revision: number; timestamp: number } | null = null;
 		const writeTool = createTodoWriteTool(
 			() => persisted,
 			(next) => {
 				persisted = next;
 				revision++;
+				snapshot = null;
 			},
 			guard,
 			() => revision,
@@ -742,15 +753,27 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 		const readTool = createTodoReadTool(
 			() => persisted,
 			() => revision,
+			{
+				onRead: () => {
+					snapshot = { revision, timestamp: Date.now() };
+				},
+			},
 		);
 		const updateTool = createTodoUpdateTool(
 			() => persisted,
 			(next) => {
 				persisted = next;
 				revision++;
+				snapshot = null;
 			},
 			() => revision,
 			guard,
+			{
+				getSnapshot: () => snapshot,
+				invalidateSnapshot: () => {
+					snapshot = null;
+				},
+			},
 		);
 
 		// Initial write
@@ -791,7 +814,7 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 
 		// Clear with confirmClear → succeeds
 		const accepted = await tool.execute("c2", { todos: [], confirmClear: true });
-		expect((accepted.content[0] as { text: string }).text).toBe("Todo list cleared.");
+		expect((accepted.content[0] as { text: string }).text).toContain("Todo list");
 		expect(persisted).toEqual([]);
 	});
 
@@ -841,5 +864,85 @@ describe("Todo write loop guard and contracts (R01-R14)", () => {
 		expect(typeof persisted[1].id).toBe("string");
 		// IDs should differ
 		expect(persisted[0].id).not.toBe(persisted[1].id);
+	});
+
+	it("repeated stale todo_update terminates after one rejection and recovers after read", async () => {
+		let persisted: TodoItem[] = [{ id: "todo-1", content: "Task", activeForm: "Doing", status: "pending" }];
+		let revision = 1;
+		let snapshot: { revision: number; timestamp: number } | null = { revision: 0, timestamp: Date.now() };
+		const rejectionState = { count: 0 };
+		let mutations = 0;
+		const recordRead = () => {
+			snapshot = { revision, timestamp: Date.now() };
+		};
+		const invalidateSnapshot = () => {
+			snapshot = null;
+		};
+		const readTool = createTodoReadTool(
+			() => persisted,
+			() => revision,
+			{ onRead: recordRead },
+		);
+		const updateTool = createTodoUpdateTool(
+			() => persisted,
+			(next) => {
+				persisted = next;
+				revision++;
+				mutations++;
+				snapshot = null;
+			},
+			() => revision,
+			new TodoLoopGuard(),
+			{
+				getSnapshot: () => snapshot,
+				invalidateSnapshot,
+			},
+			rejectionState,
+		);
+
+		const first = await updateTool.execute("u1", {
+			updates: [{ id: "todo-1", status: "completed" }],
+			expectedRevision: 0,
+		});
+		expect((first.details as { errorCode?: string }).errorCode).toBe("TODO_READ_REQUIRED");
+		expect(mutations).toBe(0);
+		await expect(
+			updateTool.execute("u2", { updates: [{ id: "todo-1", status: "completed" }], expectedRevision: 0 }),
+		).rejects.toThrow("REPEATED_TODO_UPDATE_LOOP");
+		expect(mutations).toBe(0);
+
+		const read = await readTool.execute("r1", {});
+		const readDetails = read.details as { revision: number; todos: TodoItem[] };
+		const recovered = await updateTool.execute("u3", {
+			updates: [{ id: "todo-1", status: "completed" }],
+			expectedRevision: readDetails.revision,
+		});
+		expect((recovered.details as { changed?: boolean }).changed).toBe(true);
+		expect(mutations).toBe(1);
+	});
+
+	it("reserves todo_write atomically for parallel calls", async () => {
+		const lock = createPerTurnLock();
+		let persisted: TodoItem[] = [];
+		let mutations = 0;
+		const tool = createTodoWriteTool(
+			() => persisted,
+			(next) => {
+				persisted = next;
+				mutations++;
+			},
+			new TodoLoopGuard(),
+			() => mutations,
+			lock,
+		);
+
+		const results = await Promise.all([
+			tool.execute("w1", { todos: [{ id: "a", content: "A", activeForm: "Doing A", status: "pending" }] }),
+			tool.execute("w2", { todos: [{ id: "b", content: "B", activeForm: "Doing B", status: "pending" }] }),
+		]);
+
+		expect(mutations).toBe(1);
+		expect(lock.lockedUntil).toBe(lock.currentTurn);
+		expect(results.filter((result) => (result.details as { changed?: boolean }).changed).length).toBe(1);
 	});
 });

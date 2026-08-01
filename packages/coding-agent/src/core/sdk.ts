@@ -1,6 +1,11 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, type ThinkingLevel } from "@apholdings/jensen-agent-core";
-import type { Message, Model } from "@apholdings/jensen-ai";
+import {
+	assertValidChatCompletionsPayload,
+	assertValidResponsesPayload,
+	type Message,
+	type Model,
+} from "@apholdings/jensen-ai";
 import { getAgentDir, getDocsPath } from "../config.js";
 import { AgentSession } from "./agent-session.js";
 import { AuthStorage } from "./auth-storage.js";
@@ -310,12 +315,18 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			tools: [],
 		},
 		convertToLlm: convertToLlmWithBlockImages,
-		onPayload: async (payload, _model) => {
+		onPayload: async (payload, model) => {
 			const runner = extensionRunnerRef.current;
-			if (!runner?.hasHandlers("before_provider_request")) {
-				return payload;
+			let finalPayload = payload;
+			if (runner?.hasHandlers("before_provider_request")) {
+				finalPayload = await runner.emitBeforeProviderRequest(payload);
 			}
-			return runner.emitBeforeProviderRequest(payload);
+			if (model.api === "openai-completions") {
+				assertValidChatCompletionsPayload(finalPayload, model.provider, model.id);
+			} else if (model.api.endsWith("-responses")) {
+				assertValidResponsesPayload(finalPayload, model.provider, model.id);
+			}
+			return finalPayload;
 		},
 		sessionId: sessionManager.getSessionId(),
 		transformContext: async (messages) => {

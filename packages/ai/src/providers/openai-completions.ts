@@ -29,6 +29,7 @@ import type {
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
+import { assertValidChatCompletionsPayload } from "../utils/transcript-validation.js";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.js";
 import { buildBaseOptions, clampReasoning } from "./simple-options.js";
 import { transformMessages } from "./transform-messages.js";
@@ -91,6 +92,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			if (nextParams !== undefined) {
 				params = nextParams as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
 			}
+			assertValidChatCompletionsPayload(params, model.provider, model.id);
 			const openaiStream = await client.chat.completions.create(params, { signal: options?.signal });
 			stream.push({ type: "start", partial: output });
 

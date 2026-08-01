@@ -7,8 +7,11 @@ import {
 	type AssistantMessage,
 	type Context,
 	EventStream,
+	type Message,
 	streamSimple,
 	type ToolResultMessage,
+	validateChatCompletionsTranscript,
+	validateResponsesTranscript,
 	validateToolArguments,
 } from "@apholdings/jensen-ai";
 import type {
@@ -232,6 +235,39 @@ async function runLoop(
 }
 
 /**
+ * Validate transcript before sending to the LLM.
+ * Returns an error if:
+ * - Missing tool results are detected (calls without results)
+ * - Orphan tool results are present (results without preceding tool calls)
+ */
+function validateTranscriptForModel(
+	llmMessages: Message[],
+	model: { api?: string; provider?: string; id?: string },
+): { code: "INVALID_TOOL_TRANSCRIPT"; message: string } | null {
+	const provider = model.provider || "unknown";
+	const modelId = model.id || "unknown";
+	const useResponses =
+		model.api === "openai-responses" ||
+		model.api === "azure-openai-responses" ||
+		model.api === "openai-codex-responses";
+	const validator = useResponses ? validateResponsesTranscript : validateChatCompletionsTranscript;
+	const result = validator(llmMessages, provider, modelId);
+	if ("code" in result) {
+		return {
+			code: "INVALID_TOOL_TRANSCRIPT",
+			message:
+				`Transcript validation failed: protocol=${result.protocol}, ` +
+				`missingToolCallIds=[${result.missingToolCallIds.join(", ")}], ` +
+				`duplicateToolCallIds=[${result.duplicateToolCallIds.join(", ")}], ` +
+				`orphanToolResultIds=[${result.orphanToolResultIds.join(", ")}], ` +
+				`duplicateCallIds=[${result.duplicateCallIds.join(", ")}], ` +
+				`provider=${result.provider}, model=${result.model}, messageIndex=${result.messageIndex}`,
+		};
+	}
+	return null;
+}
+
+/**
  * Stream an assistant response from the LLM.
  * This is where AgentMessage[] gets transformed to Message[] for the LLM.
  */
@@ -251,11 +287,37 @@ async function streamAssistantResponse(
 	// Convert to LLM-compatible messages (AgentMessage[] → Message[])
 	const llmMessages = await config.convertToLlm(messages);
 
+	// Validate transcript integrity before sending to provider
+	const transcriptError = validateTranscriptForModel(llmMessages, config.model);
+	if (transcriptError) {
+		const errorMsg: AssistantMessage = {
+			role: "assistant",
+			content: [],
+			api: config.model.api,
+			provider: config.model.provider,
+			model: config.model.id,
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "error",
+			errorMessage: `${transcriptError.code}: ${transcriptError.message}`,
+			timestamp: Date.now(),
+		};
+		await emit({ type: "message_start", message: errorMsg });
+		await emit({ type: "message_end", message: errorMsg });
+		return errorMsg;
+	}
+
 	// Build LLM context
 	const llmContext: Context = {
 		systemPrompt: context.systemPrompt,
 		messages: llmMessages,
-		tools: context.tools,
+		tools: config.getTools?.() ?? context.tools,
 	};
 
 	const streamFunction = streamFn || streamSimple;
@@ -589,23 +651,33 @@ async function finalizeExecutedToolCall(
 	let isError = executed.isError;
 
 	if (config.afterToolCall) {
-		const afterResult = await config.afterToolCall(
-			{
-				assistantMessage,
-				toolCall: prepared.toolCall,
-				args: prepared.args,
-				result,
-				isError,
-				context: currentContext,
-			},
-			signal,
-		);
-		if (afterResult) {
-			result = {
-				content: afterResult.content ?? result.content,
-				details: afterResult.details ?? result.details,
-			};
-			isError = afterResult.isError ?? isError;
+		try {
+			const afterResult = await config.afterToolCall(
+				{
+					assistantMessage,
+					toolCall: prepared.toolCall,
+					args: prepared.args,
+					result,
+					isError,
+					context: currentContext,
+				},
+				signal,
+			);
+			if (afterResult) {
+				result = {
+					content: afterResult.content ?? result.content,
+					details: afterResult.details ?? result.details,
+				};
+				isError = afterResult.isError ?? isError;
+			}
+		} catch (error) {
+			await emitToolCallOutcome(
+				prepared.toolCall,
+				createErrorToolResult(error instanceof Error ? error.message : String(error)),
+				true,
+				emit,
+			);
+			throw error;
 		}
 	}
 

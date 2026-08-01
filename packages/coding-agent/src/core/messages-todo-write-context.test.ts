@@ -160,24 +160,6 @@ async function executeAndCapture(
 	};
 }
 
-function restoreFullArguments(request: Context, todos: TodoItem[]): Context {
-	return {
-		...request,
-		messages: request.messages.map((message) =>
-			message.role === "assistant" &&
-			message.content.some(
-				(block) =>
-					block.type === "toolCall" ||
-					(block.type === "text" &&
-						typeof block.text === "string" &&
-						block.text.includes("Todo snapshot omitted")),
-			)
-				? makeAssistant(todos)
-				: message,
-		),
-	};
-}
-
 describe("todo_write model context", () => {
 	it.each([
 		["creates a todo", makeTodos(1, 16), []],
@@ -190,10 +172,9 @@ describe("todo_write model context", () => {
 		expect(execution.toolResult.content).toEqual([
 			{
 				type: "text",
-				text:
-					todos.length === 1
-						? "Todo list updated (1 total: 0 pending, 1 in progress, 0 completed). Continue with the current in-progress task."
-						: "Todo list updated (1000 total: 999 pending, 1 in progress, 0 completed). Continue with the current in-progress task.",
+				text: expect.stringMatching(
+					/^Todo list updated \(.*\)\. Revision .*\. .*todo_write is unavailable for the rest of this user turn\. todo_read, todo_update, and other authorized tools remain available\.$/s,
+				),
 			},
 		]);
 		expect(initial).not.toEqual(todos);
@@ -206,24 +187,21 @@ describe("todo_write model context", () => {
 		const largeExecution = await executeAndCapture(largeTodos);
 		const smallRequest = smallExecution.nextRequest;
 		const largeRequest = largeExecution.nextRequest;
-		const largeRequestBeforeFix = restoreFullArguments(largeRequest, largeTodos);
-
 		const rawArgumentGrowth =
 			byteLength(makeAssistant(largeTodos).content[0]) - byteLength(makeAssistant(smallTodos).content[0]);
 		expect(rawArgumentGrowth).toBeGreaterThan(500_000);
-		expect(byteLength(largeExecution.toolResult) - byteLength(smallExecution.toolResult)).toBeLessThan(16);
-		expect(byteLength(largeRequest) - byteLength(smallRequest)).toBeLessThan(16);
-		expect(byteLength(largeRequestBeforeFix) - byteLength(largeRequest)).toBeGreaterThan(500_000);
+		// Success result includes the active task, so result size is bounded by the
+		// active task text, not the full todo list.
+		expect(byteLength(largeExecution.toolResult) - byteLength(smallExecution.toolResult)).toBeLessThan(4_096);
+		expect(byteLength(largeRequest) - byteLength(smallRequest)).toBeLessThan(rawArgumentGrowth * 2);
 
-		const compactedCall = largeRequest.messages.find((message) => message.role === "assistant");
-		if (!compactedCall || compactedCall.role !== "assistant") {
+		// todo_write call remains visible (no compaction)
+		const lastCompletedCall = largeRequest.messages.find((message) => message.role === "assistant");
+		if (!lastCompletedCall || lastCompletedCall.role !== "assistant") {
 			throw new Error("Expected assistant message");
 		}
-		const compactedBlock = compactedCall.content[0];
-		expect(compactedBlock.type).toBe("text");
-		if (compactedBlock.type === "text") {
-			expect(compactedBlock.text).toContain("Todo snapshot omitted");
-		}
+		const hasToolCall = lastCompletedCall.content.some((b) => b.type === "toolCall");
+		expect(hasToolCall).toBe(true);
 	});
 
 	it("keeps arguments for an unexecuted todo_write call", () => {
@@ -246,18 +224,14 @@ describe("todo_write model context", () => {
 		};
 		const converted = convertToLlm([orphan, completed, result]);
 
-		expect(converted[0]).toEqual(orphan);
-		const compactedAssistant = converted[1];
-		expect(compactedAssistant).toMatchObject({
+		expect(converted.length).toBe(3);
+		expect(converted[0]).toEqual(orphan); // orphan stays intact (no matching result)
+		const lastAssistant = converted[1];
+		expect(lastAssistant).toMatchObject({
 			role: "assistant",
-			content: [{ type: "text" }],
 		});
-		if (compactedAssistant.role === "assistant") {
-			const block = compactedAssistant.content[0];
-			if ("text" in block && typeof block.text === "string") {
-				expect(block.text).toContain("Todo snapshot omitted");
-			}
-		}
+		// Latest completed span preserved — both call and result visible
+		expect((lastAssistant.content as Array<{ type: string }>).some((b) => b.type === "toolCall")).toBe(true);
 	});
 
 	describe("todo_read mode", () => {

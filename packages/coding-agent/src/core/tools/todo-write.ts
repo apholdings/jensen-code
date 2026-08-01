@@ -37,8 +37,43 @@ export interface TodoItem {
 }
 
 /**
- * Redact sensitive credentials from text string.
+ * Per-user-turn lock marker.
+ * Prevents duplicate todo_write within the same user turn.
  */
+export function createPerTurnLock(): PerTurnLock {
+	return {
+		currentTurn: 0,
+		lockedUntil: -1,
+		reservedUntil: -1,
+		isActive() {
+			return this.lockedUntil === this.currentTurn || this.reservedUntil === this.currentTurn;
+		},
+		tryReserveForCurrentTurn() {
+			if (this.isActive()) return false;
+			this.reservedUntil = this.currentTurn;
+			return true;
+		},
+		setLockedForCurrentTurn() {
+			this.lockedUntil = this.currentTurn;
+			this.reservedUntil = -1;
+		},
+		releaseReservation() {
+			if (this.reservedUntil === this.currentTurn) this.reservedUntil = -1;
+		},
+	};
+}
+
+export interface PerTurnLock {
+	currentTurn: number;
+	lockedUntil: number;
+	reservedUntil: number;
+	isActive(): boolean;
+	tryReserveForCurrentTurn(): boolean;
+	setLockedForCurrentTurn(): void;
+	releaseReservation(): void;
+}
+
+/** Redact sensitive credentials from text string. */
 export function redactSecrets(text: string): string {
 	if (!text) return text;
 	let result = text;
@@ -81,30 +116,61 @@ function areTodosEqual(a: TodoItem[], b: TodoItem[]): boolean {
  * @param setSessionTodos - Callback to set todos in session and trigger update event
  * @param loopGuard - Guard instance to track consecutive calls
  * @param getRevision - Callback to get the current todo revision number
+ * @param perTurnLock - Optional lock to prevent duplicate writes within a single user turn
  */
 export function createTodoWriteTool(
 	getSessionTodos: () => TodoItem[],
 	setSessionTodos: (todos: TodoItem[]) => void,
 	loopGuard: TodoLoopGuard = new TodoLoopGuard(),
 	getRevision?: () => number,
+	perTurnLock?: PerTurnLock,
 ): AgentTool<typeof todoWriteSchema> {
-	return {
-		name: "todo_write",
-		label: "todo_write",
-		description:
-			"Update the session's structured task/todo list for multi-step workflows. " +
-			"Call this for initial creation, deliberate complete replacement, or explicit confirmed clear. " +
-			"Use todo_update for status or progress transitions. " +
-			"Use todo_read when the current IDs or revision are not available. " +
-			"Do not reconstruct or replace the entire list merely to complete one item. " +
-			"To view the current todo list without modifying it, call todo_read.",
-		parameters: todoWriteSchema,
-		execute: async (_toolCallId: string, { todos, confirmClear }: TodoWriteInput, _signal?: AbortSignal) => {
+	const execute = async (
+		_toolCallId: string,
+		{ todos, confirmClear }: TodoWriteInput,
+		_signal?: AbortSignal,
+	): Promise<{ content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> }> => {
+		// Per-user-turn lock: reserve the write before validation and mutation.
+		if (perTurnLock && !perTurnLock.tryReserveForCurrentTurn()) {
+			const firstDuplicate = loopGuard.recordDuplicate();
+			const list = [...getSessionTodos()];
+			const pending = list.filter((t) => t.status === "pending").length;
+			const inProgress = list.filter((t) => t.status === "in_progress").length;
+			const completedCount = list.filter((t) => t.status === "completed").length;
+
+			if (!firstDuplicate) {
+				// Second equivalent duplicate within the same user turn: terminate the
+				// active agent run locally. This must not mutate state and must not
+				// result in another provider request.
+				throw new Error(
+					"REPEATED_TOOL_CALL_LOOP: todo_write was called again after it was removed. The active agent run is terminated. Start a new user message to continue.",
+				);
+			}
+
+			return {
+				content: [
+					{
+						type: "text",
+						text: `${list.length} todo(s) already exist (${pending} pending, ${inProgress} in progress, ${completedCount} completed). The plan already exists. Do not call todo_write again during this user turn.\n\nContinue using another available tool or execute the active task.`,
+					},
+				],
+				details: {
+					changed: false,
+					total: list.length,
+					pending,
+					inProgress,
+					completed: completedCount,
+					todoWriteAlreadyApplied: true,
+				},
+			};
+		}
+
+		try {
 			// Validate input
 			if (!Array.isArray(todos)) {
 				return {
 					content: [{ type: "text", text: "Error: todos must be an array" }],
-					details: undefined,
+					details: {},
 				};
 			}
 
@@ -114,13 +180,13 @@ export function createTodoWriteTool(
 				if (typeof todo.content !== "string" || !todo.content.trim()) {
 					return {
 						content: [{ type: "text", text: "Error: each todo must have a non-empty content field" }],
-						details: undefined,
+						details: {},
 					};
 				}
 				if (typeof todo.activeForm !== "string" || !todo.activeForm.trim()) {
 					return {
 						content: [{ type: "text", text: "Error: each todo must have a non-empty activeForm field" }],
-						details: undefined,
+						details: {},
 					};
 				}
 				if (!["pending", "in_progress", "completed"].includes(todo.status)) {
@@ -131,7 +197,7 @@ export function createTodoWriteTool(
 								text: "Error: each todo must have status of 'pending', 'in_progress', or 'completed'",
 							},
 						],
-						details: undefined,
+						details: {},
 					};
 				}
 				normalized.push(normalizeTodoItem(todo as TodoItem));
@@ -146,43 +212,35 @@ export function createTodoWriteTool(
 							text: "Error: Clearing all todos requires explicit confirmation (set confirmClear: true). To view current todos without modifying them, call todo_read.",
 						},
 					],
-					details: undefined,
+					details: {},
 				};
 			}
 
 			const current = getSessionTodos().map(normalizeTodoItem);
 			const isNoOp = areTodosEqual(normalized, current);
 
-			// Check loop guard
-			const guardResult = loopGuard.recordWrite(isNoOp);
-			if (guardResult.blocked) {
-				return {
-					content: [{ type: "text", text: guardResult.message! }],
-					details: {
-						loopGuardTriggered: true,
-						todoWriteTemporarilyBlocked: true,
-						requiredNextAction: guardResult.requiredNextAction,
-					},
-				};
-			}
-
 			if (isNoOp) {
+				perTurnLock?.releaseReservation();
 				const pending = current.filter((t) => t.status === "pending").length;
 				const inProgress = current.filter((t) => t.status === "in_progress").length;
-				const completed = current.filter((t) => t.status === "completed").length;
+				const completedCount = current.filter((t) => t.status === "completed").length;
+				const total = current.length;
+				const lockNote =
+					"\n\nTodo list is locked for this user turn. Next permitted operations: todo_read, todo_update.";
+
 				return {
 					content: [
 						{
 							type: "text",
-							text: `Todo list unchanged (${current.length} total: ${pending} pending, ${inProgress} in progress, ${completed} completed). Continue executing the active task.`,
+							text: `Todo list unchanged (${total} total: ${pending} pending, ${inProgress} in progress, ${completedCount} completed). Continue executing the active task.${lockNote}`,
 						},
 					],
 					details: {
 						changed: false,
-						total: current.length,
+						total,
 						pending,
 						inProgress,
-						completed,
+						completed: completedCount,
 					},
 				};
 			}
@@ -192,29 +250,52 @@ export function createTodoWriteTool(
 
 			const pending = normalized.filter((t) => t.status === "pending").length;
 			const inProgress = normalized.filter((t) => t.status === "in_progress").length;
-			const completed = normalized.filter((t) => t.status === "completed").length;
+			const completedCount = normalized.filter((t) => t.status === "completed").length;
+			const total = normalized.length;
 
-			if (normalized.length === 0) {
-				return {
-					content: [{ type: "text", text: "Todo list cleared." }],
-					details: { changed: true, total: 0, pending: 0, inProgress: 0, completed: 0, revision: getRevision?.() },
-				};
-			}
+			// Apply per-user-turn lock (only on successful mutations)
+			if (perTurnLock) perTurnLock.setLockedForCurrentTurn();
 
-			const summary = `Todo list updated (${normalized.length} total: ${pending} pending, ${inProgress} in progress, ${completed} completed). Continue with the current in-progress task.`;
+			const revision = getRevision?.();
+
+			const activeTask = normalized.find((t) => t.status === "in_progress");
+			const activeText = activeTask ? ` Active task: ${activeTask.activeForm || activeTask.content}.` : "";
+			const summary =
+				`Todo list updated (${total} total: ${pending} pending, ${inProgress} in progress, ${completedCount} completed). Revision ${revision ?? "new"}.` +
+				activeText +
+				"\n\ntodo_write is unavailable for the rest of this user turn. todo_read, todo_update, and other authorized tools remain available.";
 
 			return {
 				content: [{ type: "text", text: summary }],
 				details: {
 					changed: true,
-					total: normalized.length,
+					total,
 					pending,
 					inProgress,
-					completed,
-					revision: getRevision?.(),
+					completed: completedCount,
+					revision,
 				},
 			};
-		},
+		} catch (error) {
+			perTurnLock?.releaseReservation();
+			throw error;
+		} finally {
+			perTurnLock?.releaseReservation();
+		}
+	};
+
+	return {
+		name: "todo_write",
+		label: "todo_write",
+		description:
+			"Update the session's structured task/todo list for multi-step workflows. " +
+			"Call this for initial creation, deliberate complete replacement, or explicit confirmed clear. " +
+			"Use todo_update for status or progress transitions. " +
+			"Use todo_read when the current IDs or revision are not available. " +
+			"Do not reconstruct or replace the entire list merely to complete one item. " +
+			"To view the current todo list without modifying it, call todo_read.",
+		parameters: todoWriteSchema,
+		execute,
 	};
 }
 

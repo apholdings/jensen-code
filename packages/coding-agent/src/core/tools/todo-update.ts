@@ -27,6 +27,22 @@ const todoUpdateSchema = Type.Object({
 
 export type TodoUpdateInput = Static<typeof todoUpdateSchema>;
 
+export interface TodoUpdateSnapshot {
+	revision: number;
+	timestamp: number;
+}
+
+export interface TodoUpdateSnapshotEnforcement {
+	/** Returns the current read snapshot, or null if none */
+	getSnapshot: () => TodoUpdateSnapshot | null;
+	/** Invalidates the current snapshot, requiring a fresh todo_read */
+	invalidateSnapshot: () => void;
+}
+
+export interface TodoUpdateRejectionState {
+	count: number;
+}
+
 function normaliseUpdateField(value: string | undefined): string | undefined {
 	if (value === undefined) return undefined;
 	return value.trim();
@@ -38,12 +54,15 @@ function normaliseUpdateField(value: string | undefined): string | undefined {
  * @param setSessionTodos - Callback to set todos in session
  * @param getRevision - Callback to get the current todo revision number
  * @param loopGuard - Guard instance to track consecutive calls
+ * @param snapshotEnforcement - Optional snapshot validation for host-side enforcement
  */
 export function createTodoUpdateTool(
 	getSessionTodos: () => TodoItem[],
 	setSessionTodos: (todos: TodoItem[]) => void,
 	getRevision: () => number,
-	loopGuard: TodoLoopGuard,
+	_loopGuard: TodoLoopGuard,
+	snapshotEnforcement?: TodoUpdateSnapshotEnforcement,
+	rejectionState: TodoUpdateRejectionState = { count: 0 },
 ): AgentTool<typeof todoUpdateSchema> {
 	return {
 		name: "todo_update",
@@ -57,6 +76,34 @@ export function createTodoUpdateTool(
 		parameters: todoUpdateSchema,
 		execute: async (_toolCallId: string, input: TodoUpdateInput, _signal?: AbortSignal) => {
 			const { updates, expectedRevision } = input;
+			const rejectReadRequired = (details: Record<string, unknown>) => {
+				rejectionState.count++;
+				if (rejectionState.count > 1) {
+					throw new Error(
+						"REPEATED_TODO_UPDATE_LOOP: todo_update was rejected twice without a successful todo_read. The active agent run is terminated. Start a new user message to continue.",
+					);
+				}
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text:
+								details.reason === "stale_revision"
+									? `TODO_READ_REQUIRED: Stale revision. Snapshot was at revision ${String(details.snapshotRevision)} but current is ${String(details.currentRevision)}. Call todo_read to get the current state before retrying.`
+									: "TODO_READ_REQUIRED: Call todo_read to get the current state before retrying.",
+						},
+					],
+					details: { ...details, errorCode: "TODO_READ_REQUIRED", consecutiveRejections: rejectionState.count },
+				};
+			};
+
+			// Host-side snapshot enforcement: require a fresh todo_read before any update
+			if (snapshotEnforcement) {
+				const snapshot = snapshotEnforcement.getSnapshot();
+				if (!snapshot) {
+					return rejectReadRequired({ reason: "no_snapshot" });
+				}
+			}
 
 			// Validate updates not empty
 			if (!Array.isArray(updates) || updates.length === 0) {
@@ -98,24 +145,30 @@ export function createTodoUpdateTool(
 				}
 			}
 
-			// Check stale revision
+			// Check stale revision - invalidate snapshot and return typed error
 			const currentRevision = getRevision();
 			if (expectedRevision !== currentRevision) {
-				throw new Error(
-					`Stale revision. Expected revision ${expectedRevision} but current is ${currentRevision}. Call todo_read to get the current state and retry.`,
-				);
+				// Invalidate the cached snapshot so further updates are blocked
+				snapshotEnforcement?.invalidateSnapshot();
+				return rejectReadRequired({
+					reason: "stale_revision",
+					snapshotRevision: expectedRevision,
+					currentRevision,
+				});
 			}
 
-			// Check loop guard
-			const guardResult = loopGuard.recordWrite(false);
-			if (guardResult.blocked) {
+			// A fresh snapshot with a matching revision is a valid precondition.
+			rejectionState.count = 0;
+
+			if (!snapshotEnforcement) {
 				return {
-					content: [{ type: "text", text: guardResult.message! }],
-					details: {
-						loopGuardTriggered: true,
-						todoWriteTemporarilyBlocked: true,
-						requiredNextAction: guardResult.requiredNextAction,
-					},
+					content: [
+						{
+							type: "text" as const,
+							text: "TODO_READ_REQUIRED: todo_update requires snapshot enforcement. Call todo_read before using todo_update.",
+						},
+					],
+					details: { errorCode: "TODO_READ_REQUIRED", reason: "no_snapshot" },
 				};
 			}
 
@@ -189,6 +242,9 @@ export function createTodoUpdateTool(
 
 			// Persist updated todos
 			setSessionTodos(current);
+			rejectionState.count = 0;
+			// Invalidate snapshot after mutation - subsequent updates need fresh read
+			snapshotEnforcement?.invalidateSnapshot();
 			const newRevision = getRevision();
 
 			const pending = current.filter((t) => t.status === "pending").length;

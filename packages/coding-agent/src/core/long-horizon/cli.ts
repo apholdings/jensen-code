@@ -20,6 +20,17 @@ import chalk from "chalk";
 import { randomBytes } from "crypto";
 import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "fs";
 import { dirname, resolve } from "path";
+import {
+	abandonContinuation,
+	type ContinuationSchedulerRecord,
+	cancelContinuation,
+	consumeContinuation,
+	dispatchContinuation,
+	initializeContinuationScheduler,
+	inspectContinuationScheduler,
+	scheduleContinuation,
+	validateContinuationScheduler,
+} from "./continuation-scheduler.js";
 import { computeMissionContractDigest } from "./contract-digest.js";
 import {
 	applyMissionExecutionTransition,
@@ -337,6 +348,15 @@ export interface LongHorizonCommandOptions {
 	execution?: string;
 	executionId?: string;
 	kind?: string;
+
+	// For continuation scheduler operations
+	scheduler?: string;
+	eventId?: string;
+	cycleId?: string;
+	dispatchedContinuationId?: string;
+	resultDigest?: string;
+	expectedSchedulerRevision?: number;
+	expectedExecutionRevision?: number;
 }
 
 export async function handleLongHorizonCommand(args: string[]): Promise<boolean> {
@@ -379,6 +399,22 @@ export async function handleLongHorizonCommand(args: string[]): Promise<boolean>
 				return await handleExecutionValidate(options);
 			case "execution-transition":
 				return await handleExecutionTransition(options);
+			case "continuation-init":
+				return await handleContinuationInit(options);
+			case "continuation-inspect":
+				return await handleContinuationInspect(options);
+			case "continuation-validate":
+				return await handleContinuationValidate(options);
+			case "continuation-schedule":
+				return await handleContinuationSchedule(options);
+			case "continuation-dispatch":
+				return await handleContinuationDispatch(options);
+			case "continuation-consume":
+				return await handleContinuationConsume(options);
+			case "continuation-cancel":
+				return await handleContinuationCancel(options);
+			case "continuation-abandon":
+				return await handleContinuationAbandon(options);
 			default:
 				return false; // Let the existing benchmark handler take over
 		}
@@ -396,10 +432,140 @@ export async function handleLongHorizonCommand(args: string[]): Promise<boolean>
 
 function parseLongHorizonArgs(args: string[]): LongHorizonCommandOptions {
 	const options: LongHorizonCommandOptions = {};
-	let i = 2; // Skip "benchmark" and "long-horizon"
 
-	while (i < args.length) {
+	// Phase 1: Extract the subcommand
+	let commandEnd = -1;
+	for (let i = 2; i < args.length - 1; i++) {
 		const arg = args[i];
+		const next = args[i + 1];
+		if (arg === "mission" && ["validate", "digest"].includes(next)) {
+			options.command = `mission-${next}`;
+			commandEnd = i + 2;
+			break;
+		}
+		if (arg === "ledger" && ["init", "validate", "add-evidence", "transition", "inspect"].includes(next)) {
+			options.command = `ledger-${next}`;
+			commandEnd = i + 2;
+			break;
+		}
+		if (arg === "execution" && ["init", "inspect", "validate", "transition"].includes(next)) {
+			options.command = `execution-${next}`;
+			commandEnd = i + 2;
+			break;
+		}
+		if (
+			arg === "continuation" &&
+			["init", "inspect", "validate", "schedule", "dispatch", "consume", "cancel", "abandon"].includes(next)
+		) {
+			options.command = `continuation-${next}`;
+			commandEnd = i + 2;
+			break;
+		}
+		if (arg === "evaluate") {
+			return options;
+		}
+	}
+
+	// Phase 2: Strict flag parsing with per-operation allowlists
+	const remainingArgs = commandEnd >= 0 ? args.slice(commandEnd) : args.slice(2);
+	const isContinuationCommand = options.command?.startsWith("continuation-") ?? false;
+	const command = options.command ?? "";
+
+	// Define per-operation flag allowlists
+	const continuationAllowlists: Record<string, Set<string>> = {
+		"continuation-init": new Set(["scheduler", "contract", "execution-id", "format", "json"]),
+		"continuation-inspect": new Set(["scheduler", "format", "json"]),
+		"continuation-validate": new Set(["scheduler", "contract", "execution", "format", "json"]),
+		"continuation-schedule": new Set([
+			"scheduler",
+			"contract",
+			"execution",
+			"event-id",
+			"expected-scheduler-revision",
+			"expected-execution-revision",
+			"format",
+			"json",
+		]),
+		"continuation-dispatch": new Set([
+			"scheduler",
+			"contract",
+			"execution",
+			"event-id",
+			"cycle-id",
+			"dispatched-continuation-id",
+			"expected-scheduler-revision",
+			"format",
+			"json",
+		]),
+		"continuation-consume": new Set([
+			"scheduler",
+			"contract",
+			"execution",
+			"event-id",
+			"cycle-id",
+			"dispatched-continuation-id",
+			"expected-scheduler-revision",
+			"result-digest",
+			"format",
+			"json",
+		]),
+		"continuation-cancel": new Set([
+			"scheduler",
+			"contract",
+			"execution",
+			"event-id",
+			"cycle-id",
+			"expected-scheduler-revision",
+			"format",
+			"json",
+		]),
+		"continuation-abandon": new Set([
+			"scheduler",
+			"contract",
+			"execution",
+			"event-id",
+			"cycle-id",
+			"expected-scheduler-revision",
+			"format",
+			"json",
+		]),
+	};
+
+	// Generic flags shared across all non-continuation commands
+	const genericFlags = new Set([
+		"help",
+		"h",
+		"format",
+		"output",
+		"contract",
+		"ledger",
+		"requirement-id",
+		"to-status",
+		"expected-revision",
+		"actor-type",
+		"reason",
+		"evidence-ids",
+		"blocker-reference",
+		"evidence-input",
+		"transition-id",
+		"execution",
+		"execution-id",
+		"kind",
+		"scheduler",
+		"event-id",
+		"cycle-id",
+		"dispatched-continuation-id",
+		"result-digest",
+		"expected-scheduler-revision",
+		"expected-execution-revision",
+	]);
+
+	const allowlist = isContinuationCommand ? continuationAllowlists[command] : null;
+	const seenFlags = new Set<string>();
+	let i = 0;
+
+	while (i < remainingArgs.length) {
+		const arg = remainingArgs[i];
 
 		if (arg === "--help" || arg === "-h") {
 			options.help = true;
@@ -407,190 +573,153 @@ function parseLongHorizonArgs(args: string[]): LongHorizonCommandOptions {
 			continue;
 		}
 
-		if (arg === "--format" && i + 1 < args.length) {
-			const fmt = args[++i];
-			if (fmt === "text" || fmt === "json") {
-				options.format = fmt;
-			} else {
-				console.error(chalk.red(`Unknown format: ${fmt}`));
-				process.exitCode = 1;
+		// All subsequent tokens must be flags (start with --)
+		if (!arg.startsWith("--")) {
+			throw new Error(`unexpected positional argument: ${arg}`);
+		}
+
+		const flagName = arg.slice(2);
+		if (flagName.length === 0) {
+			throw new Error("empty flag name");
+		}
+
+		// Check for duplicate flags
+		if (seenFlags.has(flagName)) {
+			throw new Error(`duplicate flag: --${flagName}`);
+		}
+		seenFlags.add(flagName);
+
+		// Enforce per-operation allowlist
+		if (allowlist !== null && !allowlist.has(flagName)) {
+			// --output on continuation commands is rejected
+			throw new Error(`unknown flag for ${command}: --${flagName}`);
+		}
+
+		// Check if flag is recognized at all (for non-continuation commands)
+		if (allowlist === null && !genericFlags.has(flagName)) {
+			throw new Error(`unknown flag: --${flagName}`);
+		}
+
+		// Known flags that need a value
+		const flagsNeedingValue = new Set([
+			"format",
+			"output",
+			"contract",
+			"ledger",
+			"requirement-id",
+			"to-status",
+			"expected-revision",
+			"actor-type",
+			"reason",
+			"evidence-ids",
+			"blocker-reference",
+			"evidence-input",
+			"transition-id",
+			"execution",
+			"execution-id",
+			"kind",
+			"scheduler",
+			"event-id",
+			"cycle-id",
+			"dispatched-continuation-id",
+			"result-digest",
+			"expected-scheduler-revision",
+			"expected-execution-revision",
+		]);
+
+		if (flagsNeedingValue.has(flagName)) {
+			if (i + 1 >= remainingArgs.length) {
+				throw new Error(`missing value for --${flagName}`);
 			}
-			i++;
-			continue;
-		}
+			const value = remainingArgs[i + 1];
 
-		if (arg === "--output" && i + 1 < args.length) {
-			options.output = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--contract" && i + 1 < args.length) {
-			options.contract = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--ledger" && i + 1 < args.length) {
-			options.ledger = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--requirement-id" && i + 1 < args.length) {
-			options.requirementId = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--to-status" && i + 1 < args.length) {
-			options.toStatus = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--expected-revision" && i + 1 < args.length) {
-			const raw = args[++i];
-			const parsed = parseStrictNonNegativeInteger(raw);
-			if (parsed === undefined) {
-				// Store a sentinel so the handler can produce a typed error
-				(options as LongHorizonCommandOptions & { _invalidExpectedRevision?: string })._invalidExpectedRevision =
-					raw;
-			} else {
-				options.expectedRevision = parsed;
+			if (flagName === "format") {
+				if (value === "text" || value === "json") {
+					options.format = value;
+				} else {
+					throw new Error(`Unknown format: ${value}`);
+				}
+			} else if (flagName === "output") {
+				options.output = value;
+			} else if (flagName === "contract") {
+				options.contract = value;
+			} else if (flagName === "ledger") {
+				options.ledger = value;
+			} else if (flagName === "requirement-id") {
+				options.requirementId = value;
+			} else if (flagName === "to-status") {
+				options.toStatus = value;
+			} else if (flagName === "expected-revision") {
+				const parsed = parseStrictNonNegativeInteger(value);
+				if (parsed === undefined) {
+					(options as LongHorizonCommandOptions & { _invalidExpectedRevision?: string })._invalidExpectedRevision =
+						value;
+				} else {
+					options.expectedRevision = parsed;
+				}
+			} else if (flagName === "actor-type") {
+				options.actorType = value;
+			} else if (flagName === "reason") {
+				options.reason = value;
+			} else if (flagName === "evidence-ids") {
+				options.evidenceIds = value
+					.split(",")
+					.map((s) => s.trim())
+					.filter((s) => s.length > 0);
+			} else if (flagName === "blocker-reference") {
+				options.blockerReference = value;
+			} else if (flagName === "evidence-input") {
+				options.evidenceInput = value;
+			} else if (flagName === "transition-id") {
+				options.transitionId = value;
+			} else if (flagName === "execution") {
+				options.execution = value;
+			} else if (flagName === "execution-id") {
+				options.executionId = value;
+			} else if (flagName === "kind") {
+				options.kind = value;
+			} else if (flagName === "scheduler") {
+				options.scheduler = value;
+			} else if (flagName === "event-id") {
+				options.eventId = value;
+			} else if (flagName === "cycle-id") {
+				options.cycleId = value;
+			} else if (flagName === "dispatched-continuation-id") {
+				options.dispatchedContinuationId = value;
+			} else if (flagName === "result-digest") {
+				options.resultDigest = value;
+			} else if (flagName === "expected-scheduler-revision") {
+				const parsed = parseStrictNonNegativeInteger(value);
+				if (parsed === undefined) {
+					(
+						options as LongHorizonCommandOptions & { _invalidExpectedSchedulerRevision?: string }
+					)._invalidExpectedSchedulerRevision = value;
+				} else {
+					options.expectedSchedulerRevision = parsed;
+				}
+			} else if (flagName === "expected-execution-revision") {
+				const parsed = parseStrictNonNegativeInteger(value);
+				if (parsed === undefined) {
+					(
+						options as LongHorizonCommandOptions & { _invalidExpectedExecutionRevision?: string }
+					)._invalidExpectedExecutionRevision = value;
+				} else {
+					options.expectedExecutionRevision = parsed;
+				}
 			}
+
+			i += 2;
+			continue;
+		}
+
+		// Flags that don't need a value (json is a boolean-style flag)
+		if (flagName === "json") {
+			options.format = "json";
 			i++;
 			continue;
 		}
 
-		if (arg === "--actor-type" && i + 1 < args.length) {
-			options.actorType = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--reason" && i + 1 < args.length) {
-			options.reason = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--evidence-ids" && i + 1 < args.length) {
-			options.evidenceIds = args[++i]
-				.split(",")
-				.map((s) => s.trim())
-				.filter((s) => s.length > 0);
-			i++;
-			continue;
-		}
-
-		if (arg === "--blocker-reference" && i + 1 < args.length) {
-			options.blockerReference = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--evidence-input" && i + 1 < args.length) {
-			options.evidenceInput = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--transition-id" && i + 1 < args.length) {
-			options.transitionId = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--execution" && i + 1 < args.length) {
-			options.execution = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--execution-id" && i + 1 < args.length) {
-			options.executionId = args[++i];
-			i++;
-			continue;
-		}
-
-		if (arg === "--kind" && i + 1 < args.length) {
-			options.kind = args[++i];
-			i++;
-			continue;
-		}
-
-		// Subcommand detection
-		if (arg === "mission") {
-			if (i + 1 < args.length && args[i + 1] === "validate") {
-				options.command = "mission-validate";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "digest") {
-				options.command = "mission-digest";
-				i += 2;
-				continue;
-			}
-		}
-
-		if (arg === "ledger") {
-			if (i + 1 < args.length && args[i + 1] === "init") {
-				options.command = "ledger-init";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "validate") {
-				options.command = "ledger-validate";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "add-evidence") {
-				options.command = "ledger-add-evidence";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "transition") {
-				options.command = "ledger-transition";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "inspect") {
-				options.command = "ledger-inspect";
-				i += 2;
-				continue;
-			}
-		}
-
-		if (arg === "execution") {
-			if (i + 1 < args.length && args[i + 1] === "init") {
-				options.command = "execution-init";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "inspect") {
-				options.command = "execution-inspect";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "validate") {
-				options.command = "execution-validate";
-				i += 2;
-				continue;
-			}
-			if (i + 1 < args.length && args[i + 1] === "transition") {
-				options.command = "execution-transition";
-				i += 2;
-				continue;
-			}
-		}
-
-		// "evaluate" subcommand — let existing handler take over
-		if (arg === "evaluate") {
-			return options; // No command set, fall through to existing handler
-		}
-
-		// Unknown
+		// Unknown unrecognized
 		i++;
 	}
 
@@ -620,6 +749,16 @@ ${chalk.bold("Execution State Machine Commands:")}
   execution inspect    Inspect an execution record structurally (untrusted)
   execution validate   Validate an execution record against its contract
   execution transition Apply a state transition to an execution record
+
+${chalk.bold("Continuation Scheduler Commands:")}
+  continuation init      Initialize a continuation scheduler record (IDLE@0)
+  continuation inspect   Inspect a scheduler record structurally (no contract/execution)
+  continuation validate  Validate scheduler against contract and execution record
+  continuation schedule  Schedule a continuation cycle (IDLE → SCHEDULED)
+  continuation dispatch  Dispatch a continuation (SCHEDULED → DISPATCHED)
+  continuation consume   Consume a dispatched continuation (DISPATCHED → IDLE)
+  continuation cancel    Cancel an active cycle (SCHEDULED/DISPATCHED → IDLE)
+  continuation abandon   Abandon a superseded cycle (SCHEDULED/DISPATCHED → IDLE)
 
 ${chalk.bold("Common Options:")}
   --contract <path>           Path to mission contract JSON file
@@ -1110,6 +1249,636 @@ function printTextStructuralInspection(summary: StructuralLedgerInspection): voi
 	if (summary.failedRequirements.length > 0) {
 		console.log(chalk.red(`Failed: ${summary.failedRequirements.join(", ")}`));
 	}
+}
+
+// =============================================================================
+// Continuation Scheduler Commands
+// =============================================================================
+
+function readSchedulerFile(path: string): ContinuationSchedulerRecord | null {
+	const raw = readFileContent(path);
+	if (!raw) return null;
+	try {
+		return JSON.parse(raw) as ContinuationSchedulerRecord;
+	} catch {
+		console.error(chalk.red("Error parsing scheduler record JSON"));
+		process.exitCode = 1;
+		return null;
+	}
+}
+
+function readExecutionForBinding(
+	execPath: string,
+	contractDigest: string,
+): { executionId: string; revision: number } | null {
+	const raw = readFileContent(execPath);
+	if (!raw) return null;
+	try {
+		const record = JSON.parse(raw);
+		if (typeof record.executionId !== "string" || record.executionId.trim().length === 0) {
+			console.error(chalk.red("Error: execution record missing executionId"));
+			process.exitCode = 1;
+			return null;
+		}
+		if (typeof record.contractDigest !== "string" || record.contractDigest !== contractDigest) {
+			console.error(chalk.red("Error: contract digest mismatch between contract and execution record"));
+			process.exitCode = 1;
+			return null;
+		}
+		if (!Number.isSafeInteger(record.revision) || record.revision < 0) {
+			console.error(chalk.red("Error: execution record has invalid revision"));
+			process.exitCode = 1;
+			return null;
+		}
+		return { executionId: record.executionId, revision: record.revision };
+	} catch {
+		console.error(chalk.red("Error parsing execution record JSON"));
+		process.exitCode = 1;
+		return null;
+	}
+}
+
+function writeSchedulerAtomic(path: string, data: string): boolean {
+	const outputPath = resolve(path);
+	if (outputPath.includes("..")) {
+		console.error(chalk.red("Error: --scheduler path must not contain '..'"));
+		process.exitCode = 1;
+		return false;
+	}
+
+	const dir = dirname(outputPath);
+	if (!existsSync(dir)) {
+		console.error(chalk.red(`Error: directory ${dir} does not exist`));
+		process.exitCode = 1;
+		return false;
+	}
+
+	const tmpPath = `${outputPath}.tmp.${randomBytes(4).toString("hex")}`;
+	try {
+		writeFileSync(tmpPath, data, "utf-8");
+		renameSync(tmpPath, outputPath);
+		return true;
+	} catch (err: unknown) {
+		try {
+			unlinkSync(tmpPath);
+		} catch {}
+		const message = err instanceof Error ? err.message : "Unknown error";
+		console.error(chalk.red(`Error writing scheduler: ${message}`));
+		process.exitCode = 1;
+		return false;
+	}
+}
+
+async function handleContinuationInit(options: LongHorizonCommandOptions): Promise<boolean> {
+	if (!options.scheduler || !options.contract || !options.executionId) {
+		console.error(chalk.red("Error: --scheduler, --contract, and --execution-id are required"));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const contract = readContractFileAndParse(options.contract);
+	if (!contract) return true;
+
+	const contractDigest = computeMissionContractDigest(contract);
+
+	const record = initializeContinuationScheduler(options.executionId, contractDigest);
+	const json = JSON.stringify(record, null, 2);
+	if (!writeSchedulerAtomic(options.scheduler, json)) return true;
+
+	const format = options.format ?? "text";
+	if (format === "json") {
+		console.log(json);
+	} else {
+		console.log(`Scheduler initialized: ${options.scheduler}`);
+		console.log(`  executionId: ${record.executionId}`);
+		console.log(`  contractDigest: ${record.contractDigest}`);
+		console.log(`  state: ${record.state}`);
+		console.log(`  revision: ${record.schedulerRevision}`);
+	}
+	return true;
+}
+
+async function handleContinuationInspect(options: LongHorizonCommandOptions): Promise<boolean> {
+	if (!options.scheduler) {
+		console.error(chalk.red("Error: --scheduler is required"));
+		process.exitCode = 1;
+		return true;
+	}
+
+	if (!existsSync(resolve(options.scheduler))) {
+		console.error(chalk.red("Error: ENOENT: scheduler file not found"));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const record = readSchedulerFile(options.scheduler);
+	if (!record) return true;
+
+	const inspection = inspectContinuationScheduler(record);
+	const format = options.format ?? "text";
+
+	if (format === "json") {
+		console.log(JSON.stringify(inspection, null, 2));
+	} else {
+		if (inspection.valid) {
+			console.log(chalk.bold("Continuation Scheduler Inspection (structural)"));
+			console.log(`${"Execution ID".padEnd(28)} ${inspection.executionId}`);
+			console.log(`${"Contract Digest".padEnd(28)} ${inspection.contractDigest}`);
+			console.log(`${"State".padEnd(28)} ${inspection.state}`);
+			console.log(`${"Revision".padEnd(28)} ${inspection.schedulerRevision}`);
+			console.log(`${"Event Count".padEnd(28)} ${inspection.eventCount}`);
+			console.log(`${"History Digest".padEnd(28)} ${inspection.historyDigest ?? "(none)"}`);
+		} else {
+			console.log(chalk.red(`Invalid: ${inspection.error}`));
+		}
+	}
+
+	if (!inspection.valid) process.exitCode = 1;
+	return true;
+}
+
+async function handleContinuationValidate(options: LongHorizonCommandOptions): Promise<boolean> {
+	if (!options.scheduler || !options.contract || !options.execution) {
+		console.error(chalk.red("Error: --scheduler, --contract, and --execution are required"));
+		process.exitCode = 1;
+		return true;
+	}
+
+	if (!existsSync(resolve(options.scheduler))) {
+		console.error(chalk.red("Error: ENOENT: scheduler file not found"));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const contract = readContractFileAndParse(options.contract);
+	if (!contract) return true;
+	const contractDigest = computeMissionContractDigest(contract);
+
+	const record = readSchedulerFile(options.scheduler);
+	if (!record) return true;
+
+	const execBinding = readExecutionForBinding(options.execution, contractDigest);
+	if (!execBinding) return true;
+
+	const result = validateContinuationScheduler(record, contractDigest, execBinding.executionId, execBinding.revision);
+	const format = options.format ?? "text";
+
+	if (format === "json") {
+		console.log(JSON.stringify(result, null, 2));
+	} else {
+		if (result.valid) {
+			console.log(chalk.green("Continuation scheduler is valid"));
+		} else {
+			console.log(chalk.red(`Invalid: ${result.error}`));
+		}
+		console.log(`${"Contract Bound".padEnd(28)} ${result.contractBound ? "Yes" : "No"}`);
+		console.log(`${"Execution Bound".padEnd(28)} ${result.executionBound ? "Yes" : "No"}`);
+		console.log(`${"Semantic Valid".padEnd(28)} ${result.semanticValid ? "Yes" : "No"}`);
+	}
+
+	if (!result.valid) process.exitCode = 1;
+	return true;
+}
+
+async function handleContinuationSchedule(options: LongHorizonCommandOptions): Promise<boolean> {
+	if (!options.scheduler || !options.contract || !options.execution || !options.eventId) {
+		console.error(chalk.red("Error: --scheduler, --contract, --execution, and --event-id are required"));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const invalidSchedulerRev = (options as LongHorizonCommandOptions & { _invalidExpectedSchedulerRevision?: string })
+		._invalidExpectedSchedulerRevision;
+	if (invalidSchedulerRev !== undefined) {
+		console.error(
+			chalk.red(
+				`Error: invalid-expected-scheduler-revision: "${invalidSchedulerRev}" is not a valid non-negative integer`,
+			),
+		);
+		process.exitCode = 1;
+		return true;
+	}
+	if (options.expectedSchedulerRevision === undefined) {
+		console.error(chalk.red("Error: --expected-scheduler-revision is required"));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const invalidExecRev = (options as LongHorizonCommandOptions & { _invalidExpectedExecutionRevision?: string })
+		._invalidExpectedExecutionRevision;
+	if (invalidExecRev !== undefined) {
+		console.error(
+			chalk.red(
+				`Error: invalid-expected-execution-revision: "${invalidExecRev}" is not a valid non-negative integer`,
+			),
+		);
+		process.exitCode = 1;
+		return true;
+	}
+	if (options.expectedExecutionRevision === undefined) {
+		console.error(chalk.red("Error: --expected-execution-revision is required"));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const contract = readContractFileAndParse(options.contract);
+	if (!contract) return true;
+	const contractDigest = computeMissionContractDigest(contract);
+
+	const execBinding = readExecutionForBinding(options.execution, contractDigest);
+	if (!execBinding) return true;
+
+	let record: ContinuationSchedulerRecord | null = null;
+	if (existsSync(resolve(options.scheduler))) {
+		record = readSchedulerFile(options.scheduler);
+		if (!record) return true;
+		// Contract binding
+		if (record.contractDigest !== contractDigest) {
+			console.error(chalk.red("Error: CONTRACT_DIGEST_MISMATCH"));
+			process.exitCode = 1;
+			return true;
+		}
+		// Execution binding
+		if (record.executionId !== execBinding.executionId) {
+			console.error(chalk.red("Error: execution ID mismatch"));
+			process.exitCode = 1;
+			return true;
+		}
+	} else {
+		// Missing scheduler — allowed only with expectedSchedulerRevision 0
+		if (options.expectedSchedulerRevision !== 0) {
+			console.error(
+				chalk.red("Error: ENOENT: scheduler file not found; expectedSchedulerRevision must be 0 for init"),
+			);
+			process.exitCode = 1;
+			return true;
+		}
+		// Construct in memory: IDLE with execution binding
+		record = initializeContinuationScheduler(execBinding.executionId, contractDigest);
+	}
+
+	const result = scheduleContinuation(record, {
+		eventId: options.eventId,
+		expectedSchedulerRevision: options.expectedSchedulerRevision,
+		expectedExecutionRevision: options.expectedExecutionRevision,
+	});
+
+	if (!result.ok) {
+		console.error(chalk.red(`Error: ${result.code ? `${result.code}: ` : ""}${result.error}`));
+		process.exitCode = 1;
+		return true;
+	}
+
+	// Atomic persistence
+	const json = JSON.stringify(result.record, null, 2);
+	if (!writeSchedulerAtomic(options.scheduler, json)) return true;
+
+	const format = options.format ?? "text";
+	if (format === "json") {
+		console.log(JSON.stringify(result.event, null, 2));
+	} else {
+		console.log(chalk.green(`Scheduled: ${result.event!.eventId}`));
+		console.log(`  state: ${result.record!.state}`);
+		console.log(`  revision: ${result.record!.schedulerRevision}`);
+	}
+	return true;
+}
+
+async function handleContinuationDispatch(options: LongHorizonCommandOptions): Promise<boolean> {
+	if (
+		!options.scheduler ||
+		!options.contract ||
+		!options.execution ||
+		!options.eventId ||
+		!options.cycleId ||
+		!options.dispatchedContinuationId
+	) {
+		console.error(
+			chalk.red(
+				"Error: --scheduler, --contract, --execution, --event-id, --cycle-id, and --dispatched-continuation-id are required",
+			),
+		);
+		process.exitCode = 1;
+		return true;
+	}
+
+	const invalidSchedulerRev = (options as LongHorizonCommandOptions & { _invalidExpectedSchedulerRevision?: string })
+		._invalidExpectedSchedulerRevision;
+	if (invalidSchedulerRev !== undefined) {
+		console.error(
+			chalk.red(
+				`Error: invalid-expected-scheduler-revision: "${invalidSchedulerRev}" is not a valid non-negative integer`,
+			),
+		);
+		process.exitCode = 1;
+		return true;
+	}
+	if (options.expectedSchedulerRevision === undefined) {
+		console.error(chalk.red("Error: --expected-scheduler-revision is required"));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const record = readSchedulerFileSafe(options.scheduler);
+	if (!record) return true;
+
+	const contract = readContractFileAndParse(options.contract);
+	if (!contract) return true;
+	const contractDigest = computeMissionContractDigest(contract);
+
+	const execBinding = readExecutionForBinding(options.execution, contractDigest);
+	if (!execBinding) return true;
+
+	// Contract and execution binding
+	if (record.contractDigest !== contractDigest) {
+		console.error(chalk.red("Error: CONTRACT_DIGEST_MISMATCH"));
+		process.exitCode = 1;
+		return true;
+	}
+	if (record.executionId !== execBinding.executionId) {
+		console.error(chalk.red("Error: execution ID mismatch"));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const result = dispatchContinuation(
+		record,
+		{
+			eventId: options.eventId,
+			cycleId: options.cycleId,
+			expectedSchedulerRevision: options.expectedSchedulerRevision,
+			dispatchedContinuationId: options.dispatchedContinuationId,
+		},
+		execBinding.revision,
+	);
+
+	if (!result.ok) {
+		console.error(chalk.red(`Error: ${result.code ? `${result.code}: ` : ""}${result.error}`));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const json = JSON.stringify(result.record, null, 2);
+	if (!writeSchedulerAtomic(options.scheduler, json)) return true;
+
+	const format = options.format ?? "text";
+	if (format === "json") {
+		console.log(JSON.stringify(result.event, null, 2));
+	} else {
+		console.log(chalk.green(`Dispatched: ${result.event!.eventId}`));
+		console.log(`  state: ${result.record!.state}`);
+		console.log(`  revision: ${result.record!.schedulerRevision}`);
+	}
+	return true;
+}
+
+async function handleContinuationConsume(options: LongHorizonCommandOptions): Promise<boolean> {
+	if (
+		!options.scheduler ||
+		!options.contract ||
+		!options.execution ||
+		!options.eventId ||
+		!options.cycleId ||
+		!options.dispatchedContinuationId ||
+		!options.resultDigest
+	) {
+		console.error(
+			chalk.red(
+				"Error: --scheduler, --contract, --execution, --event-id, --cycle-id, --dispatched-continuation-id, and --result-digest are required",
+			),
+		);
+		process.exitCode = 1;
+		return true;
+	}
+
+	const invalidSchedulerRev = (options as LongHorizonCommandOptions & { _invalidExpectedSchedulerRevision?: string })
+		._invalidExpectedSchedulerRevision;
+	if (invalidSchedulerRev !== undefined) {
+		console.error(
+			chalk.red(
+				`Error: invalid-expected-scheduler-revision: "${invalidSchedulerRev}" is not a valid non-negative integer`,
+			),
+		);
+		process.exitCode = 1;
+		return true;
+	}
+	if (options.expectedSchedulerRevision === undefined) {
+		console.error(chalk.red("Error: --expected-scheduler-revision is required"));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const record = readSchedulerFileSafe(options.scheduler);
+	if (!record) return true;
+
+	const contract = readContractFileAndParse(options.contract);
+	if (!contract) return true;
+	const contractDigest = computeMissionContractDigest(contract);
+
+	const execBinding = readExecutionForBinding(options.execution, contractDigest);
+	if (!execBinding) return true;
+
+	if (record.contractDigest !== contractDigest) {
+		console.error(chalk.red("Error: CONTRACT_DIGEST_MISMATCH"));
+		process.exitCode = 1;
+		return true;
+	}
+	if (record.executionId !== execBinding.executionId) {
+		console.error(chalk.red("Error: execution ID mismatch"));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const result = consumeContinuation(
+		record,
+		{
+			eventId: options.eventId,
+			cycleId: options.cycleId,
+			expectedSchedulerRevision: options.expectedSchedulerRevision,
+			dispatchedContinuationId: options.dispatchedContinuationId,
+			resultDigest: options.resultDigest,
+		},
+		execBinding.revision,
+	);
+
+	if (!result.ok) {
+		console.error(chalk.red(`Error: ${result.code ? `${result.code}: ` : ""}${result.error}`));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const json = JSON.stringify(result.record, null, 2);
+	if (!writeSchedulerAtomic(options.scheduler, json)) return true;
+
+	const format = options.format ?? "text";
+	if (format === "json") {
+		console.log(JSON.stringify(result.event, null, 2));
+	} else {
+		console.log(chalk.green(`Consumed: ${result.event!.eventId}`));
+		console.log(`  state: ${result.record!.state}`);
+		console.log(`  revision: ${result.record!.schedulerRevision}`);
+	}
+	return true;
+}
+
+async function handleContinuationCancel(options: LongHorizonCommandOptions): Promise<boolean> {
+	if (!options.scheduler || !options.contract || !options.execution || !options.eventId || !options.cycleId) {
+		console.error(chalk.red("Error: --scheduler, --contract, --execution, --event-id, and --cycle-id are required"));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const invalidSchedulerRev = (options as LongHorizonCommandOptions & { _invalidExpectedSchedulerRevision?: string })
+		._invalidExpectedSchedulerRevision;
+	if (invalidSchedulerRev !== undefined) {
+		console.error(
+			chalk.red(
+				`Error: invalid-expected-scheduler-revision: "${invalidSchedulerRev}" is not a valid non-negative integer`,
+			),
+		);
+		process.exitCode = 1;
+		return true;
+	}
+	if (options.expectedSchedulerRevision === undefined) {
+		console.error(chalk.red("Error: --expected-scheduler-revision is required"));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const record = readSchedulerFileSafe(options.scheduler);
+	if (!record) return true;
+
+	const contract = readContractFileAndParse(options.contract);
+	if (!contract) return true;
+	const contractDigest = computeMissionContractDigest(contract);
+
+	const execBinding = readExecutionForBinding(options.execution, contractDigest);
+	if (!execBinding) return true;
+
+	if (record.contractDigest !== contractDigest) {
+		console.error(chalk.red("Error: CONTRACT_DIGEST_MISMATCH"));
+		process.exitCode = 1;
+		return true;
+	}
+	if (record.executionId !== execBinding.executionId) {
+		console.error(chalk.red("Error: execution ID mismatch"));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const result = cancelContinuation(
+		record,
+		{
+			eventId: options.eventId,
+			cycleId: options.cycleId,
+			expectedSchedulerRevision: options.expectedSchedulerRevision,
+		},
+		execBinding.revision,
+	);
+
+	if (!result.ok) {
+		console.error(chalk.red(`Error: ${result.code ? `${result.code}: ` : ""}${result.error}`));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const json = JSON.stringify(result.record, null, 2);
+	if (!writeSchedulerAtomic(options.scheduler, json)) return true;
+
+	const format = options.format ?? "text";
+	if (format === "json") {
+		console.log(JSON.stringify(result.event, null, 2));
+	} else {
+		console.log(chalk.green(`Cancelled: ${result.event!.eventId}`));
+		console.log(`  state: ${result.record!.state}`);
+		console.log(`  revision: ${result.record!.schedulerRevision}`);
+	}
+	return true;
+}
+
+async function handleContinuationAbandon(options: LongHorizonCommandOptions): Promise<boolean> {
+	if (!options.scheduler || !options.contract || !options.execution || !options.eventId || !options.cycleId) {
+		console.error(chalk.red("Error: --scheduler, --contract, --execution, --event-id, and --cycle-id are required"));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const invalidSchedulerRev = (options as LongHorizonCommandOptions & { _invalidExpectedSchedulerRevision?: string })
+		._invalidExpectedSchedulerRevision;
+	if (invalidSchedulerRev !== undefined) {
+		console.error(
+			chalk.red(
+				`Error: invalid-expected-scheduler-revision: "${invalidSchedulerRev}" is not a valid non-negative integer`,
+			),
+		);
+		process.exitCode = 1;
+		return true;
+	}
+	if (options.expectedSchedulerRevision === undefined) {
+		console.error(chalk.red("Error: --expected-scheduler-revision is required"));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const record = readSchedulerFileSafe(options.scheduler);
+	if (!record) return true;
+
+	const contract = readContractFileAndParse(options.contract);
+	if (!contract) return true;
+	const contractDigest = computeMissionContractDigest(contract);
+
+	const execBinding = readExecutionForBinding(options.execution, contractDigest);
+	if (!execBinding) return true;
+
+	if (record.contractDigest !== contractDigest) {
+		console.error(chalk.red("Error: CONTRACT_DIGEST_MISMATCH"));
+		process.exitCode = 1;
+		return true;
+	}
+	if (record.executionId !== execBinding.executionId) {
+		console.error(chalk.red("Error: execution ID mismatch"));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const result = abandonContinuation(
+		record,
+		{
+			eventId: options.eventId,
+			cycleId: options.cycleId,
+			expectedSchedulerRevision: options.expectedSchedulerRevision,
+		},
+		execBinding.revision,
+	);
+
+	if (!result.ok) {
+		console.error(chalk.red(`Error: ${result.code ? `${result.code}: ` : ""}${result.error}`));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const json = JSON.stringify(result.record, null, 2);
+	if (!writeSchedulerAtomic(options.scheduler, json)) return true;
+
+	const format = options.format ?? "text";
+	if (format === "json") {
+		console.log(JSON.stringify(result.event, null, 2));
+	} else {
+		console.log(chalk.green(`Abandoned: ${result.event!.eventId}`));
+		console.log(`  state: ${result.record!.state}`);
+		console.log(`  revision: ${result.record!.schedulerRevision}`);
+	}
+	return true;
+}
+
+/** Read scheduler file, printing ENOENT on missing. */
+function readSchedulerFileSafe(path: string): ContinuationSchedulerRecord | null {
+	if (!existsSync(resolve(path))) {
+		console.error(chalk.red("Error: ENOENT: scheduler file not found"));
+		process.exitCode = 1;
+		return null;
+	}
+	return readSchedulerFile(path);
 }
 
 // =============================================================================

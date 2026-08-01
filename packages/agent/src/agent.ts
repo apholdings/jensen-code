@@ -523,13 +523,14 @@ export class Agent {
 		const context: AgentContext = {
 			systemPrompt: this._state.systemPrompt,
 			messages: this._state.messages.slice(),
-			tools: this._state.tools,
+			tools: this._state.tools.slice(),
 		};
 
 		let skipInitialSteeringPoll = options?.skipInitialSteeringPoll === true;
 
 		const config: AgentLoopConfig = {
 			model,
+			getTools: () => this._state.tools,
 			reasoning,
 			sessionId: this._sessionId,
 			onPayload: this._onPayload,
