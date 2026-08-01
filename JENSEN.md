@@ -190,7 +190,7 @@ The seven published packages use fixed lockstep versions. A successful release c
 
 ### Publishing
 
-Publishing happens exclusively through the CI workflow on the `main` branch (`release.yml`). The custom publisher verifies all seven packages against the npm registry and creates the lockstep tag only after confirming all seven.
+Publishing happens exclusively through the CI workflow on the `main` branch (`release.yml`). The custom publisher verifies all seven packages against the npm registry, promotes the complete verified fixed group to both the `fork` and `latest` npm dist-tags, verifies both tags for every package, and only then creates the lockstep Git tag.
 
 ### Prohibited
 

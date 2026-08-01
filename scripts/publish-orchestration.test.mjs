@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { orchestratePublish, TOPOLOGICAL_ORDER, EXPECTED_PACKAGE_COUNT } from "./publish-unpublished-packages.mjs";
+import {
+	orchestratePublish,
+	promoteStableDistTags,
+	STABLE_DIST_TAGS,
+	TOPOLOGICAL_ORDER,
+	EXPECTED_PACKAGE_COUNT,
+} from "./publish-unpublished-packages.mjs";
 
 // ============================================================================
 // Test helpers
@@ -531,4 +537,149 @@ it("publisher output: arrays are stable (publishedPackages does not contain dupl
 
 	const unique = new Set(result.publishedPackages);
 	assert.equal(unique.size, result.publishedPackages.length);
+});
+
+// ============================================================================
+// Stable npm dist-tag promotion
+// ============================================================================
+
+it("promotes fork and latest for the complete fixed group, then verifies every tag", () => {
+	const addCalls = [];
+	const verifyCalls = [];
+
+	promoteStableDistTags(ALL_SEVEN, "1.1.7", {
+		addTag: (name, version, tag) => addCalls.push({ name, version, tag }),
+		verifyTag: (name, version, tag) => {
+			verifyCalls.push({ name, version, tag });
+			return true;
+		},
+	});
+
+	const expected = STABLE_DIST_TAGS.flatMap((tag) =>
+		ALL_SEVEN.map(({ name }) => ({ name, version: "1.1.7", tag })),
+	);
+	assert.deepEqual(addCalls, expected);
+	assert.deepEqual(verifyCalls, expected);
+});
+
+it("refuses dist-tag promotion when a fixed-group package is missing", () => {
+	const addCalls = [];
+
+	assert.throws(
+		() =>
+			promoteStableDistTags(ALL_SEVEN.slice(0, -1), "1.1.7", {
+				addTag: (...args) => addCalls.push(args),
+				verifyTag: () => true,
+			}),
+		/Expected 7 packages before dist-tag promotion but found 6/,
+	);
+	assert.equal(addCalls.length, 0);
+});
+
+it("refuses dist-tag promotion when a missing package is replaced by a duplicate", () => {
+	const addCalls = [];
+	const duplicateGroup = [...ALL_SEVEN.slice(0, -1), ALL_SEVEN[0]];
+
+	assert.throws(
+		() =>
+			promoteStableDistTags(duplicateGroup, "1.1.7", {
+				addTag: (...args) => addCalls.push(args),
+				verifyTag: () => true,
+			}),
+		/fixed-group package @apholdings\/jensen-web-ui is missing/,
+	);
+	assert.equal(addCalls.length, 0);
+});
+
+it("refuses dist-tag promotion when fixed-group versions disagree", () => {
+	const addCalls = [];
+	const mixed = ALL_SEVEN.map((pkg, index) => (index === 3 ? { ...pkg, version: "1.1.8" } : pkg));
+
+	assert.throws(
+		() =>
+			promoteStableDistTags(mixed, "1.1.7", {
+				addTag: (...args) => addCalls.push(args),
+				verifyTag: () => true,
+			}),
+		/Refusing dist-tag promotion for mixed versions/,
+	);
+	assert.equal(addCalls.length, 0);
+});
+
+it("promotes dist-tags only after registry verification and before creating the Git tag", async () => {
+	const events = [];
+
+	await orchestratePublish({
+		packages: ALL_SEVEN,
+		publishTag: "fork",
+		checkVersion: (name) => {
+			events.push(`verify:${name}`);
+			return { published: true, summary: "confirmed" };
+		},
+		waitForVersion: waitImmediate(),
+		publishFn: () => events.push("publish"),
+		promoteTags: () => events.push("promote"),
+		createTag: () => {
+			events.push("git-tag");
+			return true;
+		},
+		writeOutput: () => {},
+	});
+
+	assert.equal(events.filter((event) => event.startsWith("verify:")).length, 14);
+	assert.equal(events.includes("publish"), false);
+	assert.ok(events.lastIndexOf("verify:@apholdings/jensen-web-ui") < events.indexOf("promote"));
+	assert.ok(events.indexOf("promote") < events.indexOf("git-tag"));
+});
+
+it("does not promote any dist-tag when final registry verification fails", async () => {
+	let checks = 0;
+	let promotions = 0;
+
+	await assert.rejects(
+		orchestratePublish({
+			packages: ALL_SEVEN,
+			publishTag: "fork",
+			checkVersion: (name) => {
+				checks += 1;
+				return {
+					published: checks <= 7 || name !== "@apholdings/jensen-web-ui",
+					summary: "registry response",
+				};
+			},
+			waitForVersion: waitImmediate(),
+			publishFn: () => {},
+			promoteTags: () => {
+				promotions += 1;
+			},
+			createTag: () => true,
+			writeOutput: () => {},
+		}),
+		/Not all seven packages are verified/,
+	);
+	assert.equal(promotions, 0);
+});
+
+it("fails release and skips Git tag when dist-tag verification fails", async () => {
+	let gitTags = 0;
+
+	await assert.rejects(
+		orchestratePublish({
+			packages: ALL_SEVEN,
+			publishTag: "fork",
+			checkVersion: checkAllPublished(),
+			waitForVersion: waitImmediate(),
+			publishFn: () => {},
+			promoteTags: () => {
+				throw new Error("Dist-tag verification failed");
+			},
+			createTag: () => {
+				gitTags += 1;
+				return true;
+			},
+			writeOutput: () => {},
+		}),
+		/Dist-tag verification failed/,
+	);
+	assert.equal(gitTags, 0);
 });

@@ -24,8 +24,18 @@ const packageDirs = [
 ];
 
 const EXPECTED_PACKAGE_COUNT = 7;
+const EXPECTED_PACKAGE_NAMES = [
+	"@apholdings/jensen-tui",
+	"@apholdings/jensen-ai",
+	"@apholdings/jensen-agent-core",
+	"@apholdings/jensen-code",
+	"@apholdings/jensen-mom",
+	"@apholdings/jensen-pods",
+	"@apholdings/jensen-web-ui",
+];
+const STABLE_DIST_TAGS = ["fork", "latest"];
 
-export { EXPECTED_PACKAGE_COUNT };
+export { EXPECTED_PACKAGE_COUNT, STABLE_DIST_TAGS };
 
 function readPackage(dir) {
 	const packageJsonPath = path.join(dir, "package.json");
@@ -104,6 +114,84 @@ function runWithOutput(command, args, options = {}) {
 		stdio: "pipe",
 		...options,
 	});
+}
+
+function addDistTag(name, version, tag) {
+	run("npm", ["dist-tag", "add", `${name}@${version}`, tag]);
+}
+
+function checkDistTag(name, version, tag) {
+	const result = runWithOutput("npm", ["view", `${name}@${tag}`, "version", "--json"]);
+	const stdout = (result.stdout ?? "").trim();
+	const stderr = (result.stderr ?? "").trim();
+	if (result.error) {
+		return { matches: false, summary: `spawn error: ${result.error.message}` };
+	}
+	if (result.status !== 0) {
+		return {
+			matches: false,
+			summary: `exit=${result.status ?? "unknown"} stdout=${summarizeRegistryResponse(stdout)} stderr=${summarizeRegistryResponse(stderr)}`,
+		};
+	}
+	if (!stdout) {
+		return { matches: false, summary: "npm view returned success with empty stdout" };
+	}
+
+	try {
+		const resolvedVersion = JSON.parse(stdout);
+		return {
+			matches: resolvedVersion === version,
+			summary: `resolved ${name}@${tag} to ${JSON.stringify(resolvedVersion)}`,
+		};
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return { matches: false, summary: `invalid JSON from npm view: ${message}` };
+	}
+}
+
+export function promoteStableDistTags(packages, releaseVersion, options = {}) {
+	const { addTag = addDistTag, verifyTag = checkDistTag } = options;
+
+	if (packages.length !== EXPECTED_PACKAGE_COUNT) {
+		throw new Error(
+			`Expected ${EXPECTED_PACKAGE_COUNT} packages before dist-tag promotion but found ${packages.length}.`,
+		);
+	}
+	const packageNames = new Set(packages.map((pkg) => pkg.name));
+	for (const expectedName of EXPECTED_PACKAGE_NAMES) {
+		if (!packageNames.has(expectedName)) {
+			throw new Error(`Refusing dist-tag promotion: fixed-group package ${expectedName} is missing.`);
+		}
+	}
+
+	for (const pkg of packages) {
+		if (pkg.version !== releaseVersion) {
+			throw new Error(
+				`Refusing dist-tag promotion for mixed versions: ${pkg.name} is ${pkg.version}, expected ${releaseVersion}.`,
+			);
+		}
+	}
+
+	for (const tag of STABLE_DIST_TAGS) {
+		for (const pkg of packages) {
+			addTag(pkg.name, releaseVersion, tag);
+		}
+	}
+
+	for (const tag of STABLE_DIST_TAGS) {
+		for (const pkg of packages) {
+			const verification = verifyTag(pkg.name, releaseVersion, tag);
+			const matches = typeof verification === "boolean" ? verification : verification.matches;
+			if (!matches) {
+				const details = typeof verification === "boolean" ? "verification returned false" : verification.summary;
+				throw new Error(
+					`Dist-tag verification failed: ${pkg.name}@${tag} does not resolve to ${releaseVersion}. ${details}`,
+				);
+			}
+		}
+	}
+
+	console.log(`[dist-tag] All seven packages verified at fork=${releaseVersion} and latest=${releaseVersion}`);
 }
 
 function hasLocalNpmAuth() {
@@ -405,6 +493,7 @@ function writeOutput(result) {
  * @param {(name: string, version: string) => {published: boolean, summary: string}} options.checkVersion
  * @param {(name: string, version: string, opts: object) => Promise<void>} options.waitForVersion
  * @param {(pkg: object, authMode: string, publishTag: string) => void} options.publishFn
+ * @param {(packages: Array<object>, releaseVersion: string) => void} [options.promoteTags]
  * @param {(version: string) => boolean} options.createTag
  * @param {(result: object) => void} options.writeOutput
  * @param {string} options.packageDirsModule — for topology assertion only
@@ -417,6 +506,7 @@ export async function orchestratePublish(options) {
 		checkVersion,
 		waitForVersion,
 		publishFn,
+		promoteTags = () => {},
 		createTag,
 		writeOutput: outputFn,
 	} = options;
@@ -426,6 +516,12 @@ export async function orchestratePublish(options) {
 			`Expected ${EXPECTED_PACKAGE_COUNT} publishable packages but found ${packages.length}. ` +
 			`Aborting: the lockstep invariant is violated.`,
 		);
+	}
+	const packageNames = new Set(packages.map((pkg) => pkg.name));
+	for (const expectedName of EXPECTED_PACKAGE_NAMES) {
+		if (!packageNames.has(expectedName)) {
+			throw new Error(`Expected fixed-group package ${expectedName} was not found. Aborting publication.`);
+		}
 	}
 
 	// Verify all versions are equal (lockstep invariant)
@@ -510,6 +606,9 @@ export async function orchestratePublish(options) {
 
 	console.log("[verify] All seven packages confirmed on npm registry");
 
+	// Promote only after the complete fixed group is available and verified.
+	promoteTags(packages, releaseVersion);
+
 	// Create the single lockstep tag
 	const tagCreated = createTag(releaseVersion);
 
@@ -591,6 +690,7 @@ export async function main(options = {}) {
 		checkVersion,
 		waitForVersion,
 		publishFn: (pkg, _authMode, tag) => publishFn(pkg, authMode, tag),
+		promoteTags: promoteStableDistTags,
 		createTag: createLockstepTag,
 		writeOutput,
 	});
