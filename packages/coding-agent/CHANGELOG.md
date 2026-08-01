@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.1.10
+
+### Patch Changes
+
+- 1dfcae4: Validate tool transcripts before provider calls, preserve tool spans through session restore and compaction, and enforce bounded revision-safe todo updates. Export transcript validation utilities and refresh provider model support.
+- 4caca50: Add deterministic long-horizon benchmark evaluation with fail-closed evidence authority (claims never authoritative), duplicate identity rejection, acyclic dependency graph validation (Kahn's algorithm), dependency-aware verified scoring, and stable CLI exit semantics distinguishing invalid evaluation input from valid benchmark-subject failure. Detect omissions, unsupported claims, forbidden actions, and premature completion.
+- 9b61ea2: Add the LH-3 Mission Continuation Scheduler.
+- c2bfd7f: Add Mission Execution State Machine v1 (LH-2)
+
+  - Deterministic, replayable state machine governing Mission Contract execution lifecycle
+  - States: PLANNING, EXECUTION, VERIFICATION, COMPLETION_REVIEW, BLOCKED, COMPLETED, FAILED, CANCELLED
+  - Completion path enforced: EXECUTION → VERIFICATION → COMPLETION_REVIEW → COMPLETED
+  - Direct EXECUTION → COMPLETED is structurally impossible
+  - BLOCK/RESUME preserves exact prior resumable state with snapshot/restore
+  - Append-only transition history with full replay validation and tamper detection
+  - Trusted completion: APPROVE_COMPLETION requires genuine contract-bound TrustedValidationContext with execution:complete capability
+  - Generic CLI rejects APPROVE_COMPLETION atomically without mutation
+  - Provider-isolated CLI routes: execution init/inspect/validate/transition
+  - Stale revision rejection, duplicate transition ID rejection, input immutability
+  - 30 ESM scenarios tracked and green across unit, replay, adversarial, and real child-process CLI tests
+  - No scheduler, watchdog, checkpointing, automatic continuation, or full completion gate (LH-3+)
+
+- f2bfa57: Add deterministic Mission Contract and Requirement Ledger foundation (LH-1)
+
+  - Mission Contract v1 schema with explicit/inferred requirement provenance, hierarchical workstreams, constraints, forbidden actions, and evidence policy
+  - Requirement Ledger v1 with append-only transitions and evidence records, cryptographically bound to contract via SHA-256 digest
+  - Optimistic concurrency with stale revision rejection and atomic output
+  - Authoritative evidence enforcement: agent claims are never authoritative; SATISFIED requires trusted evidence
+  - Dependency DAG validation (Kahn's algorithm) and cycle detection for both requirements and workstream hierarchies
+  - Provider-isolated CLI: mission validate/digest, ledger init/validate/add-evidence/transition/inspect
+  - Deterministic canonical JSON serialization for stable contract digests
+  - Golden fixtures (M01-M20) and comprehensive unit + CLI child-process tests
+  - No agent-loop integration, prompt-to-contract generation, or automatic continuation (LH-2+)
+
+- c9be929: Classify stale `todo_update` revision rejections as tool errors so the agent loop, model-facing result, and interactive tool display use the correct error state and styling.
+- Updated dependencies [1dfcae4]
+  - @apholdings/jensen-agent-core@1.1.10
+  - @apholdings/jensen-ai@1.1.10
+  - @apholdings/jensen-tui@1.1.10
+
 ## 1.1.9
 
 ### Patch Changes
