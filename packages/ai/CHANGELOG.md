@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.10
+
+### Patch Changes
+
+- 1dfcae4: Validate tool transcripts before provider calls, preserve tool spans through session restore and compaction, and enforce bounded revision-safe todo updates. Export transcript validation utilities and refresh provider model support.
+
 ## 1.1.9
 
 ## 1.1.8

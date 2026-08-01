@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.1.10
+
+### Patch Changes
+
+- Updated dependencies [1dfcae4]
+- Updated dependencies [4caca50]
+- Updated dependencies [9b61ea2]
+- Updated dependencies [c2bfd7f]
+- Updated dependencies [f2bfa57]
+- Updated dependencies [c9be929]
+  - @apholdings/jensen-agent-core@1.1.10
+  - @apholdings/jensen-ai@1.1.10
+  - @apholdings/jensen-code@1.1.10
+
 ## 1.1.9
 
 ### Patch Changes
