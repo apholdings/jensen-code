@@ -111,7 +111,7 @@ test("publisher promotes the verified fixed group to fork and latest before crea
 	ok(content.includes("promoteTags: promoteStableDistTags"), "main must wire stable dist-tag promotion");
 	const verifiedIndex = content.indexOf("[verify] All seven packages confirmed on npm registry");
 	const promoteIndex = content.indexOf("promoteTags(packages, releaseVersion)");
-	const gitTagIndex = content.indexOf("createTag(releaseVersion)");
+	const gitTagIndex = content.indexOf("createTag(releaseVersion, {");
 	ok(verifiedIndex >= 0, "publisher must verify complete fixed group");
 	ok(promoteIndex > verifiedIndex, "dist-tag promotion must follow registry verification");
 	ok(gitTagIndex > promoteIndex, "Git tag creation must follow dist-tag promotion");
