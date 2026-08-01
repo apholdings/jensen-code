@@ -1,44 +1,143 @@
 import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import { buildTestCommands, runTestCi, runVitestProcess } from "../scripts/run-test-ci.mjs";
+import {
+	buildTestCommands,
+	continuationShardFiles,
+	runTestCi,
+	runVitestProcess,
+} from "../scripts/run-test-ci.mjs";
 
-const longHorizonFile = "test/long-horizon/continuation-cli.test.ts";
+const testDir = dirname(fileURLToPath(import.meta.url));
 const productionHarnessFile = "src/core/production-todo-provider-harness.test.ts";
+const orchestrationTestFile = "test/run-test-ci.test.mjs";
+const exampleFile = "test/example.test.ts";
+const authoritativeFixture = [
+	...continuationShardFiles,
+	productionHarnessFile,
+	orchestrationTestFile,
+	exampleFile,
+];
+const expectedContinuationTestNames = [
+	"creates IDLE scheduler record at revision 0",
+	"rejects missing --scheduler",
+	"inspects a valid scheduler record",
+	"reports ENOENT for missing scheduler",
+	"completes schedule → dispatch → consume",
+	"cancels an active SCHEDULED cycle",
+	"abandons a superseded cycle",
+	"rejects abandon when execution revision equals expected (not superseded)",
+	"validates a scheduler record",
+	"rejects contract digest mismatch",
+	"rejects stale scheduler revision",
+	"rejects invalid state for operation",
+	"idempotent retry returns same event",
+	"rejects missing required arguments",
+	"missing scheduler fails for dispatch",
+];
+const expectedRegistrations = [
+	"registerInitTests",
+	"registerInspectTests",
+	"registerValidateTests",
+	"registerLifecycleTests",
+	"registerCancelTests",
+	"registerAbandonTests",
+	"registerErrorHandlingTests",
+];
+
+function commandFiles(command) {
+	return command.args.slice(2);
+}
 
 describe("coding-agent CI test orchestration", () => {
-	it("keeps the long-horizon and remaining inventories complete and disjoint", () => {
-		const files = [longHorizonFile, productionHarnessFile, "test/example.test.ts"];
-		const commands = buildTestCommands(files);
-		const firstFiles = commands[0].args.slice(2);
-		const secondFiles = commands[1].args.slice(2);
+	it("keeps all continuation shards and remaining inventory complete and disjoint", () => {
+		const commands = buildTestCommands(authoritativeFixture);
+		const partitions = commands.map(commandFiles);
+		const flattened = partitions.flat();
 
-		expect(firstFiles).toEqual([longHorizonFile]);
-		expect(secondFiles).toContain(productionHarnessFile);
-		expect(secondFiles).not.toContain(longHorizonFile);
-		expect(new Set([...firstFiles, ...secondFiles])).toEqual(new Set(files));
+		expect(partitions.slice(0, -1)).toEqual(continuationShardFiles.map((filePath) => [filePath]));
+		expect(partitions.at(-1)).toContain(productionHarnessFile);
+		expect(partitions.at(-1)).toContain(orchestrationTestFile);
+		expect(flattened).toHaveLength(authoritativeFixture.length);
+		expect(new Set(flattened)).toEqual(new Set(authoritativeFixture));
+		for (const shard of continuationShardFiles) {
+			expect(flattened.filter((filePath) => filePath === shard)).toHaveLength(1);
+			expect(partitions.at(-1)).not.toContain(shard);
+		}
 	});
 
-	it("does not start the remaining process after a first-process failure", async () => {
-		const runProcess = vi.fn().mockResolvedValueOnce(17);
-		const exitCode = await runTestCi({
-			getFiles: () => [longHorizonFile, productionHarnessFile],
-			runProcess,
+	it("represents every original continuation test exactly once", () => {
+		const supportSource = readFileSync(
+			resolve(testDir, "long-horizon", "continuation-cli.test-support.ts"),
+			"utf8",
+		);
+		const actualNames = [...supportSource.matchAll(/\bit\("([^"]+)"/g)].map((match) => match[1]);
+
+		expect(actualNames).toEqual(expectedContinuationTestNames);
+		expect(new Set(actualNames)).toHaveLength(15);
+	});
+
+	it("registers every semantic group exactly once in configured shard order", () => {
+		const registrations = continuationShardFiles.flatMap((filePath) => {
+			const source = readFileSync(resolve(testDir, filePath.replace(/^test\//, "")), "utf8");
+			return [...source.matchAll(/\b(register\w+Tests)\(\);/g)].map((match) => match[1]);
 		});
+
+		expect(registrations).toEqual(expectedRegistrations);
+		expect(new Set(registrations)).toHaveLength(expectedRegistrations.length);
+	});
+
+	it("rejects an inventory missing any configured continuation shard", () => {
+		expect(() => buildTestCommands(authoritativeFixture.slice(1))).toThrow(
+			`Vitest test inventory is missing continuation shards: ${continuationShardFiles[0]}`,
+		);
+	});
+
+	it("rejects duplicate authoritative inventory entries", () => {
+		expect(() => buildTestCommands([...authoritativeFixture, exampleFile])).toThrow(
+			"Vitest test inventory contains duplicate files",
+		);
+	});
+
+	it("runs shards in configured order before the remaining suite", async () => {
+		const runProcess = vi.fn().mockResolvedValue(0);
+		const exitCode = await runTestCi({ getFiles: () => authoritativeFixture, runProcess });
+
+		expect(exitCode).toBe(0);
+		expect(runProcess.mock.calls.map(([args]) => args)).toEqual(
+			buildTestCommands(authoritativeFixture).map((command) => command.args),
+		);
+	});
+
+	it("stops after a first-shard failure", async () => {
+		const runProcess = vi.fn().mockResolvedValueOnce(17);
+		const exitCode = await runTestCi({ getFiles: () => authoritativeFixture, runProcess });
 
 		expect(exitCode).toBe(17);
 		expect(runProcess).toHaveBeenCalledTimes(1);
-		expect(runProcess).toHaveBeenCalledWith(["run", "--passWithNoTests", longHorizonFile]);
 	});
 
-	it("returns the second process exit code", async () => {
-		const runProcess = vi.fn().mockResolvedValueOnce(0).mockResolvedValueOnce(23);
-		const exitCode = await runTestCi({
-			getFiles: () => [longHorizonFile, productionHarnessFile],
-			runProcess,
-		});
+	it("stops after a middle-shard failure", async () => {
+		const runProcess = vi.fn().mockResolvedValueOnce(0).mockResolvedValueOnce(19);
+		const exitCode = await runTestCi({ getFiles: () => authoritativeFixture, runProcess });
+
+		expect(exitCode).toBe(19);
+		expect(runProcess).toHaveBeenCalledTimes(2);
+	});
+
+	it("propagates the remaining-suite exit code", async () => {
+		const runProcess = vi
+			.fn()
+			.mockResolvedValueOnce(0)
+			.mockResolvedValueOnce(0)
+			.mockResolvedValueOnce(0)
+			.mockResolvedValueOnce(23);
+		const exitCode = await runTestCi({ getFiles: () => authoritativeFixture, runProcess });
 
 		expect(exitCode).toBe(23);
-		expect(runProcess).toHaveBeenCalledTimes(2);
+		expect(runProcess).toHaveBeenCalledTimes(4);
 	});
 
 	it("spawns Vitest directly with inherited environment and transparent output", async () => {
@@ -46,20 +145,15 @@ describe("coding-agent CI test orchestration", () => {
 		child.kill = vi.fn();
 		const spawnProcess = vi.fn(() => child);
 		const signalSource = new EventEmitter();
-		const result = runVitestProcess(["run", "test/example.test.ts"], spawnProcess, signalSource);
+		const result = runVitestProcess(["run", exampleFile], spawnProcess, signalSource);
 		child.emit("close", 0, null);
 
 		await expect(result).resolves.toBe(0);
-		expect(spawnProcess).toHaveBeenCalledTimes(1);
 		const [command, args, options] = spawnProcess.mock.calls[0];
 		expect(command).toBe(process.execPath);
-		expect(args.slice(1)).toEqual(["run", "test/example.test.ts"]);
+		expect(args.slice(1)).toEqual(["run", exampleFile]);
 		expect(args[0]).toMatch(/node_modules[/\\]vitest[/\\]dist[/\\]cli\.js$/);
-		expect(options).toMatchObject({
-			env: process.env,
-			shell: false,
-			stdio: "inherit",
-		});
+		expect(options).toMatchObject({ env: process.env, shell: false, stdio: "inherit" });
 		expect(options.cwd).toMatch(/packages[/\\]coding-agent$/);
 	});
 
@@ -79,15 +173,18 @@ describe("coding-agent CI test orchestration", () => {
 		consoleError.mockRestore();
 	});
 
-	it("forwards termination signals and returns the signal exit code", async () => {
+	it.each([
+		["SIGINT", 130],
+		["SIGTERM", 143],
+	])("forwards %s and returns its conventional exit code", async (signal, expectedExitCode) => {
 		const child = new EventEmitter();
 		const signalSource = new EventEmitter();
-		child.kill = vi.fn((signal) => child.emit("close", null, signal));
+		child.kill = vi.fn((forwardedSignal) => child.emit("close", null, forwardedSignal));
 		const result = runVitestProcess([], () => child, signalSource);
-		signalSource.emit("SIGTERM");
+		signalSource.emit(signal);
 
-		await expect(result).resolves.toBe(143);
-		expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+		await expect(result).resolves.toBe(expectedExitCode);
+		expect(child.kill).toHaveBeenCalledWith(signal);
 		expect(signalSource.listenerCount("SIGINT")).toBe(0);
 		expect(signalSource.listenerCount("SIGTERM")).toBe(0);
 	});

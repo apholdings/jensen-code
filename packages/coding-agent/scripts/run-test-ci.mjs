@@ -4,8 +4,13 @@ import { dirname, resolve } from "node:path";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const vitestCliPath = resolve(packageRoot, "../../node_modules/vitest/dist/cli.js");
-const longHorizonFile = "test/long-horizon/continuation-cli.test.ts";
+export const continuationShardFiles = [
+	"test/long-horizon/continuation-cli-basics.test.ts",
+	"test/long-horizon/continuation-cli-transitions.test.ts",
+	"test/long-horizon/continuation-cli-errors.test.ts",
+];
 const productionHarnessFile = "src/core/production-todo-provider-harness.test.ts";
+const orchestrationTestFile = "test/run-test-ci.test.mjs";
 
 function normalizeInventoryPath(filePath) {
 	return filePath.replaceAll("\\", "/");
@@ -41,27 +46,32 @@ export function buildTestCommands(files) {
 	if (uniqueFiles.size !== normalizedFiles.length) {
 		throw new Error("Vitest test inventory contains duplicate files");
 	}
-	if (!uniqueFiles.has(longHorizonFile)) {
-		throw new Error(`Vitest test inventory is missing ${longHorizonFile}`);
+	const missingShards = continuationShardFiles.filter((filePath) => !uniqueFiles.has(filePath));
+	if (missingShards.length > 0) {
+		throw new Error(`Vitest test inventory is missing continuation shards: ${missingShards.join(", ")}`);
 	}
 	if (!uniqueFiles.has(productionHarnessFile)) {
 		throw new Error(`Vitest test inventory is missing ${productionHarnessFile}`);
 	}
-
-	const remainingFiles = normalizedFiles.filter((filePath) => filePath !== longHorizonFile);
-	const remainingSet = new Set(remainingFiles);
-	if (remainingSet.has(longHorizonFile)) {
-		throw new Error(`${longHorizonFile} appears in both CI processes`);
+	if (!uniqueFiles.has(orchestrationTestFile)) {
+		throw new Error(`Vitest test inventory is missing ${orchestrationTestFile}`);
 	}
-	if (remainingSet.size + 1 !== uniqueFiles.size) {
+
+	const continuationSet = new Set(continuationShardFiles);
+	const remainingFiles = normalizedFiles.filter((filePath) => !continuationSet.has(filePath));
+	const remainingSet = new Set(remainingFiles);
+	if (continuationShardFiles.some((filePath) => remainingSet.has(filePath))) {
+		throw new Error("A continuation shard appears in both CI partitions");
+	}
+	if (remainingSet.size + continuationShardFiles.length !== uniqueFiles.size) {
 		throw new Error("Vitest CI process inventories are not disjoint and complete");
 	}
 
 	return [
-		{
-			name: "long-horizon continuation CLI",
-			args: ["run", "--passWithNoTests", longHorizonFile],
-		},
+		...continuationShardFiles.map((filePath) => ({
+			name: `long-horizon continuation CLI: ${filePath}`,
+			args: ["run", "--passWithNoTests", filePath],
+		})),
 		{
 			name: "remaining coding-agent tests",
 			args: ["run", "--passWithNoTests", ...remainingFiles],
