@@ -14,7 +14,21 @@ export const executionRevisionShardFiles = [
 	"test/long-horizon/execution-cli-revision-malformed-b.test.ts",
 	"test/long-horizon/execution-cli-revision-controls.test.ts",
 ];
-export const rpcIsolatedTestFiles = [...continuationShardFiles, ...executionRevisionShardFiles];
+export const executionCliShardFiles = [
+	"test/long-horizon/execution-cli-transitions.test.ts",
+	"test/long-horizon/execution-cli-determinism.test.ts",
+	"test/long-horizon/execution-cli-commands.test.ts",
+];
+export const continuationRevisionShardFiles = [
+	"test/long-horizon/continuation-cli-revision-scheduler.test.ts",
+	"test/long-horizon/continuation-cli-revision-controls.test.ts",
+];
+export const rpcIsolatedTestFiles = [
+	...continuationShardFiles,
+	...executionRevisionShardFiles,
+	...executionCliShardFiles,
+	...continuationRevisionShardFiles,
+];
 const productionHarnessFile = "src/core/production-todo-provider-harness.test.ts";
 const orchestrationTestFile = "test/run-test-ci.test.mjs";
 

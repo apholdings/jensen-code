@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import {
 	buildTestCommands,
+	continuationRevisionShardFiles,
 	continuationShardFiles,
+	executionCliShardFiles,
 	executionRevisionShardFiles,
 	rpcIsolatedTestFiles,
 	runTestCi,
@@ -104,6 +106,41 @@ describe("coding-agent CI test orchestration", () => {
 			"registerValidRevisionControlTests",
 		]);
 		expect(new Set(executionRevisionShardFiles)).toHaveLength(3);
+	});
+
+	it("partitions all 15 execution CLI tests exactly once", () => {
+		const supportSource = readFileSync(
+			resolve(testDir, "long-horizon", "execution-cli.test-support.ts"),
+			"utf8",
+		);
+		const registrationCalls = executionCliShardFiles.flatMap((filePath) => {
+			const source = readFileSync(resolve(testDir, filePath.replace(/^test\//, "")), "utf8");
+			return [...source.matchAll(/\b(register\w+Tests)\(\);/g)].map((match) => match[1]);
+		});
+
+		expect([...supportSource.matchAll(/\bit\("/g)]).toHaveLength(15);
+		expect(registrationCalls).toEqual([
+			"registerExecutionTransitionTests",
+			"registerExecutionDeterminismTests",
+			"registerExecutionCommandTests",
+		]);
+	});
+
+	it("partitions all 10 continuation revision tests exactly once", () => {
+		const supportSource = readFileSync(
+			resolve(testDir, "long-horizon", "continuation-cli-revision.test-support.ts"),
+			"utf8",
+		);
+		const registrationCalls = continuationRevisionShardFiles.flatMap((filePath) => {
+			const source = readFileSync(resolve(testDir, filePath.replace(/^test\//, "")), "utf8");
+			return [...source.matchAll(/\b(register\w+Tests)\(\);/g)].map((match) => match[1]);
+		});
+
+		expect([...supportSource.matchAll(/\bit\(/g)]).toHaveLength(10);
+		expect(registrationCalls).toEqual([
+			"registerMalformedSchedulerRevisionTests",
+			"registerContinuationRevisionControlTests",
+		]);
 	});
 
 	it("represents every original continuation test exactly once", () => {
