@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	buildTestCommands,
 	continuationShardFiles,
+	executionRevisionShardFiles,
+	rpcIsolatedTestFiles,
 	runTestCi,
 	runVitestProcess,
 } from "../scripts/run-test-ci.mjs";
@@ -15,7 +17,7 @@ const productionHarnessFile = "src/core/production-todo-provider-harness.test.ts
 const orchestrationTestFile = "test/run-test-ci.test.mjs";
 const exampleFile = "test/example.test.ts";
 const authoritativeFixture = [
-	...continuationShardFiles,
+	...rpcIsolatedTestFiles,
 	productionHarnessFile,
 	orchestrationTestFile,
 	exampleFile,
@@ -46,26 +48,62 @@ const expectedRegistrations = [
 	"registerAbandonTests",
 	"registerErrorHandlingTests",
 ];
+const expectedMalformedRevisionCases = [
+	"decimal 1.0",
+	"decimal 1.5",
+	"scientific 1e0",
+	"scientific 1E0",
+	"leading plus +1",
+	"leading zero 01",
+	"negative -1",
+	"above MAX_SAFE_INTEGER 9007199254740992",
+	"NaN",
+	"Infinity",
+];
 
 function commandFiles(command) {
 	return command.args.slice(2);
 }
 
 describe("coding-agent CI test orchestration", () => {
-	it("keeps all continuation shards and remaining inventory complete and disjoint", () => {
+	it("keeps all RPC-isolated shards and remaining inventory complete and disjoint", () => {
 		const commands = buildTestCommands(authoritativeFixture);
 		const partitions = commands.map(commandFiles);
 		const flattened = partitions.flat();
 
-		expect(partitions.slice(0, -1)).toEqual(continuationShardFiles.map((filePath) => [filePath]));
+		expect(partitions.slice(0, -1)).toEqual(rpcIsolatedTestFiles.map((filePath) => [filePath]));
 		expect(partitions.at(-1)).toContain(productionHarnessFile);
 		expect(partitions.at(-1)).toContain(orchestrationTestFile);
 		expect(flattened).toHaveLength(authoritativeFixture.length);
 		expect(new Set(flattened)).toEqual(new Set(authoritativeFixture));
-		for (const shard of continuationShardFiles) {
+		for (const shard of rpcIsolatedTestFiles) {
 			expect(flattened.filter((filePath) => filePath === shard)).toHaveLength(1);
 			expect(partitions.at(-1)).not.toContain(shard);
 		}
+	});
+
+	it("partitions all 14 execution revision tests exactly once", () => {
+		const supportSource = readFileSync(
+			resolve(testDir, "long-horizon", "execution-cli-revision.test-support.ts"),
+			"utf8",
+		);
+		const caseLabels = [...supportSource.matchAll(/\{ label: "([^"]+)", value:/g)].map(
+			(match) => match[1],
+		);
+		const registrationCalls = executionRevisionShardFiles.flatMap((filePath) => {
+			const source = readFileSync(resolve(testDir, filePath.replace(/^test\//, "")), "utf8");
+			return [...source.matchAll(/\b(register\w+Tests)\(/g)].map((match) => match[1]);
+		});
+
+		expect(caseLabels).toEqual(expectedMalformedRevisionCases);
+		expect(caseLabels.length + [...supportSource.matchAll(/\bit\("/g)].length).toBe(14);
+		expect(registrationCalls).toEqual([
+			"registerMalformedRevisionTests",
+			"registerMalformedRevisionTests",
+			"registerRevisionParserOrderingTests",
+			"registerValidRevisionControlTests",
+		]);
+		expect(new Set(executionRevisionShardFiles)).toHaveLength(3);
 	});
 
 	it("represents every original continuation test exactly once", () => {
@@ -89,9 +127,9 @@ describe("coding-agent CI test orchestration", () => {
 		expect(new Set(registrations)).toHaveLength(expectedRegistrations.length);
 	});
 
-	it("rejects an inventory missing any configured continuation shard", () => {
+	it("rejects an inventory missing any configured RPC-isolated shard", () => {
 		expect(() => buildTestCommands(authoritativeFixture.slice(1))).toThrow(
-			`Vitest test inventory is missing continuation shards: ${continuationShardFiles[0]}`,
+			`Vitest test inventory is missing RPC-isolated shards: ${rpcIsolatedTestFiles[0]}`,
 		);
 	});
 
@@ -128,16 +166,15 @@ describe("coding-agent CI test orchestration", () => {
 	});
 
 	it("propagates the remaining-suite exit code", async () => {
-		const runProcess = vi
-			.fn()
-			.mockResolvedValueOnce(0)
-			.mockResolvedValueOnce(0)
-			.mockResolvedValueOnce(0)
-			.mockResolvedValueOnce(23);
+		const runProcess = vi.fn();
+		for (const _filePath of rpcIsolatedTestFiles) {
+			runProcess.mockResolvedValueOnce(0);
+		}
+		runProcess.mockResolvedValueOnce(23);
 		const exitCode = await runTestCi({ getFiles: () => authoritativeFixture, runProcess });
 
 		expect(exitCode).toBe(23);
-		expect(runProcess).toHaveBeenCalledTimes(4);
+		expect(runProcess).toHaveBeenCalledTimes(rpcIsolatedTestFiles.length + 1);
 	});
 
 	it("spawns Vitest directly with inherited environment and transparent output", async () => {
