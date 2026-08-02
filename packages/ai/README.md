@@ -9,6 +9,7 @@ Unified LLM API with automatic model discovery, provider configuration, token an
 - [Supported Providers](#supported-providers)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Cache Usage Telemetry](#cache-usage-telemetry)
 - [Tools](#tools)
   - [Defining Tools](#defining-tools)
   - [Handling Tool Calls](#handling-tool-calls)
@@ -198,6 +199,22 @@ for (const block of response.content) {
   }
 }
 ```
+
+## Cache Usage Telemetry
+
+`AssistantMessage.usage.cache` contains optional normalized cache telemetry when the provider explicitly reports it:
+
+```typescript
+interface CacheUsage {
+  readTokens?: number;
+  writeTokens?: number;
+  uncachedInputTokens?: number;
+}
+```
+
+Anthropic, OpenAI-compatible APIs including DeepSeek, OpenAI Responses, Google/Gemini CLI/Vertex, and Amazon Bedrock expose their supported fields through this shape. Provider omission remains `undefined`; it is not converted to zero. The legacy numeric `cacheRead` and `cacheWrite` fields remain for cost accounting and backward compatibility.
+
+Cache telemetry reports provider behavior only. It does not guarantee a future cache hit, preserve conversation state, or authorize replay. Do not infer continuity across provider or model changes.
 
 ## Tools
 

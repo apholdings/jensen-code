@@ -5,7 +5,8 @@
  * and after compaction the session is reloaded.
  */
 
-import type { AgentMessage } from "@apholdings/jensen-agent-core";
+import { createHash } from "node:crypto";
+import { type AgentMessage, toCanonicalContextJson } from "@apholdings/jensen-agent-core";
 import type { AssistantMessage, Model, ToolResultMessage, Usage } from "@apholdings/jensen-ai";
 import { completeSimple } from "@apholdings/jensen-ai";
 import {
@@ -33,6 +34,91 @@ import {
 export interface CompactionDetails {
 	readFiles: string[];
 	modifiedFiles: string[];
+	checkpoint: CompactionCheckpoint;
+}
+
+export interface ToolEvidenceReference {
+	toolCallId: string;
+	toolName: string;
+	contentHash: string;
+	contentBytes: number;
+	contentTypes: string[];
+	isError: boolean;
+	excerpt?: string;
+}
+
+export interface CompactionCheckpoint {
+	version: 1;
+	firstKeptEntryId: string;
+	summarizedMessageCount: number;
+	turnPrefixMessageCount: number;
+	toolEvidence: ToolEvidenceReference[];
+}
+
+function createToolEvidenceReference(message: ToolResultMessage): ToolEvidenceReference {
+	const canonicalContent = toCanonicalContextJson(message.content, { normalizeText: true });
+	const excerpt = message.content
+		.filter((block): block is { type: "text"; text: string } => block.type === "text")
+		.map((block) => block.text.replace(/\s+/g, " ").trim())
+		.filter(Boolean)
+		.join(" ")
+		.slice(0, 240);
+	return {
+		toolCallId: message.toolCallId,
+		toolName: message.toolName,
+		contentHash: createHash("sha256").update(canonicalContent).digest("hex"),
+		contentBytes: Buffer.byteLength(canonicalContent, "utf8"),
+		contentTypes: [...new Set(message.content.map((block) => block.type))].sort(),
+		isError: message.isError,
+		excerpt: excerpt || undefined,
+	};
+}
+
+function collectToolEvidence(
+	messages: AgentMessage[],
+	entries: SessionEntry[],
+	prevCompactionIndex: number,
+): ToolEvidenceReference[] {
+	const evidenceByAddress = new Map<string, ToolEvidenceReference>();
+	if (prevCompactionIndex >= 0) {
+		const previous = entries[prevCompactionIndex] as CompactionEntry;
+		const previousDetails = previous.details as Partial<CompactionDetails> | undefined;
+		for (const evidence of previousDetails?.checkpoint?.toolEvidence ?? []) {
+			evidenceByAddress.set(`${evidence.toolCallId}:${evidence.contentHash}`, evidence);
+		}
+	}
+	for (const message of messages) {
+		if (message.role !== "toolResult") continue;
+		const evidence = createToolEvidenceReference(message as ToolResultMessage);
+		evidenceByAddress.set(`${evidence.toolCallId}:${evidence.contentHash}`, evidence);
+	}
+	return [...evidenceByAddress.values()].sort((left, right) => {
+		const byCall = left.toolCallId.localeCompare(right.toolCallId);
+		return byCall !== 0 ? byCall : left.contentHash.localeCompare(right.contentHash);
+	});
+}
+
+export function createDeterministicCompactionDetails(
+	preparation: CompactionPreparation,
+	details: unknown,
+): CompactionDetails & Record<string, unknown> {
+	const base = typeof details === "object" && details !== null ? (details as Record<string, unknown>) : {};
+	return {
+		...base,
+		readFiles: Array.isArray(base.readFiles)
+			? [...new Set(base.readFiles.filter((v): v is string => typeof v === "string"))].sort()
+			: [],
+		modifiedFiles: Array.isArray(base.modifiedFiles)
+			? [...new Set(base.modifiedFiles.filter((v): v is string => typeof v === "string"))].sort()
+			: [],
+		checkpoint: {
+			version: 1,
+			firstKeptEntryId: preparation.firstKeptEntryId,
+			summarizedMessageCount: preparation.messagesToSummarize.length,
+			turnPrefixMessageCount: preparation.turnPrefixMessages.length,
+			toolEvidence: preparation.toolEvidence,
+		},
+	};
 }
 
 /**
@@ -657,6 +743,8 @@ export interface CompactionPreparation {
 	previousSummary?: string;
 	/** File operations extracted from messagesToSummarize */
 	fileOps: FileOperations;
+	/** Deterministic references to complete tool evidence retained in the durable session log. */
+	toolEvidence: ToolEvidenceReference[];
 	/** Compaction settions from settings.jsonl	*/
 	settings: CompactionSettings;
 }
@@ -719,10 +807,6 @@ export function prepareCompaction(
 
 	// Messages to summarize (will be discarded after summary)
 	const messagesToSummarize: AgentMessage[] = summarizedMsgs;
-	for (let i = boundaryStart; i < historyEnd; i++) {
-		const msg = getMessageFromEntry(pathEntries[i]);
-		if (msg) messagesToSummarize.push(msg);
-	}
 
 	// Messages for turn prefix summary (if splitting a turn)
 	const turnPrefixMessages: AgentMessage[] = [];
@@ -742,6 +826,11 @@ export function prepareCompaction(
 
 	// Extract file operations from messages and previous compaction
 	const fileOps = extractFileOperations(messagesToSummarize, pathEntries, prevCompactionIndex);
+	const toolEvidence = collectToolEvidence(
+		[...messagesToSummarize, ...turnPrefixMessages],
+		pathEntries,
+		prevCompactionIndex,
+	);
 
 	// Also extract file ops from turn prefix if splitting
 	if (cutPoint.isSplitTurn) {
@@ -758,6 +847,7 @@ export function prepareCompaction(
 		tokensBefore,
 		previousSummary,
 		fileOps,
+		toolEvidence,
 		settings,
 	};
 }
@@ -852,7 +942,7 @@ export async function compact(
 		summary,
 		firstKeptEntryId,
 		tokensBefore,
-		details: { readFiles, modifiedFiles } as CompactionDetails,
+		details: createDeterministicCompactionDetails(preparation, { readFiles, modifiedFiles }),
 	};
 }
 

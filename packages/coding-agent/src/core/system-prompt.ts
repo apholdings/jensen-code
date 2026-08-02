@@ -26,8 +26,19 @@ export interface BuildSystemPromptOptions {
 	skills?: Skill[];
 }
 
-/** Build the system prompt with tools, guidelines, and context */
+export interface SystemPromptRegions {
+	stablePrefix: string;
+	dynamicSuffix: string;
+}
+
+/** Build the complete system prompt for compatibility with direct SDK consumers. */
 export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): string {
+	const regions = buildSystemPromptRegions(options);
+	return regions.dynamicSuffix ? `${regions.stablePrefix}\n\n${regions.dynamicSuffix}` : regions.stablePrefix;
+}
+
+/** Build cache-stable instructions separately from volatile host context. */
+export function buildSystemPromptRegions(options: BuildSystemPromptOptions = {}): SystemPromptRegions {
 	const {
 		customPrompt,
 		selectedTools,
@@ -41,12 +52,14 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 	const resolvedCwd = cwd ?? process.cwd();
 	const promptCwd = resolvedCwd.replace(/\\/g, "/");
 
-	const date = new Date().toISOString().slice(0, 10);
-
 	const appendSection = appendSystemPrompt ? `\n\n${appendSystemPrompt}` : "";
 
 	const contextFiles = providedContextFiles ?? [];
-	const skills = providedSkills ?? [];
+	const skills = [...(providedSkills ?? [])].sort((a, b) => a.name.localeCompare(b.name));
+	const date = new Date().toISOString().slice(0, 10);
+	const hostContextLines = customPrompt
+		? [`Current date: ${date}`, `Current working directory: ${promptCwd}`]
+		: [`Current date: ${date}`];
 
 	if (customPrompt) {
 		let prompt = customPrompt;
@@ -70,11 +83,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 			prompt += formatSkillsForPrompt(skills);
 		}
 
-		// Add date and working directory last
-		prompt += `\nCurrent date: ${date}`;
-		prompt += `\nCurrent working directory: ${promptCwd}`;
-
-		return prompt;
+		return { stablePrefix: prompt, dynamicSuffix: hostContextLines.join("\n") };
 	}
 
 	// Get absolute paths to documentation and examples
@@ -84,7 +93,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 
 	// Build tools list based on selected tools.
 	// Built-ins use getToolDescription. Custom tools can provide one-line snippets.
-	const tools = selectedTools || ["read", "bash", "edit", "write"];
+	const tools = [...(selectedTools || ["read", "bash", "edit", "write"])].sort((a, b) => a.localeCompare(b));
 	const visibleTools = tools.filter((name) => getToolDescription(name) || toolSnippets?.[name]);
 	const toolsList =
 		visibleTools.length > 0
@@ -199,28 +208,36 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 
 	// Build execution environment block
 	const env = buildExecutionEnvironment(resolvedCwd);
-	let envBlock = "";
-	envBlock += `\nExecution environment:\n`;
-	envBlock += `- host: ${env.host}\n`;
-	envBlock += `- operating system: ${env.os}\n`;
-	envBlock += `- login shell: ${env.loginShell}\n`;
+	hostContextLines.push("", "Execution environment:");
+	hostContextLines.push(`- host: ${env.host}`);
+	hostContextLines.push(`- operating system: ${env.os}`);
+	hostContextLines.push(`- login shell: ${env.loginShell}`);
 	// The bash tool uses its own shell (/bin/bash on Linux, Git Bash on Windows);
 	// the login shell may differ. The powershell tool uses pwsh or powershell.exe.
-	envBlock += `- working directory: ${env.initialCwd}\n`;
+	hostContextLines.push(`- working directory: ${env.initialCwd}`);
 	if (env.effectiveCwd !== env.initialCwd) {
-		envBlock += `- effective working directory: ${env.effectiveCwd}\n`;
+		hostContextLines.push(`- effective working directory: ${env.effectiveCwd}`);
 	}
-	envBlock += `- git repository: ${env.gitRoot || "none"}\n`;
+	hostContextLines.push(`- git repository: ${env.gitRoot || "none"}`);
 	if (env.controllerGitRoot) {
-		envBlock += `- controller repository: ${env.controllerGitRoot}\n`;
+		hostContextLines.push(`- controller repository: ${env.controllerGitRoot}`);
 	}
 	if (env.gitRoot) {
 		const branchLabel = env.isDetachedHead ? "detached HEAD" : env.gitBranch || "unknown";
-		envBlock += `- git branch: ${branchLabel}\n`;
+		hostContextLines.push(`- git branch: ${branchLabel}`);
 		if (env.worktreeCount > 1) {
-			envBlock += `- git worktrees: ${env.worktreeCount} total (this worktree: ${env.gitWorktree || "unknown"})\n`;
+			hostContextLines.push(
+				`- git worktrees: ${env.worktreeCount} total (this worktree: ${env.gitWorktree || "unknown"})`,
+			);
 		}
 	}
+	hostContextLines.push(
+		"",
+		"Local Jensen documentation paths:",
+		`- Main documentation: ${readmePath}`,
+		`- Additional docs: ${docsPath}`,
+		`- Examples: ${examplesPath}`,
+	);
 
 	let prompt = `You are Jensen, the orchestration intelligence operating inside ${APP_NAME}, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
 
@@ -241,17 +258,14 @@ Operator State Discipline:
 - If you have active delegated work, there should be corresponding task or todo entries visible to the operator.
 
 Available tools:
-${toolsList}${envBlock}
+${toolsList}
 
 In addition to the tools above, you may have access to other custom tools depending on the project.
 
 Guidelines:
 ${guidelines}
 
-Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
-- Main documentation: ${readmePath}
-- Additional docs: ${docsPath}
-- Examples: ${examplesPath} (extensions, custom tools, SDK)
+Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI; local paths are provided in host context):
 - When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md)
 - When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
 - Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`;
@@ -274,8 +288,5 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 		prompt += formatSkillsForPrompt(skills);
 	}
 
-	// Add date
-	prompt += `\nCurrent date: ${date}`;
-
-	return prompt;
+	return { stablePrefix: prompt, dynamicSuffix: hostContextLines.join("\n") };
 }

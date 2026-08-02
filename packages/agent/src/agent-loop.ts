@@ -5,7 +5,6 @@
 
 import {
 	type AssistantMessage,
-	type Context,
 	EventStream,
 	type Message,
 	streamSimple,
@@ -14,6 +13,7 @@ import {
 	validateResponsesTranscript,
 	validateToolArguments,
 } from "@apholdings/jensen-ai";
+import { buildCacheStableContext, createContextCacheDiagnostics } from "./context-engine.js";
 import type {
 	AgentContext,
 	AgentEvent,
@@ -313,12 +313,16 @@ async function streamAssistantResponse(
 		return errorMsg;
 	}
 
-	// Build LLM context
-	const llmContext: Context = {
+	const previousContextCache = context.contextCacheSnapshot;
+	const cacheStableContext = await buildCacheStableContext({
 		systemPrompt: context.systemPrompt,
+		dynamicPrompt: context.dynamicPrompt,
 		messages: llmMessages,
 		tools: config.getTools?.() ?? context.tools,
-	};
+		provider: config.model.provider,
+		model: config.model.id,
+	});
+	context.contextCacheSnapshot = cacheStableContext.snapshot;
 
 	const streamFunction = streamFn || streamSimple;
 
@@ -326,7 +330,7 @@ async function streamAssistantResponse(
 	const resolvedApiKey =
 		(config.getApiKey ? await config.getApiKey(config.model.provider) : undefined) || config.apiKey;
 
-	const response = await streamFunction(config.model, llmContext, {
+	const response = await streamFunction(config.model, cacheStableContext.providerContext, {
 		...config,
 		apiKey: resolvedApiKey,
 		signal,
@@ -367,6 +371,14 @@ async function streamAssistantResponse(
 			case "done":
 			case "error": {
 				const finalMessage = await response.result();
+				await emit({
+					type: "context_cache",
+					diagnostics: createContextCacheDiagnostics(
+						cacheStableContext.snapshot,
+						previousContextCache,
+						finalMessage.usage,
+					),
+				});
 				if (addedPartial) {
 					context.messages[context.messages.length - 1] = finalMessage;
 				} else {
@@ -382,6 +394,10 @@ async function streamAssistantResponse(
 	}
 
 	const finalMessage = await response.result();
+	await emit({
+		type: "context_cache",
+		diagnostics: createContextCacheDiagnostics(cacheStableContext.snapshot, previousContextCache, finalMessage.usage),
+	});
 	if (addedPartial) {
 		context.messages[context.messages.length - 1] = finalMessage;
 	} else {

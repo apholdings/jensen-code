@@ -748,19 +748,29 @@ function convertTools(
 	}));
 }
 
-function parseChunkUsage(
+export function parseChunkUsage(
 	rawUsage: {
 		prompt_tokens?: number;
 		completion_tokens?: number;
+		prompt_cache_hit_tokens?: number;
+		prompt_cache_miss_tokens?: number;
 		prompt_tokens_details?: { cached_tokens?: number };
 		completion_tokens_details?: { reasoning_tokens?: number };
 	},
 	model: Model<"openai-completions">,
 ): AssistantMessage["usage"] {
-	const cachedTokens = rawUsage.prompt_tokens_details?.cached_tokens || 0;
+	const hasTopLevelCacheHit = rawUsage.prompt_cache_hit_tokens !== undefined;
+	const hasNestedCacheHit = rawUsage.prompt_tokens_details?.cached_tokens !== undefined;
+	const hasCacheMiss = rawUsage.prompt_cache_miss_tokens !== undefined;
+	const cachedTokens = rawUsage.prompt_cache_hit_tokens ?? rawUsage.prompt_tokens_details?.cached_tokens ?? 0;
+	const uncachedTokens =
+		rawUsage.prompt_cache_miss_tokens ??
+		(hasTopLevelCacheHit || hasNestedCacheHit
+			? Math.max(0, (rawUsage.prompt_tokens ?? 0) - cachedTokens)
+			: undefined);
 	const reasoningTokens = rawUsage.completion_tokens_details?.reasoning_tokens || 0;
 	// OpenAI includes cached tokens in prompt_tokens, so subtract to get non-cached input
-	const input = (rawUsage.prompt_tokens || 0) - cachedTokens;
+	const input = uncachedTokens ?? Math.max(0, (rawUsage.prompt_tokens ?? 0) - cachedTokens);
 	// Compute totalTokens ourselves since we add reasoning_tokens to output
 	// and some providers (e.g., Groq) don't include them in total_tokens
 	const outputTokens = (rawUsage.completion_tokens || 0) + reasoningTokens;
@@ -769,6 +779,13 @@ function parseChunkUsage(
 		output: outputTokens,
 		cacheRead: cachedTokens,
 		cacheWrite: 0,
+		cache:
+			hasTopLevelCacheHit || hasNestedCacheHit || hasCacheMiss
+				? {
+						readTokens: hasTopLevelCacheHit || hasNestedCacheHit ? cachedTokens : undefined,
+						uncachedInputTokens: uncachedTokens,
+					}
+				: undefined,
 		totalTokens: input + outputTokens + cachedTokens,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};

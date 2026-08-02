@@ -11,6 +11,7 @@ import type {
 	ToolResultMessage,
 } from "@apholdings/jensen-ai";
 import type { Static, TSchema } from "@sinclair/typebox";
+import type { ContextCacheDiagnostics, ContextCacheSnapshot } from "./context-engine.js";
 
 /**
  * Stream function used by the agent loop.
@@ -252,6 +253,7 @@ export type AgentMessage = Message | CustomAgentMessages[keyof CustomAgentMessag
  */
 export interface AgentState {
 	systemPrompt: string;
+	dynamicPrompt?: string;
 	model: Model<any>;
 	thinkingLevel: ThinkingLevel;
 	tools: AgentTool<any>[];
@@ -260,6 +262,7 @@ export interface AgentState {
 	streamMessage: AgentMessage | null;
 	pendingToolCalls: Set<string>;
 	error?: string;
+	contextCache?: ContextCacheDiagnostics;
 }
 
 export interface AgentToolResult<T> {
@@ -296,8 +299,10 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 // AgentContext is like Context but uses AgentTool
 export interface AgentContext {
 	systemPrompt: string;
+	dynamicPrompt?: string;
 	messages: AgentMessage[];
 	tools?: AgentTool<any>[];
+	contextCacheSnapshot?: ContextCacheSnapshot;
 }
 
 /**
@@ -316,6 +321,7 @@ export type AgentEvent =
 	// Only emitted for assistant messages during streaming
 	| { type: "message_update"; message: AgentMessage; assistantMessageEvent: AssistantMessageEvent }
 	| { type: "message_end"; message: AgentMessage }
+	| { type: "context_cache"; diagnostics: ContextCacheDiagnostics }
 	// Tool execution lifecycle
 	| { type: "tool_execution_start"; toolCallId: string; toolName: string; args: any }
 	| { type: "tool_execution_update"; toolCallId: string; toolName: string; args: any; partialResult: any }

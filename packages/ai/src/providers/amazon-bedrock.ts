@@ -347,11 +347,20 @@ function handleMetadata(
 	output: AssistantMessage,
 ): void {
 	if (event.usage) {
-		output.usage.input = event.usage.inputTokens || 0;
-		output.usage.output = event.usage.outputTokens || 0;
-		output.usage.cacheRead = event.usage.cacheReadInputTokens || 0;
-		output.usage.cacheWrite = event.usage.cacheWriteInputTokens || 0;
-		output.usage.totalTokens = event.usage.totalTokens || output.usage.input + output.usage.output;
+		const hasCacheTelemetry =
+			event.usage.cacheReadInputTokens !== undefined || event.usage.cacheWriteInputTokens !== undefined;
+		output.usage.input = event.usage.inputTokens ?? 0;
+		output.usage.output = event.usage.outputTokens ?? 0;
+		output.usage.cacheRead = event.usage.cacheReadInputTokens ?? 0;
+		output.usage.cacheWrite = event.usage.cacheWriteInputTokens ?? 0;
+		output.usage.totalTokens = event.usage.totalTokens ?? output.usage.input + output.usage.output;
+		output.usage.cache = hasCacheTelemetry
+			? {
+					readTokens: output.usage.cacheRead,
+					writeTokens: output.usage.cacheWrite,
+					uncachedInputTokens: output.usage.input + output.usage.cacheWrite,
+				}
+			: undefined;
 		calculateCost(model, output.usage);
 	}
 }

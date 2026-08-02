@@ -688,10 +688,12 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli", GoogleGe
 
 							if (responseData.usageMetadata) {
 								// promptTokenCount includes cachedContentTokenCount, so subtract to get fresh input
-								const promptTokens = responseData.usageMetadata.promptTokenCount || 0;
-								const cacheReadTokens = responseData.usageMetadata.cachedContentTokenCount || 0;
+								const promptTokens = responseData.usageMetadata.promptTokenCount ?? 0;
+								const hasCacheTelemetry = responseData.usageMetadata.cachedContentTokenCount !== undefined;
+								const cacheReadTokens = responseData.usageMetadata.cachedContentTokenCount ?? 0;
+								const uncachedInputTokens = Math.max(0, promptTokens - cacheReadTokens);
 								output.usage = {
-									input: promptTokens - cacheReadTokens,
+									input: uncachedInputTokens,
 									output:
 										(responseData.usageMetadata.candidatesTokenCount || 0) +
 										(responseData.usageMetadata.thoughtsTokenCount || 0),
@@ -705,6 +707,7 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli", GoogleGe
 										cacheWrite: 0,
 										total: 0,
 									},
+									cache: hasCacheTelemetry ? { readTokens: cacheReadTokens, uncachedInputTokens } : undefined,
 								};
 								calculateCost(model, output.usage);
 							}

@@ -170,6 +170,12 @@ export interface Usage {
 	output: number;
 	cacheRead: number;
 	cacheWrite: number;
+	/** Provider-reported cache telemetry. Omitted when the provider reports no cache fields. */
+	cache?: {
+		readTokens?: number;
+		writeTokens?: number;
+		uncachedInputTokens?: number;
+	};
 	totalTokens: number;
 	cost: {
 		input: number;

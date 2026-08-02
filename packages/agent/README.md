@@ -33,6 +33,14 @@ await agent.prompt("Hello!");
 
 ## Core Concepts
 
+### Cache-Stable Context
+
+Before each provider request, the agent separates a typed stable prefix from the dynamic suffix. The stable prefix contains normalized system instructions and canonical provider-visible tools. The dynamic suffix contains host context and the ordered conversation. Tool definitions are sorted, JSON Schema keys are canonicalized, and semantically meaningful message order is preserved.
+
+Use `agent.setDynamicPrompt()` for volatile host state such as dates, working directories, branches, or temporary paths. This content is sent before the conversation but excluded from the SHA-256 prefix fingerprint. `context_cache` events and `agent.state.contextCache` expose only fingerprints, byte counts, provider/model identity, continuity reasons, and provider-reported cache tokens; prompt content, authorization values, and hidden reasoning are never included.
+
+Cache continuity is observational, not authoritative. Switching provider or model invalidates the continuity status. Message history and application persistence remain the source of truth.
+
 ### AgentMessage vs LLM Message
 
 The agent works with `AgentMessage`, a flexible type that can include:
@@ -121,6 +129,7 @@ The last message in context must be `user` or `toolResult` (not `assistant`).
 | `message_start` | Any message begins (user, assistant, toolResult) |
 | `message_update` | **Assistant only.** Includes `assistantMessageEvent` with delta |
 | `message_end` | Message completes |
+| `context_cache` | Metadata-only stable-prefix and provider cache diagnostics |
 | `tool_execution_start` | Tool begins |
 | `tool_execution_update` | Tool streams progress |
 | `tool_execution_end` | Tool completes |
@@ -174,6 +183,7 @@ const agent = new Agent({
 ```typescript
 interface AgentState {
   systemPrompt: string;
+  dynamicPrompt?: string;
   model: Model<any>;
   thinkingLevel: ThinkingLevel;
   tools: AgentTool<any>[];
@@ -182,6 +192,7 @@ interface AgentState {
   streamMessage: AgentMessage | null;  // Current partial during streaming
   pendingToolCalls: Set<string>;
   error?: string;
+  contextCache?: ContextCacheDiagnostics;
 }
 ```
 
@@ -211,6 +222,7 @@ await agent.continue();
 
 ```typescript
 agent.setSystemPrompt("New prompt");
+agent.setDynamicPrompt("Current date: 2026-08-02");
 agent.setModel(getModel("openai", "gpt-4o"));
 agent.setThinkingLevel("medium");
 agent.setTools([myTool]);

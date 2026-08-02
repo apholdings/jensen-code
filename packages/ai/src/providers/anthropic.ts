@@ -196,6 +196,18 @@ function mergeHeaders(...headerSources: (Record<string, string> | undefined)[]):
 	return merged;
 }
 
+export function updateAnthropicCacheTelemetry(
+	target: AssistantMessage["usage"],
+	usage: { cache_read_input_tokens: number | null; cache_creation_input_tokens: number | null },
+): void {
+	if (usage.cache_read_input_tokens === null && usage.cache_creation_input_tokens === null) return;
+	target.cache = {
+		readTokens: usage.cache_read_input_tokens ?? undefined,
+		writeTokens: usage.cache_creation_input_tokens ?? undefined,
+		uncachedInputTokens: target.input + (usage.cache_creation_input_tokens ?? target.cacheWrite),
+	};
+}
+
 export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 	model: Model<"anthropic-messages">,
 	context: Context,
@@ -271,6 +283,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 					output.usage.output = event.message.usage.output_tokens || 0;
 					output.usage.cacheRead = event.message.usage.cache_read_input_tokens || 0;
 					output.usage.cacheWrite = event.message.usage.cache_creation_input_tokens || 0;
+					updateAnthropicCacheTelemetry(output.usage, event.message.usage);
 					// Anthropic doesn't provide total_tokens, compute from components
 					output.usage.totalTokens =
 						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
@@ -411,6 +424,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 					if (event.usage.cache_creation_input_tokens != null) {
 						output.usage.cacheWrite = event.usage.cache_creation_input_tokens;
 					}
+					updateAnthropicCacheTelemetry(output.usage, event.usage);
 					// Anthropic doesn't provide total_tokens, compute from components
 					output.usage.totalTokens =
 						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;

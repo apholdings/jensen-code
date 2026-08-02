@@ -116,6 +116,7 @@ export interface AgentOptions {
 export class Agent {
 	private _state: AgentState = {
 		systemPrompt: "",
+		dynamicPrompt: undefined,
 		model: getModel("google", "gemini-2.5-flash-lite"),
 		thinkingLevel: "off",
 		tools: [],
@@ -124,6 +125,7 @@ export class Agent {
 		streamMessage: null,
 		pendingToolCalls: new Set<string>(),
 		error: undefined,
+		contextCache: undefined,
 	};
 
 	private listeners = new Set<(e: AgentEvent) => void>();
@@ -267,6 +269,10 @@ export class Agent {
 		this._state.systemPrompt = v;
 	}
 
+	setDynamicPrompt(v: string | undefined) {
+		this._state.dynamicPrompt = v;
+	}
+
 	setModel(m: Model<any>) {
 		this._state.model = m;
 	}
@@ -385,6 +391,7 @@ export class Agent {
 		this._state.streamMessage = null;
 		this._state.pendingToolCalls = new Set<string>();
 		this._state.error = undefined;
+		this._state.contextCache = undefined;
 		this.steeringQueue = [];
 		this.followUpQueue = [];
 	}
@@ -471,6 +478,10 @@ export class Agent {
 				this.appendMessage(event.message);
 				break;
 
+			case "context_cache":
+				this._state.contextCache = event.diagnostics;
+				break;
+
 			case "tool_execution_start": {
 				const pendingToolCalls = new Set(this._state.pendingToolCalls);
 				pendingToolCalls.add(event.toolCallId);
@@ -522,8 +533,10 @@ export class Agent {
 
 		const context: AgentContext = {
 			systemPrompt: this._state.systemPrompt,
+			dynamicPrompt: this._state.dynamicPrompt,
 			messages: this._state.messages.slice(),
 			tools: this._state.tools.slice(),
+			contextCacheSnapshot: this._state.contextCache,
 		};
 
 		let skipInitialSteeringPoll = options?.skipInitialSteeringPoll === true;

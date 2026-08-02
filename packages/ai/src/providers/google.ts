@@ -210,12 +210,17 @@ export const streamGoogle: StreamFunction<"google-generative-ai", GoogleOptions>
 				}
 
 				if (chunk.usageMetadata) {
+					const promptTokens = chunk.usageMetadata.promptTokenCount ?? 0;
+					const hasCacheTelemetry = chunk.usageMetadata.cachedContentTokenCount !== undefined;
+					const cachedTokens = chunk.usageMetadata.cachedContentTokenCount ?? 0;
+					const uncachedInputTokens = Math.max(0, promptTokens - cachedTokens);
 					output.usage = {
-						input: chunk.usageMetadata.promptTokenCount || 0,
+						input: uncachedInputTokens,
 						output:
 							(chunk.usageMetadata.candidatesTokenCount || 0) + (chunk.usageMetadata.thoughtsTokenCount || 0),
-						cacheRead: chunk.usageMetadata.cachedContentTokenCount || 0,
+						cacheRead: cachedTokens,
 						cacheWrite: 0,
+						cache: hasCacheTelemetry ? { readTokens: cachedTokens, uncachedInputTokens } : undefined,
 						totalTokens: chunk.usageMetadata.totalTokenCount || 0,
 						cost: {
 							input: 0,

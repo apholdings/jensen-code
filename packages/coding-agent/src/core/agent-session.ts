@@ -21,6 +21,7 @@ import type {
 	AgentMessage,
 	AgentState,
 	AgentTool,
+	ContextCacheDiagnostics,
 	ThinkingLevel,
 } from "@apholdings/jensen-agent-core";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@apholdings/jensen-ai";
@@ -44,6 +45,7 @@ import {
 	calculateContextTokens,
 	collectEntriesForBranchSummary,
 	compact,
+	createDeterministicCompactionDetails,
 	estimateContextTokens,
 	generateBranchSummary,
 	prepareCompaction,
@@ -114,7 +116,7 @@ import type {
 import { getLatestCompactionEntry } from "./session-manager.js";
 import type { SettingsManager } from "./settings-manager.js";
 import { BUILTIN_SLASH_COMMANDS, type SlashCommandInfo, type SlashCommandLocation } from "./slash-commands.js";
-import { buildSystemPrompt } from "./system-prompt.js";
+import { buildSystemPromptRegions } from "./system-prompt.js";
 import type { BashOperations } from "./tools/bash.js";
 import { createAllTools } from "./tools/index.js";
 import { createMemoryWriteTool } from "./tools/memory-write.js";
@@ -280,6 +282,8 @@ export interface SessionStats {
 		total: number;
 	};
 	cost: number;
+	/** Metadata-only diagnostics for the latest provider request. Prompt content is never included. */
+	contextCache?: ContextCacheDiagnostics;
 }
 
 // ============================================================================
@@ -411,6 +415,7 @@ export class AgentSession {
 
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
+	private _baseDynamicPrompt = "";
 	private _briefOnly = false;
 	private _cavemanLevel: CavemanLevel = "off";
 
@@ -975,7 +980,8 @@ export class AgentSession {
 
 	/** Current effective system prompt (includes any per-turn extension modifications) */
 	get systemPrompt(): string {
-		return this.agent.state.systemPrompt;
+		const { systemPrompt, dynamicPrompt } = this.agent.state;
+		return dynamicPrompt ? `${systemPrompt}\n\n${dynamicPrompt}` : systemPrompt;
 	}
 
 	/** Current retry attempt (0 if not retrying) */
@@ -1039,7 +1045,7 @@ export class AgentSession {
 
 		// Rebuild base system prompt with new tool set
 		this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
-		this.agent.setSystemPrompt(this._baseSystemPrompt);
+		this._applyBaseSystemPrompt();
 	}
 
 	/**
@@ -1529,7 +1535,7 @@ export class AgentSession {
 
 		this._briefOnly = enabled;
 		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
-		this.agent.setSystemPrompt(this._baseSystemPrompt);
+		this._applyBaseSystemPrompt();
 	}
 
 	/** Set the Caveman output compression level for this session runtime. */
@@ -1540,7 +1546,7 @@ export class AgentSession {
 
 		this._cavemanLevel = level;
 		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
-		this.agent.setSystemPrompt(this._baseSystemPrompt);
+		this._applyBaseSystemPrompt();
 	}
 
 	queueByTheWay(note: string): void {
@@ -1709,7 +1715,7 @@ export class AgentSession {
 		const loadedSkills = this._resourceLoader.getSkills().skills;
 		const loadedContextFiles = this._resourceLoader.getAgentsFiles().agentsFiles;
 
-		return buildSystemPrompt({
+		const regions = buildSystemPromptRegions({
 			cwd: this._cwd,
 			skills: loadedSkills,
 			contextFiles: loadedContextFiles,
@@ -1719,6 +1725,19 @@ export class AgentSession {
 			toolSnippets,
 			promptGuidelines,
 		});
+		this._baseDynamicPrompt = regions.dynamicSuffix;
+		return regions.stablePrefix;
+	}
+
+	private _applyBaseSystemPrompt(): void {
+		this.agent.setSystemPrompt(this._baseSystemPrompt);
+		this.agent.setDynamicPrompt(this._baseDynamicPrompt);
+	}
+
+	private _getCompleteBaseSystemPrompt(): string {
+		return this._baseDynamicPrompt
+			? `${this._baseSystemPrompt}\n\n${this._baseDynamicPrompt}`
+			: this._baseSystemPrompt;
 	}
 
 	// =========================================================================
@@ -1867,7 +1886,7 @@ export class AgentSession {
 			const result = await this._extensionRunner.emitBeforeAgentStart(
 				expandedText,
 				currentImages,
-				this._baseSystemPrompt,
+				this._getCompleteBaseSystemPrompt(),
 			);
 			// Add all custom messages from extensions
 			if (result?.messages) {
@@ -1883,11 +1902,12 @@ export class AgentSession {
 				}
 			}
 			// Apply extension-modified system prompt, or reset to base
-			if (result?.systemPrompt) {
+			if (result?.systemPrompt && result.systemPrompt !== this._getCompleteBaseSystemPrompt()) {
 				this.agent.setSystemPrompt(result.systemPrompt);
+				this.agent.setDynamicPrompt(undefined);
 			} else {
 				// Ensure we're using the base prompt (in case previous turn had modifications)
-				this.agent.setSystemPrompt(this._baseSystemPrompt);
+				this._applyBaseSystemPrompt();
 			}
 		}
 
@@ -2233,7 +2253,7 @@ export class AgentSession {
 		this._briefOnly = false;
 
 		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
-		this.agent.setSystemPrompt(this._baseSystemPrompt);
+		this._applyBaseSystemPrompt();
 
 		this.sessionManager.appendThinkingLevelChange(this.thinkingLevel);
 		this._emit({ type: "todo_update", todos: this._todos });
@@ -2601,6 +2621,7 @@ export class AgentSession {
 			if (this._compactionAbortController.signal.aborted) {
 				throw new Error("Compaction cancelled");
 			}
+			details = createDeterministicCompactionDetails(preparation, details);
 
 			const { result } = await this._finalizeCompaction({
 				summary,
@@ -2804,6 +2825,7 @@ export class AgentSession {
 				this._emit({ type: "auto_compaction_end", result: undefined, aborted: true, willRetry: false });
 				return;
 			}
+			details = createDeterministicCompactionDetails(preparation, details);
 
 			const { result } = await this._finalizeCompaction({
 				summary,
@@ -2903,7 +2925,7 @@ export class AgentSession {
 
 		this._resourceLoader.extendResources(extensionPaths);
 		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
-		this.agent.setSystemPrompt(this._baseSystemPrompt);
+		this._applyBaseSystemPrompt();
 	}
 
 	private buildExtensionResourcePaths(entries: Array<{ path: string; extensionPath: string }>): Array<{
@@ -3654,7 +3676,7 @@ export class AgentSession {
 		this.agent.replaceMessages(sessionContext.messages);
 
 		// Apply rebuilt system prompt after message restoration
-		this.agent.setSystemPrompt(this._baseSystemPrompt);
+		this._applyBaseSystemPrompt();
 
 		// Restore model if saved
 		if (sessionContext.model) {
@@ -3759,7 +3781,7 @@ export class AgentSession {
 
 		if (!skipConversationRestore) {
 			this.agent.replaceMessages(sessionContext.messages);
-			this.agent.setSystemPrompt(this._baseSystemPrompt);
+			this._applyBaseSystemPrompt();
 		}
 
 		return { selectedText, cancelled: false };
@@ -4037,6 +4059,7 @@ export class AgentSession {
 				total: totalInput + totalOutput + totalCacheRead + totalCacheWrite,
 			},
 			cost: totalCost,
+			contextCache: state.contextCache,
 		};
 	}
 

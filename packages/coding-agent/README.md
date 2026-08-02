@@ -227,7 +227,7 @@ Long sessions can exhaust context windows. Compaction summarizes older messages 
 
 **Automatic:** Enabled by default. Triggers on context overflow (recovers and retries) or when approaching the limit (proactive). Configure via `/settings` or `settings.json`.
 
-Compaction is lossy. The full history remains in the JSONL file; use `/tree` to revisit. Customize compaction behavior via [extensions](#extensions). See [docs/compaction.md](docs/compaction.md) for internals.
+Compaction is lossy for the active model context. The full history remains in the JSONL file; use `/tree` to revisit. Deterministic checkpoint metadata records the continuation boundary and addressable SHA-256 references for summarized tool evidence, while complete results remain in the durable session tree. Customize compaction behavior via [extensions](#extensions). See [docs/compaction.md](docs/compaction.md) for internals.
 
 ---
 
@@ -256,6 +256,14 @@ Use these files for project instructions, conventions, and common commands.
 ### System Prompt
 
 Replace the default system prompt with `.pi/SYSTEM.md` (project) or `~/.pi/agent/SYSTEM.md` (global). Append without replacing via `APPEND_SYSTEM.md`.
+
+### Cache-Stable Context
+
+Jensen automatically keeps system contracts, repository instructions, skill contracts, and canonical tool definitions in a deterministic stable prefix. Date, cwd, Git branch/worktrees, local documentation paths, user requests, execution state, and tool results are sent in the dynamic suffix. There is no configuration switch; custom system prompts remain compatible, and provider/model changes invalidate cache-continuity assumptions without changing session correctness.
+
+JSON mode emits a metadata-only `context_cache` event after each provider response. RPC `get_session_stats` returns the latest diagnostics in `contextCache`. These include SHA-256 fingerprints, stable/dynamic byte counts, provider, model, change reasons, continuity, and cache token telemetry when the provider reports it. They never include prompt text, API keys, authorization headers, or hidden reasoning.
+
+Telemetry capability varies. Anthropic, OpenAI-compatible APIs including DeepSeek, OpenAI Responses, Google/Gemini CLI/Vertex, and Bedrock are normalized when their response includes cache fields. Other providers and endpoints report cache values as unknown rather than fabricated zero. Cache state never replaces the JSONL session tree, compaction checkpoint, or long-horizon execution state.
 
 ---
 

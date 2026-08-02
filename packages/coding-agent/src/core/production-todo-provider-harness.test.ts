@@ -325,6 +325,7 @@ function assertCanonicalTranscript(payload: Record<string, unknown>): void {
 	expect(results).toEqual(calls.slice(0, results.length));
 	expect(messages.filter((message) => message.role !== "system").map((message) => message.role)).toEqual([
 		"user",
+		"user",
 		...Array.from({ length: results.length }, () => ["assistant", "tool"]).flat(),
 	]);
 }
@@ -380,14 +381,14 @@ describe("production todo/provider harness", () => {
 			const firstTools = wireTools(mockState.payloads[0]);
 			const firstToolNames = firstTools.map((tool) => tool.function.name);
 			expect(firstToolNames).toEqual([
-				"read",
 				"bash",
 				"edit",
-				"write",
-				"todo_write",
+				"memory_write",
+				"read",
 				"todo_read",
 				"todo_update",
-				"memory_write",
+				"todo_write",
+				"write",
 			]);
 			expect(firstTools.filter((tool) => tool.type !== "function")).toEqual([]);
 			const toolsAfterWrite = firstTools.filter((tool) => tool.function.name !== "todo_write");
@@ -410,6 +411,7 @@ describe("production todo/provider harness", () => {
 			expect(
 				finalWireMessages.filter((message) => message.role !== "system").map((message) => message.role),
 			).toEqual([
+				"user",
 				"user",
 				"assistant",
 				"tool",
