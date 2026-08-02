@@ -10,6 +10,12 @@ export {
 	createLocalBashOperations,
 } from "./bash.js";
 export {
+	createDeepResearchTool,
+	type DeepResearchToolDetails,
+	type DeepResearchToolInput,
+	deepResearchTool,
+} from "./deep-research.js";
+export {
 	createEditTool,
 	type EditOperations,
 	type EditToolDetails,
@@ -85,6 +91,13 @@ export {
 	truncateTail,
 } from "./truncate.js";
 export {
+	createWebFetchTool,
+	type WebFetchToolDetails,
+	type WebFetchToolInput,
+	webFetchTool,
+} from "./web-fetch.js";
+export { createWebResearchStatusTool, webResearchStatusTool } from "./web-research-status.js";
+export {
 	createWebSearchTool,
 	type WebSearchResult,
 	type WebSearchToolDetails,
@@ -102,6 +115,7 @@ export {
 
 import type { AgentTool } from "@apholdings/jensen-agent-core";
 import { type BashToolOptions, bashTool, createBashTool } from "./bash.js";
+import { createDeepResearchTool, deepResearchTool } from "./deep-research.js";
 import { createEditTool, editTool } from "./edit.js";
 import { createFindTool, findTool } from "./find.js";
 import { createGrepTool, grepTool } from "./grep.js";
@@ -113,6 +127,8 @@ import { createReadTool, type ReadToolOptions, readTool } from "./read.js";
 import { todoReadTool } from "./todo-read.js";
 import { todoUpdateTool } from "./todo-update.js";
 import { todoWriteTool } from "./todo-write.js";
+import { createWebFetchTool, webFetchTool } from "./web-fetch.js";
+import { createWebResearchStatusTool, webResearchStatusTool } from "./web-research-status.js";
 import { createWebSearchTool, webSearchTool } from "./web-search.js";
 import { createWriteTool, writeTool } from "./write.js";
 
@@ -151,6 +167,9 @@ export const allTools = {
 	find: findTool,
 	ls: lsTool,
 	web_search: webSearchTool,
+	web_fetch: webFetchTool,
+	deep_research: deepResearchTool,
+	web_research_status: webResearchStatusTool,
 	process_manager: processManagerTool,
 };
 
@@ -216,6 +235,9 @@ export function createAllTools(cwd: string, options?: ToolsOptions): Record<Tool
 		find: createFindTool(cwd),
 		ls: createLsTool(cwd),
 		web_search: createWebSearchTool(),
+		web_fetch: createWebFetchTool(),
+		deep_research: createDeepResearchTool(),
+		web_research_status: createWebResearchStatusTool(),
 		process_manager: createProcessManagerTool(cwd, options?.process_manager),
 	};
 }

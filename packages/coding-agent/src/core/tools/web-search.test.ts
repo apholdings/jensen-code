@@ -56,7 +56,7 @@ describe("web_search tool", () => {
 		const result = await tool.execute("call-1", { query: "jensen code", limit: 2 });
 		const details = result.details as WebSearchToolDetails;
 
-		expect(details).toEqual({
+		expect(details).toMatchObject({
 			provider: "duckduckgo-lite",
 			query: "jensen code",
 			resultCount: 2,
@@ -66,19 +66,24 @@ describe("web_search tool", () => {
 					url: "https://github.com/apholdings/jensen-code",
 					snippet: "Official Jensen Code repository with releases & docs.",
 					source: "github.com",
+					provider: "duckduckgo-lite",
+					rank: 1,
 				},
 				{
 					title: "Jensen Docs",
 					url: "https://jensen.dev/docs",
 					snippet: "Browse the latest Jensen documentation.",
 					source: "jensen.dev",
+					provider: "duckduckgo-lite",
+					rank: 2,
 				},
 			],
 		});
+		expect(details).toMatchObject({ rawResultCount: 2, deduplicatedCount: 0, untrusted: true });
 		expect(result.content).toEqual([
 			{
 				type: "text",
-				text: expect.stringContaining('Web search results for "jensen code" via DuckDuckGo Lite:'),
+				text: expect.stringContaining('<external-web-search provider="duckduckgo-lite" trust="untrusted">'),
 			},
 		]);
 	});

@@ -207,7 +207,7 @@ ${chalk.bold("Options:")}
                                  Supports globs (anthropic/*, *sonnet*) and fuzzy matching
   --no-tools                     Disable all built-in tools
   --tools <tools>                Comma-separated list of tools to enable (default: read,bash,edit,write)
-                                 Available: read, bash, powershell, edit, write, grep, find, ls, web_search
+                                 Available: read, bash, powershell, edit, write, grep, find, ls, web_search, web_fetch, deep_research, web_research_status
   --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh
   --extension, -e <path>         Load an extension file (can be used multiple times)
   --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)
@@ -314,5 +314,8 @@ ${chalk.bold("Available Tools (default: read, bash, edit, write):")}
   find   - Find files by glob pattern (read-only, off by default)
   ls     - List directory contents (read-only, off by default)
   web_search - Search the public web with bounded read-only results (off by default)
+  web_fetch  - Securely fetch public web evidence with SSRF protection (off by default)
+  deep_research - Run bounded free search, fetch, evidence, and citation workflow (off by default)
+  web_research_status - Show privacy-safe web research health and counters (off by default)
 `);
 }
