@@ -95,6 +95,10 @@ export class WebResearchEngine {
 		fallbackProvider: "duckduckgo-lite";
 		browserRenderingAvailable: boolean;
 		pdfExtractionAvailable: true;
+		citationRendererAvailable: true;
+		numericVerifierAvailable: true;
+		temporalResolverAvailable: true;
+		secureFetchUsedByResearch: true;
 		budgets: WebResearchConfig["research"];
 		telemetry: WebResearchTelemetry;
 	}> {
@@ -106,6 +110,10 @@ export class WebResearchEngine {
 			fallbackProvider: "duckduckgo-lite",
 			browserRenderingAvailable: this.fetcher.browserAvailable,
 			pdfExtractionAvailable: true,
+			citationRendererAvailable: true,
+			numericVerifierAvailable: true,
+			temporalResolverAvailable: true,
+			secureFetchUsedByResearch: true,
 			budgets: { ...this.config.research },
 			telemetry: { ...this.telemetry },
 		};

@@ -25,7 +25,7 @@ The deployment binds to loopback, uses no host network or privileged capabilitie
 
 ## Tools
 
-Enable the tools explicitly:
+The web research tools are enabled by default in a fresh session. To restrict them explicitly:
 
 ```bash
 jensen --tools web_search,web_fetch,deep_research,web_research_status
@@ -92,6 +92,20 @@ The exact cache path is Playwright-version/platform dependent. Rendering starts 
 Every accepted page has an evidence ID, canonical source metadata, content hash, complete content, durable location, relevant passages, and coordinates. Full content is stored in the tool-result `details` already persisted by Jensen's authoritative JSONL session tree. Model-visible content is bounded. Compaction retains deterministic hashes/excerpts and the session pointer; it does not delete the original result. Replay, recovery, goal revisions, transitions, and completion authority remain independent of caches.
 
 Search snippets and pages are delimited as external untrusted data. Tool descriptions and typed records enforce that web content is never a system message, cannot authorize a command, change scope, request secrets, disable SSRF, or override user/system policy. Research tools are read-only. No hidden reasoning or raw private page content is emitted by status diagnostics.
+
+## Addressable evidence and deterministic synthesis gates
+
+Every claim produced by `deep_research` is addressable: each claim carries per-claim `supports` with the source evidence ID, URL, support type (`direct`, `contradicting`, `snippet_only`, `inference`, `refutation`), the source confidence tier, the support text excerpt, and the evidence content SHA-256. A location-less or content-hash-less support is rejected rather than emitted unanchored. Claims are never authoritative on their own; source confidence is derived from authority signals, not just load success.
+
+Before composing the synthesis the engine applies deterministic gates:
+
+- **Temporal resolution** classifies each value as `historical`, `current`, `superseded`, `contradiction`, or `uncertain_current` using explicit change declarations, effective dates, authority strata, and maintained flags — not blind recency. Unresolved temporal conflicts are surfaced as unresolved, never silently collapsed.
+- **Numerical verification** applies flat bonuses additively and percentage bonuses multiplicatively, only computes when units and order of operations are fully determined, and refuses to label an average as "DPS" unless an attacks-per-second cadence is sourced. Wrong candidate outcomes are reported with assumed/violation diagnostics instead of guessed numbers.
+- **Conclusion consistency** gates ranked recommendations against computed metrics and unresolved temporal or stale historical guidance.
+
+Deep research now routes evidence collection only through the secure `web_fetch` path; shell/curl output is never imported as evidence. A failed fetch cannot become a directly supported claim.
+
+The deep research tool returns a self-contained, terminal `<research-synthesis>` block and is `isConcurrencySafe`. It performs no internal tool bookkeeping, so internal todo/revision artifacts never leak into the final research answer.
 
 ## Telemetry and privacy
 

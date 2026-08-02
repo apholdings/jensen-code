@@ -3266,7 +3266,20 @@ export class AgentSession {
 
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
-			: ["read", "bash", "edit", "write", "todo_write", "todo_read", "todo_update", "memory_write"];
+			: [
+					"read",
+					"bash",
+					"edit",
+					"write",
+					"todo_write",
+					"todo_read",
+					"todo_update",
+					"memory_write",
+					"web_search",
+					"web_fetch",
+					"deep_research",
+					"web_research_status",
+				];
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		this._refreshToolRegistry({
 			activeToolNames: baseActiveToolNames,
