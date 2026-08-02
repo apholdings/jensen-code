@@ -1116,4 +1116,7 @@ const allToolNames: Record<string, true> = {
 	find: true,
 	ls: true,
 	web_search: true,
+	web_fetch: true,
+	deep_research: true,
+	web_research_status: true,
 };

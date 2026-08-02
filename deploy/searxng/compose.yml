@@ -1,0 +1,30 @@
+services:
+  searxng:
+    image: searxng/searxng@sha256:ec536bcd1e83577aad4cc07f7ecb9a30858a9a905d2d57c8796abc83f872a036
+    container_name: jensen-searxng
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      SEARXNG_BASE_URL: http://127.0.0.1:18888/
+    ports:
+      - "127.0.0.1:18888:8080"
+    volumes:
+      - ./settings.yml:/etc/searxng/settings.yml:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /var/cache/searxng:size=64m,mode=0755
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 2.0
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s

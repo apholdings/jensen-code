@@ -34,6 +34,7 @@ Pi runs in four modes: interactive, print or JSON, RPC for process integration, 
   - [Compaction](#compaction)
 - [Settings](#settings)
 - [Context Files](#context-files)
+- [Web Research](#web-research)
 - [Customization](#customization)
   - [Prompt Templates](#prompt-templates)
   - [Skills](#skills)
@@ -267,6 +268,16 @@ Telemetry capability varies. Anthropic, OpenAI-compatible APIs including DeepSee
 
 ---
 
+## Web Research
+
+Jensen provides separate read-only `web_search`, `web_fetch`, and `deep_research` tools. `web_search` targets a private local SearXNG instance and falls back to DuckDuckGo Lite on operational failure. Neither path requires a paid search API or external account. `web_fetch` securely retrieves one public URL with DNS-pinned SSRF protection, redirect revalidation, bounded decompression, deterministic HTML-to-Markdown extraction, JSON/XML/text support, page-addressable PDF extraction, and optional isolated Playwright rendering. `deep_research` runs a bounded multi-query workflow and returns durable evidence IDs, passage coordinates, hashes, contradiction notices, and machine-readable citations.
+
+These tools are off by default. Enable them with `--tools web_search,web_fetch,deep_research,web_research_status` or add those names to `tools.defaultActiveToolNames`. Full pages remain in durable session tool-result details; normal model context receives bounded excerpts and evidence references. All page text and search metadata are structurally marked as untrusted data and cannot relax network policy or authorize tool use.
+
+The default SearXNG endpoint is `http://127.0.0.1:18888`. See [docs/web-research.md](docs/web-research.md) for deployment, configuration, security boundaries, diagnostics, citations, browser installation, privacy, and troubleshooting.
+
+---
+
 ## Customization
 
 ### Prompt Templates
@@ -485,7 +496,7 @@ pi config                   # Enable/disable package resources
 | `--tools <list>` | Enable specific built-in tools (default: `read,bash,edit,write`) |
 | `--no-tools` | Disable all built-in tools (extension tools still work) |
 
-Available built-in tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`
+Available built-in tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`, `web_search`, `web_fetch`, `deep_research`, `web_research_status`
 
 ### Resource Options
 
@@ -558,6 +569,9 @@ pi --thinking high "Solve this complex problem"
 | `PI_PACKAGE_DIR` | Override package directory (useful for Nix/Guix where store paths tokenize poorly) |
 | `PI_SKIP_VERSION_CHECK` | Skip version check at startup |
 | `PI_CACHE_RETENTION` | Set to `long` for extended prompt cache (Anthropic: 1h, OpenAI: 24h) |
+| `JENSEN_SEARXNG_URL` | Private SearXNG endpoint (default: `http://127.0.0.1:18888`) |
+| `JENSEN_WEB_SEARCH_PROVIDER` | `auto`, `searxng`, or `duckduckgo-lite` (default: `auto`) |
+| `JENSEN_PLAYWRIGHT_EXECUTABLE_PATH` | Optional Chromium executable for isolated rendered extraction |
 | `VISUAL`, `EDITOR` | External editor for Ctrl+G |
 
 ---
