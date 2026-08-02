@@ -10,6 +10,21 @@ import {
 } from "./index.js";
 import { PowerStreamDecoder } from "./powershell.js";
 
+function shouldRunWindowsPowerShellFixture(platform: NodeJS.Platform, powerShellAvailable: boolean): boolean {
+	return platform === "win32" && powerShellAvailable;
+}
+
+function parseFixturePid(output: string): number {
+	const match = output.match(/BG_PID:(\d+)/);
+	if (!match) throw new Error(`Windows Start-Process fixture did not emit BG_PID marker. Output: ${output}`);
+
+	const pid = Number(match[1]);
+	if (!Number.isSafeInteger(pid) || pid <= 0) {
+		throw new Error(`Windows Start-Process fixture emitted invalid PID: ${match[1]}`);
+	}
+	return pid;
+}
+
 // ---------------------------------------------------------------------------
 // PowerStreamDecoder direct unit tests
 // ---------------------------------------------------------------------------
@@ -421,8 +436,8 @@ describe("health probe with decoder", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Windows integration test — runs the real PowerShell host
-// Skipped on non-Windows.
+// Real PowerShell integration tests. Portable host behavior runs anywhere
+// PowerShell is installed; Windows Start-Process semantics run only on Windows.
 // ---------------------------------------------------------------------------
 
 describe("powershell windows integration", () => {
@@ -430,8 +445,7 @@ describe("powershell windows integration", () => {
 		resetPowerShellHealthCheck();
 	});
 
-	// Run these tests when pwsh is available (Windows, or Linux/macOS with pwsh installed).
-	// They exercise the real PowerShell process, not mocked operations.
+	// Run portable tests when pwsh is available (Windows, Linux, or macOS).
 	let pwshAvailable = false;
 	try {
 		resetShellConfigCache();
@@ -442,6 +456,22 @@ describe("powershell windows integration", () => {
 	}
 
 	const itPwsh = pwshAvailable ? it : it.skip;
+	const itWindowsPowerShell = shouldRunWindowsPowerShellFixture(process.platform, pwshAvailable) ? it : it.skip;
+
+	it("classifies Windows Start-Process fixtures by platform and host availability", () => {
+		expect(shouldRunWindowsPowerShellFixture("linux", true)).toBe(false);
+		expect(shouldRunWindowsPowerShellFixture("darwin", true)).toBe(false);
+		expect(shouldRunWindowsPowerShellFixture("win32", false)).toBe(false);
+		expect(shouldRunWindowsPowerShellFixture("win32", true)).toBe(true);
+	});
+
+	it("validates fixture PID markers before process cleanup", () => {
+		expect(parseFixturePid("BG_PID:1234\n")).toBe(1234);
+		expect(() => parseFixturePid("BEFORE_WRAPPER_EXIT\n")).toThrow(
+			"Windows Start-Process fixture did not emit BG_PID marker",
+		);
+		expect(() => parseFixturePid("BG_PID:0\n")).toThrow("Windows Start-Process fixture emitted invalid PID");
+	});
 
 	itPwsh("real pwsh produces stdout marker", async () => {
 		const ops = createLocalPowerShellOperations();
@@ -507,30 +537,44 @@ describe("powershell windows integration", () => {
 		expect(output).not.toContain("#< CLIXML");
 	});
 
-	itPwsh("returns after Start-Process wrapper exit while child stays alive", async () => {
+	itWindowsPowerShell("returns after Start-Process wrapper exit while child stays alive", async () => {
 		const ops = createLocalPowerShellOperations();
 		const chunks: string[] = [];
 		const startedAt = Date.now();
-		const result = await ops.exec(
-			"$child = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 5') -WindowStyle Hidden -PassThru; Write-Output \"BG_PID:$($child.Id)\"; Write-Output 'BEFORE_WRAPPER_EXIT'",
-			process.cwd(),
-			{
-				onData: (data) => chunks.push(data.toString("utf-8")),
-				timeout: 10,
-			},
-		);
+		let pid: number | undefined;
+		try {
+			const result = await ops.exec(
+				"$out = Join-Path $env:TEMP 'jensen lifecycle path with spaces.out.log'; $err = Join-Path $env:TEMP 'jensen lifecycle path with spaces.err.log'; Remove-Item $out,$err -Force -ErrorAction SilentlyContinue; $child = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 5') -WindowStyle Hidden -RedirectStandardOutput $out -RedirectStandardError $err -PassThru; Write-Output \"BG_PID:$($child.Id)\"; Write-Output 'BEFORE_WRAPPER_EXIT_✓'",
+				process.cwd(),
+				{
+					onData: (data) => chunks.push(data.toString("utf-8")),
+					timeout: 10,
+				},
+			);
 
-		expect(result.exitCode).toBe(0);
-		expect(Date.now() - startedAt).toBeLessThan(2000);
-		const output = chunks.join("");
-		expect(output).toContain("BEFORE_WRAPPER_EXIT");
-		const pid = Number(output.match(/BG_PID:(\d+)/)?.[1]);
-		expect(pid).toBeGreaterThan(0);
+			expect(result.exitCode).toBe(0);
+			expect(Date.now() - startedAt).toBeLessThan(2000);
+			const output = chunks.join("");
+			expect(output).toContain("BEFORE_WRAPPER_EXIT_✓");
+			expect(output).not.toContain("#< CLIXML");
+			pid = parseFixturePid(output);
 
-		await ops.exec(`Stop-Process -Id ${pid} -Force -ErrorAction SilentlyContinue`, process.cwd(), {
-			onData: () => {},
-			timeout: 10,
-		});
+			const followUpChunks: string[] = [];
+			const followUp = await ops.exec(
+				`if (Get-Process -Id ${pid} -ErrorAction SilentlyContinue) { Write-Output 'CHILD_ALIVE' }`,
+				process.cwd(),
+				{ onData: (data) => followUpChunks.push(data.toString("utf-8")), timeout: 10 },
+			);
+			expect(followUp.exitCode).toBe(0);
+			expect(followUpChunks.join("")).toContain("CHILD_ALIVE");
+		} finally {
+			if (pid !== undefined) {
+				await ops.exec(`Stop-Process -Id ${pid} -Force -ErrorAction SilentlyContinue`, process.cwd(), {
+					onData: () => {},
+					timeout: 10,
+				});
+			}
+		}
 	});
 
 	itPwsh("real pwsh health probe validates", async () => {
