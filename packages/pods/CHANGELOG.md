@@ -1,5 +1,13 @@
 # @apholdings/jensen-pods
 
+## 1.1.11
+
+### Patch Changes
+
+- dcc565a: Prevent Windows shell commands from hanging after launching persistent background processes, while preserving output, timeout, and process-cleanup semantics.
+- Updated dependencies [dcc565a]
+  - @apholdings/jensen-agent-core@1.1.11
+
 ## 1.1.10
 
 ### Patch Changes
