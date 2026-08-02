@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.0
+
+### Minor Changes
+
+- 328c049: Add a free web research engine with local SearXNG search, DuckDuckGo Lite fallback, secure page/PDF extraction, optional isolated rendering, durable evidence, citations, and bounded deep research.
+
+### Patch Changes
+
+- @apholdings/jensen-agent-core@1.2.0
+- @apholdings/jensen-ai@1.2.0
+- @apholdings/jensen-tui@1.2.0
+
 ## 1.1.12
 
 ### Patch Changes
