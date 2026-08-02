@@ -251,6 +251,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	// Determine initial active tools: explicit options.tools takes priority,
 	// then settings config, then legacy defaults
+	// Initial active tools: explicit options.tools takes priority, then settings
+	// config, then legacy defaults. The legacy defaults expose the web research
+	// family (web_search, web_fetch, deep_research, web_research_status) so that a
+	// fresh session fulfills the 1.2.1 release contract: read-only web research is
+	// available without requiring explicit --tools or settings configuration.
 	const legacyDefaultTools: ToolName[] = [
 		"read",
 		"bash",
@@ -260,6 +265,10 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		"todo_read",
 		"todo_update",
 		"memory_write",
+		"web_search",
+		"web_fetch",
+		"deep_research",
+		"web_research_status",
 	];
 	const configuredTools = settingsManager.getDefaultActiveToolNames();
 	const initialActiveToolNames: ToolName[] = options.tools

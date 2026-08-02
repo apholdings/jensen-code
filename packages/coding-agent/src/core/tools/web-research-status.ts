@@ -24,6 +24,10 @@ export function createWebResearchStatusTool(
 				`Provider health: ${diagnostics.providers.map((provider) => `${provider.provider}=${provider.status}`).join(", ")}`,
 				`Browser rendering: ${diagnostics.browserRenderingAvailable ? "available" : "unavailable"}`,
 				`PDF extraction: ${diagnostics.pdfExtractionAvailable ? "available" : "unavailable"}`,
+				`Citation renderer: ${diagnostics.citationRendererAvailable ? "available" : "unavailable"}`,
+				`Numeric verifier: ${diagnostics.numericVerifierAvailable ? "available" : "unavailable"}`,
+				`Temporal resolver: ${diagnostics.temporalResolverAvailable ? "available" : "unavailable"}`,
+				`Secure fetch used by research: ${diagnostics.secureFetchUsedByResearch ? "yes (web_fetch in deep_research)" : "no"}`,
 				`Research budgets: queries=${diagnostics.budgets.maxQueries}, sources=${diagnostics.budgets.maxSources}, bytes=${diagnostics.budgets.maxBytes}, renders=${diagnostics.budgets.maxBrowserRenders}, elapsed_ms=${diagnostics.budgets.maxElapsedMs}, parallel_fetches=${diagnostics.budgets.maxParallelFetches}`,
 				`Recent counters: ${Object.entries(diagnostics.telemetry)
 					.map(([name, value]) => `${name}=${value}`)

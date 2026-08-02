@@ -202,6 +202,23 @@ export interface ResearchEvent {
 	details: Record<string, string | number | boolean>;
 }
 
+export interface DeepResearchFacts {
+	/** Temporal observations for one or more quantities. */
+	temporal?: TemporalSourceFacts[];
+	/** Numeric calculation validations to run. */
+	numericExpressions?: NumericExpression[];
+	/** Ranked recommendations paired with computed metrics. */
+	rankings?: { recommendations?: RankedRecommendationItem[]; metrics?: RankedRecommendationItem[] };
+	/** Values currently asserted as current (for conspiracy with temporal). */
+	currentValues?: string[];
+}
+
+export interface RankedRecommendationItem {
+	id: string;
+	label: string;
+	computedMetric: number | undefined;
+}
+
 export interface DeepResearchRequest {
 	objective: string;
 	freshness?: WebFreshness;
@@ -211,6 +228,7 @@ export interface DeepResearchRequest {
 	excludedDomains?: string[];
 	language?: string;
 	depth?: "quick" | "standard" | "deep";
+	facts?: DeepResearchFacts;
 	signal?: AbortSignal;
 }
 
@@ -229,11 +247,134 @@ export interface ResearchCitation {
 	support: "direct" | "inference" | "contradicted";
 }
 
+/**
+ * Exact numeric, chronological or mechanical claim support. Every exact claim
+ * must trace to durable evidence plus concrete coordinates.
+ */
+export type ResearchSupportType =
+	| "direct"
+	| "corroborating"
+	| "historical"
+	| "contradicting"
+	| "inference"
+	| "snippet_only"
+	| "unverified";
+
+export interface EvidenceLocator {
+	kind: "lines" | "passage" | "page" | "json_pointer";
+	start?: number;
+	end?: number;
+	page?: number;
+	passageId?: string;
+	jsonPointer?: string;
+}
+
+export interface ResearchClaimSupport {
+	claimId: string;
+	evidenceId: string;
+	supportType: ResearchSupportType;
+	sourceUrl: string;
+	sourceTitle?: string;
+	retrievedAt: string;
+	publishedAt?: string;
+	effectiveAt?: string;
+	contentSha256: string;
+	locator: EvidenceLocator;
+}
+
 export interface ResearchClaim {
 	id: string;
 	text: string;
 	support: "direct" | "inference" | "contradicted";
 	citations: ResearchCitation[];
+	/** Richer traceable support, adapted to Jensen evidence conventions. */
+	supports: ResearchClaimSupport[];
+}
+
+export type TemporalValueClass =
+	| "historical"
+	| "current"
+	| "superseded"
+	| "contradiction"
+	| "uncertain_current"
+	| "unknown";
+
+export interface TemporalResolution {
+	sourceUrl: string;
+	evidenceId?: string;
+	class: TemporalValueClass;
+	value?: string | number;
+	effectiveAt?: string;
+	supersededBy?: string;
+	conflictingEvidenceIds?: string[];
+	reasoning: string[];
+}
+
+export interface TemporalResolutionResult {
+	resolutions: TemporalResolution[];
+	currentValue?: string | number;
+	unresolved: boolean;
+	reasoning: string[];
+}
+
+export interface TemporalSourceFacts {
+	evidenceId: string;
+	sourceUrl?: string;
+	/** Observed value for the quantity under study. */
+	value: string | number;
+	/** Effective/current date of this observation, if known. */
+	effectiveAt?: string;
+	publishedAt?: string;
+	/** Authority rank: higher is more authoritative (0=community, 2=official). */
+	authority: number;
+	/** The source explicitly describes itself as maintained/current. */
+	isMaintained?: boolean;
+	/** The source explicitly states a value changed. */
+	changeDeclaration?: string;
+}
+
+export type NumericUnit =
+	| "damage_per_shot"
+	| "flat_damage_bonus"
+	| "percent_bonus"
+	| "seconds"
+	| "probability"
+	| "level"
+	| "count";
+
+export interface NumericFact {
+	value: number;
+	unit: NumericUnit;
+	target?: "all" | "player" | "npc" | "specific_npc_family";
+	evidenceId: string;
+	label?: string;
+}
+
+/** A computed expression, derived from typed facts where possible. */
+export interface NumericExpression {
+	facts: NumericFact[];
+	notes?: string[];
+}
+
+export type NumericVerificationOutcome = "verified" | "unsupported" | "corrected";
+
+export interface NumericVerification {
+	id: string;
+	description: string;
+	outcome: NumericVerificationOutcome;
+	assumed?: string;
+	computed?: number;
+	expected?: number;
+	violation?: string;
+}
+
+export type SourceConfidence = "high" | "medium" | "low" | "unverified";
+
+export interface ConsistencyIssue {
+	kind: string;
+	severity: "error" | "warning";
+	message: string;
+	recommendation: string;
 }
 
 export interface EvidenceBundle {
@@ -243,6 +384,10 @@ export interface EvidenceBundle {
 	evidence: WebEvidenceRecord[];
 	claims: ResearchClaim[];
 	contradictions: string[];
+	temporal?: TemporalResolutionResult;
+	numericVerifications?: NumericVerification[];
+	consistency?: ConsistencyIssue[];
+	sourceConfidence?: Record<string, SourceConfidence>;
 	completeContentLocation: string;
 }
 

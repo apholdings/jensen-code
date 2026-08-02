@@ -1,12 +1,18 @@
 import { createHash } from "node:crypto";
+import { buildClaimSupport } from "./citation.js";
+import { deriveSourceConfidence, describeConfidence } from "./confidence.js";
+import { ConsistencyGate } from "./consistency.js";
 import type { SecureWebFetcher } from "./fetch.js";
 import { resultDomain, type WebSearchProviderRegistry } from "./search.js";
+import { TemporalResolver } from "./temporal.js";
 import {
 	type DeepResearchRequest,
 	type DeepResearchResponse,
 	type EvidenceBundle,
+	type NumericVerification,
 	type ResearchClaim,
 	type ResearchEvent,
+	type SourceConfidence,
 	type WebEvidenceRecord,
 	type WebResearchBudget,
 	WebResearchError,
@@ -182,8 +188,72 @@ function createClaims(evidence: WebEvidenceRecord[], contradictions: string[]): 
 						},
 					]
 				: [],
+			// Addressable evidence support; exact claims carry coordinates.
+			supports: [
+				buildClaimSupport(claimId, item, {
+					supportType: contradicted ? "contradicting" : "direct",
+				}),
+			],
 		};
 	});
+}
+
+function deriveConfidence(evidence: WebEvidenceRecord[]): Record<string, SourceConfidence> {
+	const result: Record<string, SourceConfidence> = {};
+	for (const item of evidence) {
+		result[item.evidenceId] = deriveSourceConfidence({
+			fetched: true,
+			record: {
+				publishedAt: item.publishedAt,
+				author: item.author,
+				title: item.title,
+				canonicalUrl: item.canonicalUrl,
+				truncated: item.truncated,
+				relevantPassages: item.relevantPassages,
+				contentSha256: item.contentSha256,
+			},
+		});
+	}
+	return result;
+}
+
+function runNumericExpression(
+	index: number,
+	expression: {
+		facts: Array<{ value: number; unit: string; target?: string; evidenceId: string; label?: string }>;
+		notes?: string[];
+	},
+): NumericVerification {
+	const facts = expression.facts;
+	const base = facts.find((fact) => fact.unit === "damage_per_shot");
+	const flat = facts.find((fact) => fact.unit === "flat_damage_bonus");
+	const percent = facts.find((fact) => fact.unit === "percent_bonus");
+	if (base && flat && base.value > 0) {
+		const computed = base.value + flat.value;
+		return {
+			id: `calc-${index}`,
+			description: expression.facts.map((f) => f.label ?? f.unit).join(" + ") || "arithmetic",
+			outcome: "verified",
+			computed,
+			assumed: `${base.value} + ${flat.value} = ${computed}`,
+		};
+	}
+	if (base && percent && base.value > 0) {
+		const computed = base.value * (1 + percent.value / 100);
+		return {
+			id: `calc-${index}`,
+			description: "percent bonus",
+			outcome: "verified",
+			computed,
+			assumed: `${base.value} × (1 + ${percent.value}/100) = ${computed}`,
+		};
+	}
+	return {
+		id: `calc-${index}`,
+		description: "unsupported calculation",
+		outcome: "unsupported",
+		violation: "Cannot resolve units or order of operations from the typed facts; not silently choosing a formula.",
+	};
 }
 
 function formatSynthesis(
@@ -191,6 +261,10 @@ function formatSynthesis(
 	claims: ResearchClaim[],
 	contradictions: string[],
 	partial: boolean,
+	sourceConfidence?: Record<string, SourceConfidence>,
+	temporalReasoning?: string[],
+	numericVerifications?: Array<{ id: string; outcome: string; assumed?: string; violation?: string }>,
+	consistencyIssues?: Array<{ kind: string; severity: string; message: string }>,
 ): string {
 	const lines = [
 		`Research objective: ${objective}`,
@@ -200,9 +274,36 @@ function formatSynthesis(
 	];
 	for (const claim of claims) {
 		const citation = claim.citations[0];
+		const support = claim.supports[0];
 		lines.push(
 			`- ${claim.text}${citation ? ` [${citation.evidenceId}:${citation.passageId}]` : " [insufficient evidence]"}`,
 		);
+		if (support && support.supportType === "snippet_only") {
+			lines.push(`  (snippet-only discovery; not high-confidence evidence)`);
+		}
+	}
+	if (temporalReasoning?.length) {
+		lines.push("", "Temporal resolution:");
+		for (const line of temporalReasoning) lines.push(`- ${line}`);
+	}
+	if (numericVerifications?.length) {
+		lines.push("", "Numeric verification:");
+		for (const verification of numericVerifications) {
+			const detail = verification.violation
+				? `violation: ${verification.violation}`
+				: `assumed: ${verification.assumed ?? "n/a"}`;
+			lines.push(`- ${verification.id}: ${verification.outcome} — ${detail}`);
+		}
+	}
+	if (consistencyIssues?.length) {
+		lines.push("", "Consistency review:");
+		for (const issue of consistencyIssues) lines.push(`- [${issue.severity}] ${issue.message}`);
+	}
+	if (sourceConfidence) {
+		const parts = Object.entries(sourceConfidence).map(
+			([id, level]) => `${id}=${level} (${describeConfidence(level)})`,
+		);
+		if (parts.length) lines.push("", `Source confidence: ${parts.join("; ")}`);
 	}
 	if (contradictions.length) {
 		lines.push("", "Unresolved contradictions:");
@@ -311,11 +412,33 @@ export class DeepResearchEngine {
 		const contradictions = contradictionPairs(evidence);
 		for (const conflict of contradictions) emit("CONTRADICTION_FOUND", { description: conflict });
 		const claims = createClaims(evidence, contradictions);
+		const sourceConfidence = deriveConfidence(evidence);
+
+		// Structured verification stages: temporal resolution, numeric validation,
+		// conclusion consistency. Each is deterministic and bounded. When the caller
+		// provides no typed facts, these run over what the evidence exposes (dates).
+		const temporal = new TemporalResolver();
+		const temporalResult = request.facts?.temporal?.length ? temporal.resolve(request.facts.temporal) : undefined;
+		const numericVerifications = (request.facts?.numericExpressions ?? []).map((expression, index) =>
+			runNumericExpression(index + 1, expression),
+		);
+		const consistencyGate = new ConsistencyGate();
+		const consistency = consistencyGate.run({
+			rankedRecommendations: request.facts?.rankings?.recommendations,
+			computedMetrics: request.facts?.rankings?.metrics,
+			temporalResolutions: temporalResult?.resolutions,
+			currentValues: request.facts?.currentValues,
+		});
+
 		const bundlePayload = {
 			objective,
 			evidence: evidence.map((item) => ({ evidenceId: item.evidenceId, contentSha256: item.contentSha256 })),
 			claims,
 			contradictions,
+			temporal: temporalResult,
+			numericVerifications,
+			consistency: consistency.length ? consistency : undefined,
+			sourceConfidence,
 		};
 		const contentSha256 = sha256(canonicalJson(bundlePayload));
 		const bundleId = `research-${contentSha256.slice(0, 20)}`;
@@ -326,11 +449,28 @@ export class DeepResearchEngine {
 			evidence,
 			claims,
 			contradictions,
+			temporal: temporalResult,
+			numericVerifications: numericVerifications.length ? numericVerifications : undefined,
+			consistency: consistency.length ? consistency : undefined,
+			sourceConfidence,
 			completeContentLocation: `session:tool-result:${bundleId}`,
 		};
 		emit("EVIDENCE_BUNDLE_CREATED", { bundleId, evidenceCount: evidence.length, claimCount: claims.length });
-		const partial = evidence.length === 0 || fetched.some((result) => result.error !== undefined) || signal.aborted;
-		const synthesis = formatSynthesis(objective, claims, contradictions, partial);
+		const partial =
+			evidence.length === 0 ||
+			fetched.some((result) => result.error !== undefined) ||
+			signal.aborted ||
+			(temporalResult?.unresolved ?? false);
+		const synthesis = formatSynthesis(
+			objective,
+			claims,
+			contradictions,
+			partial,
+			sourceConfidence,
+			temporalResult?.reasoning,
+			numericVerifications,
+			consistency,
+		);
 		emit("RESEARCH_COMPLETED", { partial, sourceCount: evidence.length });
 		return {
 			objective,

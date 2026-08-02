@@ -163,7 +163,7 @@ describe("settings default tools", () => {
 					sessionManager,
 				});
 
-				// Legacy defaults now include todo and memory tools
+				// Legacy defaults now include todo, memory and web research tools
 				const activeTools = session.getActiveToolNames();
 				expect(activeTools).toContain("read");
 				expect(activeTools).toContain("bash");
@@ -173,6 +173,10 @@ describe("settings default tools", () => {
 				expect(activeTools).toContain("todo_read");
 				expect(activeTools).toContain("todo_update");
 				expect(activeTools).toContain("memory_write");
+				expect(activeTools).toContain("web_search");
+				expect(activeTools).toContain("web_fetch");
+				expect(activeTools).toContain("deep_research");
+				expect(activeTools).toContain("web_research_status");
 			} finally {
 				require("fs").rmSync(rootDir, { recursive: true, force: true });
 			}
