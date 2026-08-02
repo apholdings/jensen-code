@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.11
+
+### Patch Changes
+
+- dcc565a: Prevent Windows shell commands from hanging after launching persistent background processes, while preserving output, timeout, and process-cleanup semantics.
+
 ## 1.1.10
 
 ## 1.1.9
