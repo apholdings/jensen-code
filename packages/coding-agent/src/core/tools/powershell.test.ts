@@ -488,6 +488,51 @@ describe("powershell windows integration", () => {
 		expect(output).toContain("✓");
 	});
 
+	itPwsh("suppresses progress serialization without changing ordinary output", async () => {
+		const ops = createLocalPowerShellOperations();
+		const chunks: string[] = [];
+
+		const result = await ops.exec(
+			"Write-Progress -Activity 'fixture' -Status 'running' -PercentComplete 50; Write-Output '**JENSEN_IT_PROGRESS**'",
+			process.cwd(),
+			{
+				onData: (data) => chunks.push(data.toString("utf-8")),
+				timeout: 10,
+			},
+		);
+
+		expect(result.exitCode).toBe(0);
+		const output = chunks.join("");
+		expect(output).toContain("**JENSEN_IT_PROGRESS**");
+		expect(output).not.toContain("#< CLIXML");
+	});
+
+	itPwsh("returns after Start-Process wrapper exit while child stays alive", async () => {
+		const ops = createLocalPowerShellOperations();
+		const chunks: string[] = [];
+		const startedAt = Date.now();
+		const result = await ops.exec(
+			"$child = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 5') -WindowStyle Hidden -PassThru; Write-Output \"BG_PID:$($child.Id)\"; Write-Output 'BEFORE_WRAPPER_EXIT'",
+			process.cwd(),
+			{
+				onData: (data) => chunks.push(data.toString("utf-8")),
+				timeout: 10,
+			},
+		);
+
+		expect(result.exitCode).toBe(0);
+		expect(Date.now() - startedAt).toBeLessThan(2000);
+		const output = chunks.join("");
+		expect(output).toContain("BEFORE_WRAPPER_EXIT");
+		const pid = Number(output.match(/BG_PID:(\d+)/)?.[1]);
+		expect(pid).toBeGreaterThan(0);
+
+		await ops.exec(`Stop-Process -Id ${pid} -Force -ErrorAction SilentlyContinue`, process.cwd(), {
+			onData: () => {},
+			timeout: 10,
+		});
+	});
+
 	itPwsh("real pwsh health probe validates", async () => {
 		const ops = createLocalPowerShellOperations();
 		if (!ops.validate) throw new Error("validate not set");

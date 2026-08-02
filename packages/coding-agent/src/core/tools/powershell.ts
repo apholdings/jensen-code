@@ -13,6 +13,7 @@ import {
 	type PowerShellConfig,
 	sanitizeBinaryOutput,
 } from "../../utils/shell.js";
+import { runForegroundProcess } from "../process-runner.js";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateTail } from "./truncate.js";
 
 /**
@@ -106,7 +107,8 @@ function encodePowerShellCommand(command: string): string {
  * when writing to a pipe, which causes TextDecoder("utf-8") to produce garbled output.
  * This preamble forces UTF-8 output encoding on all PowerShell versions.
  */
-const ENCODING_PREAMBLE = "[Console]::OutputEncoding=[Text.Encoding]::UTF8;$OutputEncoding=[Text.Encoding]::UTF8;";
+const ENCODING_PREAMBLE =
+	"$ProgressPreference='SilentlyContinue';[Console]::OutputEncoding=[Text.Encoding]::UTF8;$OutputEncoding=[Text.Encoding]::UTF8;";
 
 const powershellSchema = Type.Object({
 	command: Type.String({ description: "PowerShell command to execute" }),
@@ -212,88 +214,36 @@ function execPowerShell(
 		const wrappedCommand = `${ENCODING_PREAMBLE}${command}`;
 		const child = spawnRawPowerShell(resolveConfig, wrappedCommand, cwd, options.env);
 
-		let timedOut = false;
-		let timeoutHandle: NodeJS.Timeout | undefined;
-		if (options.timeout !== undefined && options.timeout > 0) {
-			timeoutHandle = setTimeout(() => {
-				timedOut = true;
-				if (child.pid) {
-					killProcessTree(child.pid);
-				}
-			}, options.timeout * 1000);
-		}
-
 		// Use separate stateful decoders per stream to normalize PowerShell
 		// output to UTF-8 regardless of whether the host emits UTF-8 or UTF-16LE.
 		// Both streams emit to the same onData callback but are decoded independently.
 		const stdoutDecoder = new PowerStreamDecoder();
 		const stderrDecoder = new PowerStreamDecoder();
 
-		if (child.stdout) {
-			child.stdout.on("data", (chunk: Buffer) => {
+		runForegroundProcess({
+			child,
+			onStdout: (chunk) => {
 				const text = stdoutDecoder.feed(chunk);
-				if (text.length > 0) {
-					options.onData(Buffer.from(text, "utf-8"));
-				}
-			});
-		}
-		if (child.stderr) {
-			child.stderr.on("data", (chunk: Buffer) => {
+				if (text.length > 0) options.onData(Buffer.from(text, "utf-8"));
+			},
+			onStderr: (chunk) => {
 				const text = stderrDecoder.feed(chunk);
-				if (text.length > 0) {
-					options.onData(Buffer.from(text, "utf-8"));
-				}
-			});
-		}
-
-		// Flush decoders on close to emit any remaining buffered bytes
-		child.on("close", () => {
-			const stdoutFlush = stdoutDecoder.flush();
-			if (stdoutFlush.length > 0) {
-				options.onData(Buffer.from(stdoutFlush, "utf-8"));
-			}
-			const stderrFlush = stderrDecoder.flush();
-			if (stderrFlush.length > 0) {
-				options.onData(Buffer.from(stderrFlush, "utf-8"));
-			}
-		});
-
-		child.on("error", (err) => {
-			if (timeoutHandle) clearTimeout(timeoutHandle);
-			if (options.signal) options.signal.removeEventListener("abort", onAbort);
-			reject(err);
-		});
-
-		const onAbort = () => {
-			if (child.pid) {
-				killProcessTree(child.pid);
-			}
-		};
-
-		if (options.signal) {
-			if (options.signal.aborted) {
-				onAbort();
-			} else {
-				options.signal.addEventListener("abort", onAbort, { once: true });
-			}
-		}
-
-		child.on("close", (code) => {
-			if (timeoutHandle) clearTimeout(timeoutHandle);
-			if (options.signal) options.signal.removeEventListener("abort", onAbort);
-
-			if (options.signal?.aborted) {
-				reject(new Error("aborted"));
-				return;
-			}
-
-			if (timedOut) {
-				reject(new Error(`timeout:${options.timeout}`));
-				return;
-			}
-
-			resolve({ exitCode: code });
-		});
+				if (text.length > 0) options.onData(Buffer.from(text, "utf-8"));
+			},
+			signal: options.signal,
+			timeout: options.timeout,
+			kill: () => {
+				if (child.pid) killProcessTree(child.pid);
+			},
+		})
+			.then(({ exitCode }) => {
+				const stdoutFlush = stdoutDecoder.flush();
+				if (stdoutFlush.length > 0) options.onData(Buffer.from(stdoutFlush, "utf-8"));
+				const stderrFlush = stderrDecoder.flush();
+				if (stderrFlush.length > 0) options.onData(Buffer.from(stderrFlush, "utf-8"));
+				resolve({ exitCode });
+			})
+			.catch(reject);
 	});
 }
 

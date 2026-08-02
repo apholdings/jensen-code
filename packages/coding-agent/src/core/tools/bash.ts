@@ -5,6 +5,7 @@ import { spawn } from "child_process";
 import { getShellConfig, getShellEnv, killProcessTree } from "../../utils/shell.js";
 import type { BashEvidence, ResolvedBashResult } from "../bash-executor.js";
 import { executeBashWithOperations } from "../bash-executor.js";
+import { runForegroundProcess } from "../process-runner.js";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult, truncateTail } from "./truncate.js";
 
 /**
@@ -111,74 +112,24 @@ export function createLocalBashOperations(): BashOperations {
 					stdio: ["ignore", "pipe", "pipe"],
 				});
 
-				let timedOut = false;
-
-				// Set timeout if provided
-				let timeoutHandle: NodeJS.Timeout | undefined;
-				const timeoutSec = timeout !== undefined ? timeout : undefined;
-				if (timeoutSec !== undefined && timeoutSec > 0) {
-					timeoutHandle = setTimeout(() => {
-						timedOut = true;
-						if (child.pid) {
-							killProcessTree(child.pid);
-						}
-					}, timeoutSec * 1000);
-				}
-
-				// Stream stdout and stderr — both go to onData for backward compat,
-				// and separately to onStdout/onStderr for consumers that need separation.
-				if (child.stdout) {
-					child.stdout.on("data", (data: Buffer) => {
+				runForegroundProcess({
+					child,
+					onStdout: (data) => {
 						onData(data);
 						onStdout?.(data);
-					});
-				}
-				if (child.stderr) {
-					child.stderr.on("data", (data: Buffer) => {
+					},
+					onStderr: (data) => {
 						onData(data);
 						onStderr?.(data);
-					});
-				}
-
-				// Handle shell spawn errors
-				child.on("error", (err) => {
-					if (timeoutHandle) clearTimeout(timeoutHandle);
-					if (signal) signal.removeEventListener("abort", onAbort);
-					reject(err);
-				});
-
-				// Handle abort signal - kill entire process tree
-				const onAbort = () => {
-					if (child.pid) {
-						killProcessTree(child.pid);
-					}
-				};
-
-				if (signal) {
-					if (signal.aborted) {
-						onAbort();
-					} else {
-						signal.addEventListener("abort", onAbort, { once: true });
-					}
-				}
-
-				// Handle process exit
-				child.on("close", (code) => {
-					if (timeoutHandle) clearTimeout(timeoutHandle);
-					if (signal) signal.removeEventListener("abort", onAbort);
-
-					if (signal?.aborted) {
-						reject(new Error("aborted"));
-						return;
-					}
-
-					if (timedOut) {
-						reject(new Error(`timeout:${timeoutSec}`));
-						return;
-					}
-
-					resolve({ exitCode: code });
-				});
+					},
+					signal,
+					timeout,
+					kill: () => {
+						if (child.pid) killProcessTree(child.pid);
+					},
+				})
+					.then(resolve)
+					.catch(reject);
 			});
 		},
 	};

@@ -34,3 +34,27 @@ jobs:
 
       - name: Validate (build + check + deterministic tests)
         run: npm run validate
+
+  windows-shell-regression:
+    name: Windows shell/process lifecycle regression
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Windows shell/process tests
+        working-directory: packages/coding-agent
+        run: >-
+          npx tsx ../../node_modules/vitest/dist/cli.js --run
+          src/core/process-runner.test.ts
+          src/core/tools/powershell.test.ts
+          src/core/tools/process-manager.windows.test.ts
