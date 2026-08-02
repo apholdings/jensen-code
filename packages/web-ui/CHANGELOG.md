@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.12
+
+### Patch Changes
+
+- Updated dependencies [64aab5a]
+  - @apholdings/jensen-ai@1.1.12
+  - @apholdings/jensen-tui@1.1.12
+
 ## 1.1.11
 
 ### Patch Changes

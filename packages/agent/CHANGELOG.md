@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.12
+
+### Patch Changes
+
+- 64aab5a: Add a cache-stable context engine with deterministic prompt regions, provider cache telemetry, metadata-only diagnostics, and addressable compaction evidence.
+- Updated dependencies [64aab5a]
+  - @apholdings/jensen-ai@1.1.12
+
 ## 1.1.11
 
 ### Patch Changes
