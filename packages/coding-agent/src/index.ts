@@ -184,6 +184,18 @@ export {
 	validateMcpToolSchemas,
 } from "./core/mcp.js";
 export {
+	createMcpClient,
+	type McpCallResult,
+	McpClient,
+	type McpClientOptions,
+	type McpConnectionState,
+	type McpHealthEvent,
+	type McpJsonRpcError,
+	type McpJsonRpcResponse,
+	McpTransportError,
+	redactMcpError,
+} from "./core/mcp-client.js";
+export {
 	buildStructuredMemoryCompareData,
 	buildStructuredMemoryHistoryData,
 	type MemorySnapshotContractContext,
@@ -227,6 +239,19 @@ export {
 	sanitize,
 	supportBundlePreview,
 } from "./core/operability.js";
+export {
+	inspectSupportBundle,
+	type ReexecutionOptions,
+	type ReexecutionResult,
+	rebuildStorageIndex,
+	reexecuteRun,
+	type SimulationReplay,
+	type StorageIndex,
+	type StoragePruneEntry,
+	type StoragePruneResult,
+	simulateReplay,
+	storagePrune,
+} from "./core/operability-runtime.js";
 export type {
 	PackageManager,
 	PathMetadata,

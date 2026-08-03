@@ -22,6 +22,7 @@ import {
 	sanitize,
 	supportBundlePreview,
 } from "../src/core/operability.js";
+import { reexecuteRun, simulateReplay, storagePrune } from "../src/core/operability-runtime.js";
 
 describe("operability projections and replay", () => {
 	it("reads a session into deterministic envelopes and renders without effects", () => {
@@ -100,6 +101,7 @@ describe("operability projections and replay", () => {
 			nested: { password: "[REDACTED]" },
 		});
 		expect(supportBundlePreview(report, left).files["doctor.json"]).not.toContain("API_KEY");
+		expect(sanitize({ data: "Bearer secret-value" })).toEqual({ data: "[REDACTED]" });
 	});
 });
 
@@ -113,6 +115,8 @@ describe("MCP boundary", () => {
 		).toEqual([]);
 		expect(validateMcpResourceUri("https://example.test/resource")).toBe(true);
 		expect(validateMcpResourceUri("https://user:password@example.test/resource")).toBe(false);
+		expect(validateMcpResourceUri("file:///etc/passwd")).toBe(false);
+		expect(redactMcpDiagnostics({ data: "Bearer secret-value" })).toEqual({ data: "[REDACTED]" });
 		expect(redactMcpDiagnostics({ authorization: "secret", keyboard: "visible" })).toEqual({
 			authorization: "[REDACTED]",
 			keyboard: "visible",
@@ -134,6 +138,17 @@ describe("MCP boundary", () => {
 		});
 	});
 
+	it("simulates without effects and reexecution creates a new plan run", () => {
+		const result = readSessionEvents(join(mkdtempSync(join(tmpdir(), "jensen-runtime-")), "missing.jsonl"));
+		const simulation = simulateReplay(result);
+		expect(simulation.simulationId).not.toBe(simulation.runId);
+		expect(simulation.externalEffects).toEqual({ modelCalls: 0, toolCalls: 0, networkCalls: 0, mutations: 0 });
+		const reexecution = reexecuteRun(result, { cwd: "/tmp", plan: true });
+		expect(reexecution.newRunId).not.toBe(reexecution.historicalRunId);
+		expect(reexecution.mode).toBe("plan");
+		expect(reexecution.mutations).toBe(0);
+	});
+
 	it("detects capability drift by stable snapshot hashes", () => {
 		const base = createMcpCapabilitySnapshot({
 			serverId: "x",
@@ -152,5 +167,12 @@ describe("MCP boundary", () => {
 			capabilities: {},
 		});
 		expect(detectCapabilityDrift(base, next)).toEqual(["tool_added:write", "tool_removed:read"]);
+	});
+
+	it("returns a zero-mutation retention preview", () => {
+		const root = mkdtempSync(join(tmpdir(), "jensen-retention-"));
+		const result = storagePrune(root, { preview: true });
+		expect(result.preview).toBe(true);
+		expect(result.entries).toEqual([]);
 	});
 });

@@ -117,8 +117,25 @@ function runWithOutput(command, args, options = {}) {
 	});
 }
 
+export function classifyDistTagFailure(result) {
+	const output = `${result?.stdout ?? ""}\n${result?.stderr ?? ""}`.toLowerCase();
+	const status = result?.status;
+	if (status === 401 || output.includes("e401") || output.includes("unauthorized")) return RELEASE_STATE.DIST_TAG_AUTHENTICATION_FAILED;
+	if (status === 403 || output.includes("e403") || output.includes("forbidden")) return RELEASE_STATE.DIST_TAG_PERMISSION_DENIED;
+	if (output.includes("policy") || output.includes("protected")) return RELEASE_STATE.DIST_TAG_POLICY_BLOCKED;
+	if (output.includes("404") || output.includes("not found")) return RELEASE_STATE.DIST_TAG_PROPAGATING;
+	return RELEASE_STATE.DIST_TAG_PROPAGATING;
+}
+
 function addDistTag(name, version, tag) {
-	run("npm", ["dist-tag", "add", `${name}@${version}`, tag]);
+	const result = runWithOutput("npm", ["dist-tag", "add", `${name}@${version}`, tag]);
+	if (result.status !== 0) {
+		const state = classifyDistTagFailure(result);
+		const error = new Error(`Dist-tag update failed for ${name}@${tag}: ${state}`);
+		error.releaseState = state;
+		error.npmStatus = result.status;
+		throw error;
+	}
 }
 
 function checkDistTag(name, version, tag) {
@@ -711,11 +728,13 @@ export async function orchestratePublish(options) {
 	// Version verification is authoritative. A stale dist-tag after confirmed
 	// publication is PROPAGATION state — it must never abort tag/release
 	// creation (that was the recurring 1.4.0 release defect).
-	let propagation = { converged: true, staleTags: [] };
+	let propagation = { converged: true, staleTags: [], state: RELEASE_STATE.DIST_TAG_CONVERGED };
 	try {
 		propagation = promoteTags(packages, releaseVersion) ?? propagation;
-	} catch {
-		propagation = { converged: false, staleTags: ["dist-tag convergence pending"] };
+	} catch (error) {
+		const state = error?.releaseState ?? RELEASE_STATE.DIST_TAG_PROPAGATING;
+		if (state !== RELEASE_STATE.DIST_TAG_PROPAGATING) throw error;
+		propagation = { converged: false, staleTags: ["dist-tag convergence pending"], state };
 	}
 
 	// Create the single lockstep tag (idempotent — never moves an existing tag).
@@ -750,6 +769,7 @@ export async function orchestratePublish(options) {
 		releaseState,
 		tagsPropagating: propagation.converged === false,
 		staleTags: propagation.staleTags ?? [],
+		distTagState: propagation.state ?? (propagation.converged === false ? RELEASE_STATE.DIST_TAG_PROPAGATING : RELEASE_STATE.DIST_TAG_CONVERGED),
 	};
 
 	outputFn(result);

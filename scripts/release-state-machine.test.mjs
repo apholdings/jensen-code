@@ -124,12 +124,23 @@ test("classifyDistTagRead: a stale tag read with verified version is PROPAGATING
 	assert.equal(classifyDistTagRead({ versionVerified: false, latestConverged: false }), "NOT_PUBLISHED");
 });
 
+test("HTTP 403 and 401 are permanent dist-tag failures, not propagation", () => {
+	assert.equal(classifyDistTagRead({ versionVerified: true, latestConverged: false, httpStatus: 403 }), "DIST_TAG_PERMISSION_DENIED");
+	assert.equal(classifyDistTagRead({ versionVerified: true, latestConverged: false, httpStatus: 401 }), "DIST_TAG_AUTHENTICATION_FAILED");
+});
+
 test("state order is monotonic and complete", () => {
 	assert.deepEqual(RELEASE_STATE_ORDER, [
 		"NOT_PUBLISHED",
-		"PUBLISHED_TAGS_PROPAGATING",
-		"PUBLISHED_TAGS_CONVERGED",
-		"TAGGED",
+		"PUBLISHING",
+		"PUBLISHED_VERSION_UNVERIFIED",
+		"PUBLISHED_VERSION_VERIFIED",
+		"DIST_TAG_PROPAGATING",
+		"DIST_TAG_PERMISSION_DENIED",
+		"DIST_TAG_AUTHENTICATION_FAILED",
+		"DIST_TAG_POLICY_BLOCKED",
+		"DIST_TAG_CONVERGED",
+		"GIT_TAGGED",
 		"GITHUB_RELEASED",
 		"COMPLETE",
 	]);
