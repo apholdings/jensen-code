@@ -192,6 +192,16 @@ The seven published packages use fixed lockstep versions. A successful release c
 
 Publishing happens exclusively through the CI workflow on the `main` branch (`release.yml`). The custom publisher verifies all seven packages against the npm registry, promotes the complete verified fixed group to both the `fork` and `latest` npm dist-tags, verifies both tags for every package, and only then creates the lockstep Git tag.
 
+### Releasing (release-recovery semantics)
+
+npm dist-tag reads are eventually consistent. After all seven package versions
+are explicitly verified on the registry, a stale `latest`/`fork` read is
+`PUBLISHED_TAGS_PROPAGATING` — never a publication failure. Tag creation and
+GitHub Release creation proceed regardless and are idempotent:
+`scripts/publish-unpublished-packages.mjs` must never skip the lockstep tag on a
+stale dist-tag. Recovery (`scripts/release-state-machine.mjs`) never republishes
+an existing version and never moves an existing tag.
+
 ### Prohibited
 
 Do not run manual pre-merge version bumps.

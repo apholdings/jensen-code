@@ -19,6 +19,7 @@ import { handleBenchmarkCommand } from "./core/benchmark/index.js";
 import { exportFromFile } from "./core/export-html/index.js";
 import type { LoadExtensionsResult } from "./core/extensions/index.js";
 import { KeybindingsManager } from "./core/keybindings.js";
+import { handleAdaptiveCommand } from "./core/long-horizon/adaptive/cli.js";
 import { ModelRegistry } from "./core/model-registry.js";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
 import { DefaultPackageManager } from "./core/package-manager.js";
@@ -598,6 +599,10 @@ export async function main(args: string[]) {
 	}
 
 	if (await handleWorkspaceCommand(args)) {
+		return;
+	}
+
+	if (await handleAdaptiveCommand(args)) {
 		return;
 	}
 

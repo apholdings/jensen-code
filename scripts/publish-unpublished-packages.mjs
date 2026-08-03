@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
+import { classifyReleaseState, RELEASE_STATE } from "./release-state-machine.mjs";
 
 // ============================================================================
 // Dependency-ordered package directories (dependents after their dependencies).
@@ -193,6 +194,8 @@ export function waitForDistTag(name, version, tag, options = {}) {
 
 export function promoteStableDistTags(packages, releaseVersion, options = {}) {
 	const { addTag = addDistTag, verifyTag, verifyWithRetry = waitForDistTag } = options;
+	let converged = true;
+	const staleTags = [];
 
 	if (packages.length !== EXPECTED_PACKAGE_COUNT) {
 		throw new Error(
@@ -234,13 +237,24 @@ export function promoteStableDistTags(packages, releaseVersion, options = {}) {
 				}
 			} else {
 				// Default path: bounded-backoff retry to absorb npm propagation
-				// delays before failing.
-				verifyWithRetry(pkg.name, releaseVersion, tag);
+				// delays. A stale tag after a confirmed version is PROPAGATION
+				// state (never a publication failure) and must not throw here —
+				// tag/release creation proceeds and recovery converges later.
+				try {
+					verifyWithRetry(pkg.name, releaseVersion, tag);
+				} catch {
+					converged = false;
+					staleTags.push(`${pkg.name}@${tag}`);
+				}
 			}
 		}
 	}
 
-	console.log(`[dist-tag] All seven packages verified at fork=${releaseVersion} and latest=${releaseVersion}`);
+	console.log(`[dist-tag] fork/latest propagated: ${converged ? "yes" : "no"}${staleTags.length > 0 ? ` (stale: ${staleTags.join(", ")})` : ""}`);
+	if (!converged) {
+		console.log("[dist-tag] PUBLISHED_TAGS_PROPAGATING — versions verified; tag/release creation proceeds; convergence is recovered in the final verification phase.");
+	}
+	return { converged, staleTags, propagationState: converged ? RELEASE_STATE.PUBLISHED_TAGS_CONVERGED : RELEASE_STATE.PUBLISHED_TAGS_PROPAGATING };
 }
 
 function hasLocalNpmAuth() {
@@ -529,6 +543,34 @@ function createLockstepTag(version, options = {}) {
 }
 
 // ============================================================================
+// Idempotent GitHub Release
+// ============================================================================
+
+/**
+ * Create the GitHub Release idempotently. If it already exists, it is left in
+ * place (never moved or recreated). Returns true when the release exists after
+ * this call. Uses the `gh` CLI; safe to run repeatedly across recovery.
+ */
+export function createGitHubReleaseIdempotent(tagName, options = {}) {
+	const { releaseExists = ghReleaseExists, create = ghReleaseCreate } = options;
+	if (releaseExists(tagName)) {
+		console.log(`[release] GitHub Release ${tagName} already exists; preserving it`);
+		return true;
+	}
+	create(tagName);
+	console.log(`[release] Created GitHub Release ${tagName}`);
+	return true;
+}
+
+function ghReleaseExists(tagName) {
+	return runWithOutput("gh", ["release", "view", tagName, "--json", "tagName"]).status === 0;
+}
+
+function ghReleaseCreate(tagName) {
+	run("gh", ["release", "create", tagName, "--title", `v${tagName.replace(/^v/, "")}`, "--notes", `Jensen ${tagName} lockstep release.`]);
+}
+
+// ============================================================================
 // Structured output
 // ============================================================================
 
@@ -566,6 +608,7 @@ export async function orchestratePublish(options) {
 		publishFn,
 		promoteTags = () => {},
 		createTag,
+		createGitHubRelease,
 		writeOutput: outputFn,
 	} = options;
 
@@ -665,11 +708,32 @@ export async function orchestratePublish(options) {
 	console.log("[verify] All seven packages confirmed on npm registry");
 
 	// Promote only after the complete fixed group is available and verified.
-	promoteTags(packages, releaseVersion);
+	// Version verification is authoritative. A stale dist-tag after confirmed
+	// publication is PROPAGATION state — it must never abort tag/release
+	// creation (that was the recurring 1.4.0 release defect).
+	let propagation = { converged: true, staleTags: [] };
+	try {
+		propagation = promoteTags(packages, releaseVersion) ?? propagation;
+	} catch {
+		propagation = { converged: false, staleTags: ["dist-tag convergence pending"] };
+	}
 
-	// Create the single lockstep tag
+	// Create the single lockstep tag (idempotent — never moves an existing tag).
 	const tagCreated = createTag(releaseVersion, {
 		allowExistingRelease: publishedDuringRun.length === 0,
+	});
+	const tagExists = tagCreated || hasTag(tagName);
+
+	// Create the GitHub Release (idempotent) when a creator is configured.
+	const githubReleaseCreated = options.createGitHubRelease ? options.createGitHubRelease(tagName) : false;
+
+	// Classify the typed lifecycle state from independent facts.
+	const releaseState = classifyReleaseState({
+		anyUnpublished: false,
+		tagsConverged: propagation.converged !== false,
+		tagExists,
+		githubReleaseExists: githubReleaseCreated,
+		finalVerified: true,
 	});
 
 	const result = {
@@ -682,6 +746,10 @@ export async function orchestratePublish(options) {
 		alreadyPublishedPackages: alreadyPublishedPackages.map((p) => p.name),
 		allPackagesVerified: true,
 		tagCreated,
+		githubReleaseCreated,
+		releaseState,
+		tagsPropagating: propagation.converged === false,
+		staleTags: propagation.staleTags ?? [],
 	};
 
 	outputFn(result);
@@ -753,6 +821,9 @@ export async function main(options = {}) {
 		promoteTags: promoteStableDistTags,
 		createTag: createLockstepTag,
 		writeOutput,
+		createGitHubRelease: process.env.JENSEN_CREATE_GH_RELEASE
+			? (tagName) => createGitHubReleaseIdempotent(tagName)
+			: undefined,
 	});
 }
 

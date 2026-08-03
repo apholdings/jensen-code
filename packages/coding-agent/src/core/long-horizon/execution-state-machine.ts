@@ -13,6 +13,7 @@
  * Full requirement-evidence completion gate deferred to LH-5.
  */
 
+import { evaluateCompletionReadiness, type ReadinessInput } from "./adaptive/readiness.js";
 import { computeMissionContractDigest } from "./contract-digest.js";
 import { _getBoundContractDigest, type TrustedValidationContext } from "./trusted-context.js";
 import type { MissionContractV1 } from "./types.js";
@@ -286,6 +287,7 @@ export type MissionExecutionErrorCode =
 	| "RESUME_STATE_NOT_RESUMABLE"
 	| "TRUSTED_VALIDATION_CONTEXT_REQUIRED"
 	| "EXECUTION_COMPLETION_CAPABILITY_REQUIRED"
+	| "READINESS_GATE_BLOCKED"
 	| "CONTRACT_DIGEST_MISMATCH"
 	| "UNKNOWN_SEMANTIC_FIELD"
 	| "INTERNAL_ERROR";
@@ -534,6 +536,8 @@ export function applyMissionExecutionTransition(
 	request: MissionExecutionTransitionRequestV1,
 	options?: {
 		trustedValidationContext?: TrustedValidationContext;
+		/** Adaptive readiness gate. When present and not ready, APPROVE_COMPLETION is blocked. */
+		readinessGate?: ReadinessInput;
 	},
 ): MissionExecutionTransitionResult {
 	// Phase 0: Validate contract digest
@@ -681,6 +685,19 @@ export function applyMissionExecutionTransition(
 	if (toState === "COMPLETED") {
 		const completionError = checkCompletionAuthorization(contractDigest, options?.trustedValidationContext);
 		if (completionError) return completionError;
+
+		// Adaptive readiness gate: deterministic evidence-backed completion.
+		if (options?.readinessGate) {
+			const readiness = evaluateCompletionReadiness(options.readinessGate);
+			if (!readiness.ready) {
+				const blockers = readiness.blockers.join(",");
+				return {
+					ok: false,
+					error: `READINESS_GATE_BLOCKED: ${blockers}`,
+					code: "READINESS_GATE_BLOCKED",
+				};
+			}
+		}
 	}
 
 	// Phase 10: Duplicate transition ID check
