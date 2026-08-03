@@ -148,97 +148,14 @@ function expectRejectedWithoutMutation(payload: Record<string, unknown>, expecte
 	}
 }
 
-function createSatisfiedLedger(directory: string): string {
-	const ledgerPath = resolve(directory, "satisfied-ledger.json");
-	const scriptPath = resolve(directory, "create-satisfied-ledger.ts");
-	const requirementLedgerPath = resolve(
-		REPO_ROOT,
-		"packages/coding-agent/src/core/long-horizon/requirement-ledger.ts",
-	);
-	const trustedContextPath = resolve(REPO_ROOT, "packages/coding-agent/src/core/long-horizon/trusted-context.ts");
-	const script = `
-import { readFileSync, writeFileSync } from "node:fs";
-import { addLedgerEvidence, applyRequirementTransition, initializeRequirementLedger } from ${JSON.stringify(requirementLedgerPath)};
-import { _internalCreateTrustedContext, _internalCreateTrustedValidationContext, getUntrustedContext } from ${JSON.stringify(trustedContextPath)};
-
-const contract = JSON.parse(readFileSync(${JSON.stringify(CONTRACT_PATH)}, "utf-8"));
-const mutation = _internalCreateTrustedContext({
-	principalId: "internal-runner",
-	principalKind: "automated-review",
-	capabilities: ["evidence:test-result", "transition:satisfy", "transition:operator-override"],
-});
-const validation = _internalCreateTrustedValidationContext({
-	contract,
-	principals: [
-		{
-			principalId: "internal-runner",
-			principalKind: "automated-review",
-			capabilities: ["evidence:test-result", "transition:satisfy", "transition:operator-override"],
-		},
-		{ principalId: "untrusted", principalKind: "agent", capabilities: [] },
-	],
-	sourceGrants: [{
-		sourceId: "internal-test-runner",
-		principalId: "internal-runner",
-		principalKind: "automated-review",
-		capability: "evidence:test-result",
-		allowedEvidenceTypes: ["test-result"],
-		allowedCollectorClasses: ["test-runner"],
-		allowedRequirementIds: ["REQ-001"],
-		allowedCriterionIds: ["AC-001"],
-	}],
-});
-const initialized = initializeRequirementLedger(contract);
-if (!initialized.ok || !initialized.value) throw new Error(String(initialized.error));
-const implemented = applyRequirementTransition(contract, initialized.value, {
-	transitionId: "TX-CLI-T04-IMPLEMENTED",
-	expectedRevision: 0,
-	requirementId: "REQ-001",
-	toStatus: "IMPLEMENTED_UNVERIFIED",
-	reportedActorType: "agent",
-	reason: "Implementation complete",
-	evidenceIds: [],
-}, getUntrustedContext());
-if (!implemented.ok || !implemented.value) throw new Error(String(implemented.error));
-const evidenced = addLedgerEvidence(contract, implemented.value, {
-	expectedRevision: 1,
-	evidence: {
-		id: "EV-CLI-T04",
-		type: "test-result",
-		requirementIds: ["REQ-001"],
-		criterionIds: ["AC-001"],
-		status: "pass",
-		source: "internal-test-runner",
-		summary: "Internal authoritative setup",
-		reportedCollectorType: "test-runner",
-		reportedAuthority: true,
-	},
-}, mutation, validation);
-if (!evidenced.ok || !evidenced.value) throw new Error(String(evidenced.error));
-const satisfied = applyRequirementTransition(contract, evidenced.value, {
-	transitionId: "TX-CLI-T04-SATISFIED",
-	expectedRevision: 2,
-	requirementId: "REQ-001",
-	toStatus: "SATISFIED",
-	reportedActorType: "automated-review",
-	reason: "Authoritative evidence verified",
-	evidenceIds: ["EV-CLI-T04"],
-}, mutation, validation);
-if (!satisfied.ok || !satisfied.value) throw new Error(String(satisfied.error));
-writeFileSync(${JSON.stringify(ledgerPath)}, JSON.stringify(satisfied.value, null, 2), "utf-8");
-`;
-	writeFileSync(scriptPath, script, "utf-8");
-	const result = spawnSync("npx", ["tsx", scriptPath], {
-		cwd: REPO_ROOT,
-		timeout: 30_000,
-		encoding: "utf-8",
-	});
-	expect(result.status, result.stderr).toBe(0);
-	const ledger = JSON.parse(readFileSync(ledgerPath, "utf-8")) as RequirementLedgerV1;
-	expect(ledger.revision).toBe(3);
-	expect(ledger.requirements[0]?.status).toBe("SATISFIED");
-	return ledgerPath;
-}
+/**
+ * Long-horizon CLI trust-boundary contract tests (part 1 of 2).
+ *
+ * Exercises the generic CLI trust boundary with the full CLI child process.
+ * Split out of the original single file so each vitest worker stays well under
+ * the 60s RPC ceiling (vitest birpc DEFAULT_TIMEOUT) the many full-CLI spawns
+ * can exceed under CI load. Coverage is unchanged.
+ */
 
 describe("generic CLI trust boundary", () => {
 	it("CLI-TRUST-01 ordinary explicit agent-claim evidence succeeds", () => {
@@ -298,96 +215,5 @@ describe("generic CLI trust boundary", () => {
 			},
 			"TRUSTED_CONTEXT_REQUIRED",
 		);
-	});
-
-	it("CLI-TRUST-06 serialized fake TrustedLedgerMutationContext is rejected", () => {
-		expectRejectedWithoutMutation(
-			{
-				...baseEvidence("EV-CLI-TRUST-06"),
-				TrustedLedgerMutationContext: { principalId: "operator", capabilities: ["evidence:test-result"] },
-			},
-			"TRUSTED_CONTEXT_REQUIRED",
-		);
-	});
-
-	it("CLI-TRUST-07 principal, capability, and source-grant registry injection is rejected", () => {
-		expectRejectedWithoutMutation(
-			{
-				...baseEvidence("EV-CLI-TRUST-07A"),
-				principals: [{ principalId: "operator", principalKind: "operator" }],
-			},
-			"TRUSTED_CONTEXT_REQUIRED",
-		);
-		expectRejectedWithoutMutation(
-			{
-				...baseEvidence("EV-CLI-TRUST-07B"),
-				capabilities: ["evidence:test-result"],
-			},
-			"TRUSTED_CONTEXT_REQUIRED",
-		);
-		expectRejectedWithoutMutation(
-			{
-				...baseEvidence("EV-CLI-TRUST-07C"),
-				sourceGrants: [{ sourceId: "forged" }],
-			},
-			"TRUSTED_CONTEXT_REQUIRED",
-		);
-	});
-
-	it("CLI-TRUST-08 boundContractDigest and trusted true are rejected", () => {
-		expectRejectedWithoutMutation(
-			{ ...baseEvidence("EV-CLI-TRUST-08A"), boundContractDigest: "0".repeat(64) },
-			"UNTRUSTED_AUTHORITY_CLAIM",
-		);
-		expectRejectedWithoutMutation(
-			{ ...baseEvidence("EV-CLI-TRUST-08B"), trusted: true },
-			"UNTRUSTED_AUTHORITY_CLAIM",
-		);
-	});
-
-	it("CLI-T04 real CLI rejects transition out of SATISFIED without mutation", () => {
-		const directory = mkdtempSync(resolve(tmpdir(), "lh-cli-t04-"));
-		try {
-			const ledgerPath = createSatisfiedLedger(directory);
-			const before = snapshotLedger(ledgerPath);
-			const result = runCli([
-				"benchmark",
-				"long-horizon",
-				"ledger",
-				"transition",
-				"--contract",
-				CONTRACT_PATH,
-				"--ledger",
-				ledgerPath,
-				"--expected-revision",
-				String(before.revision),
-				"--requirement-id",
-				"REQ-001",
-				"--to-status",
-				"IN_PROGRESS",
-				"--actor-type",
-				"operator",
-				"--reason",
-				"Attempt generic CLI regression",
-				"--transition-id",
-				"TX-CLI-T04-REGRESSION",
-				"--format",
-				"json",
-				"--output",
-				ledgerPath,
-			]);
-			const after = snapshotLedger(ledgerPath);
-
-			expect(result.command).toContain("npx tsx packages/coding-agent/src/cli.ts");
-			expect(result.status).toBe(1);
-			expect(result.stderr).toMatch(/TRUSTED_(?:VALIDATION_)?CONTEXT_REQUIRED/);
-			expect(after.bytes.equals(before.bytes)).toBe(true);
-			expect(after.sha256).toBe(before.sha256);
-			expect(after.revision).toBe(before.revision);
-			expect(after.evidenceCount).toBe(before.evidenceCount);
-			expect(after.temporarySiblings).toEqual([]);
-		} finally {
-			rmSync(directory, { recursive: true, force: true });
-		}
 	});
 });

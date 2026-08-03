@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.0
+
+### Patch Changes
+
+- @apholdings/jensen-ai@1.4.0
+- @apholdings/jensen-tui@1.4.0
+
 ## 1.3.0
 
 ### Patch Changes
