@@ -14,6 +14,7 @@ import {
 	validateToolArguments,
 } from "@apholdings/jensen-ai";
 import { buildCacheStableContext, createContextCacheDiagnostics } from "./context-engine.js";
+import { DeterministicParallelScheduler, type SchedulerCall } from "./scheduler.js";
 import type {
 	AgentContext,
 	AgentEvent,
@@ -492,55 +493,45 @@ async function executeToolCallsParallel(
 		}
 	}
 
-	for (const batch of partitionPreparedToolCalls(runnableCalls)) {
-		const runningCalls = batch.calls.map((prepared) => ({
-			prepared,
-			execution: executePreparedToolCall(prepared, signal, emit),
-		}));
+	// Deterministic parallel-safe scheduling: only explicitly parallel-safe
+	// read-only calls run concurrently; mutations are serial barriers; results
+	// are presented in the original canonical call order.
+	const scheduler = new DeterministicParallelScheduler();
+	const schedulerCalls: SchedulerCall[] = runnableCalls.map((prepared, index) => ({
+		index,
+		toolCallId: prepared.toolCall.id,
+		toolName: prepared.toolCall.name,
+		args: prepared.args,
+		effects: prepared.tool.effects,
+		// Honor the explicit per-call concurrency contract in addition to
+		// declared effect metadata (conservative: defaults to serial).
+		concurrencySafe: (() => {
+			try {
+				return prepared.tool.isConcurrencySafe?.(prepared.args as never) ?? false;
+			} catch {
+				return false;
+			}
+		})(),
+		run: (callSignal) =>
+			executePreparedToolCall(prepared, callSignal ?? signal, emit).then((executed) => ({
+				result: executed.result,
+				isError: executed.isError,
+			})),
+	}));
 
-		for (const running of runningCalls) {
-			const executed = await running.execution;
-			results.push(
-				await finalizeExecutedToolCall(
-					currentContext,
-					assistantMessage,
-					running.prepared,
-					executed,
-					config,
-					signal,
-					emit,
-				),
-			);
-		}
+	const scheduledResults = await scheduler.run(schedulerCalls, signal);
+	for (const scheduled of scheduledResults) {
+		const prepared = runnableCalls[scheduled.index];
+		const executed: ExecutedToolCallOutcome = {
+			result: scheduled.result as AgentToolResult<any>,
+			isError: scheduled.isError,
+		};
+		results.push(
+			await finalizeExecutedToolCall(currentContext, assistantMessage, prepared, executed, config, signal, emit),
+		);
 	}
 
 	return results;
-}
-
-function partitionPreparedToolCalls(toolCalls: PreparedToolCall[]): PreparedToolCallBatch[] {
-	const batches: PreparedToolCallBatch[] = [];
-
-	for (const toolCall of toolCalls) {
-		const isConcurrencySafe = isPreparedToolCallConcurrencySafe(toolCall);
-		const previousBatch = batches[batches.length - 1];
-
-		if (isConcurrencySafe && previousBatch?.isConcurrencySafe) {
-			previousBatch.calls.push(toolCall);
-			continue;
-		}
-
-		batches.push({ calls: [toolCall], isConcurrencySafe });
-	}
-
-	return batches;
-}
-
-function isPreparedToolCallConcurrencySafe(toolCall: PreparedToolCall): boolean {
-	try {
-		return toolCall.tool.isConcurrencySafe?.(toolCall.args as never) ?? false;
-	} catch {
-		return false;
-	}
 }
 
 type PreparedToolCall = {
@@ -548,11 +539,6 @@ type PreparedToolCall = {
 	toolCall: AgentToolCall;
 	tool: AgentTool<any>;
 	args: unknown;
-};
-
-type PreparedToolCallBatch = {
-	calls: PreparedToolCall[];
-	isConcurrencySafe: boolean;
 };
 
 type ImmediateToolCallOutcome = {

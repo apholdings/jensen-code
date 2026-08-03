@@ -47,6 +47,13 @@ export {
 	shouldCompact,
 } from "./core/compaction/index.js";
 export { createEventBus, type EventBus, type EventBusController } from "./core/event-bus.js";
+// Execution diagnostics (doctor lsp|tools|scheduler|jobs)
+export {
+	collectExecutionDiagnostics,
+	type ExecutionDiagnostics,
+	type ExecutionDiagnosticsInput,
+	formatExecutionDiagnostics,
+} from "./core/execution-diagnostics.js";
 // Extension system
 export type {
 	AgentEndEvent,
@@ -142,6 +149,18 @@ export {
 } from "./core/extensions/index.js";
 // Footer data provider (git branch + extension statuses - data not otherwise available to extensions)
 export type { ReadonlyFooterDataProvider } from "./core/footer-data-provider.js";
+// Durable background-job registry (1.4.0)
+export { type BackgroundJobRecord, BackgroundJobRegistry, createJobTools } from "./core/jobs/index.js";
+// Native Language Server Protocol subsystem (1.4.0)
+export {
+	createLspTools,
+	DEFAULT_LANGUAGE_SERVERS,
+	JsonRpcClient,
+	LspClient,
+	LspRuntime,
+	type LspServerIdentity,
+	LspServerManager,
+} from "./core/lsp/index.js";
 export {
 	buildStructuredMemoryCompareData,
 	buildStructuredMemoryHistoryData,
@@ -267,6 +286,25 @@ export {
 	type Skill,
 	type SkillFrontmatter,
 } from "./core/skills.js";
+// Tool storm breaker (1.4.0)
+export {
+	fingerprintCall,
+	StormBreaker,
+	TOOL_CALL_DUPLICATE_NO_PROGRESS,
+	TOOL_CALL_STORM_BLOCKED,
+	TOOL_STRATEGY_PIVOT_REQUIRED,
+} from "./core/storm/index.js";
+// Tool-call normalization & conservative repair (1.4.0)
+export {
+	canonicalStableStringify,
+	type NormalizedToolCall,
+	normalizeToolCall,
+	runToolCallPipeline,
+	scavengeToolCall,
+	ToolCallNormalizationError,
+	type ToolCallRepair,
+	validateAgainstSchema,
+} from "./core/tool-call/index.js";
 // Tools
 export {
 	type BashOperations,
