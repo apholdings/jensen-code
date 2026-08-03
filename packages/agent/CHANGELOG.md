@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.0
+
+### Patch Changes
+
+- @apholdings/jensen-ai@1.5.0
+
 ## 1.4.0
 
 ### Minor Changes

@@ -664,28 +664,57 @@ it("does not promote any dist-tag when final registry verification fails", async
 	assert.equal(promotions, 0);
 });
 
-it("fails release and skips Git tag when dist-tag verification fails", async () => {
+it("does not skip Git tag creation when dist-tag verification lags (propagation, not failure)", async () => {
+	let gitTags = 0;
+	let written;
+
+	const result = await orchestratePublish({
+		packages: ALL_SEVEN,
+		publishTag: "fork",
+		checkVersion: checkAllPublished(),
+		waitForVersion: waitImmediate(),
+		publishFn: () => {},
+		promoteTags: () => {
+			// Simulate dist-tag propagation lag: versions are verified but a tag
+			// is stale. This must NOT abort the release.
+			return { converged: false, staleTags: ["@apholdings/jensen-ai@latest"] };
+		},
+		createTag: () => {
+			gitTags += 1;
+			return true;
+		},
+		writeOutput: (r) => {
+			written = r;
+		},
+	});
+
+	assert.equal(gitTags, 1, "Git tag must be created even when dist-tag convergence lags");
+	assert.equal(result.releaseState, "PUBLISHED_TAGS_PROPAGATING");
+	assert.equal(written.tagsPropagating, true);
+	assert.equal(written.releaseTag, "v1.1.7");
+});
+
+it("does not skip Git tag creation when dist-tag verification throws", async () => {
 	let gitTags = 0;
 
-	await assert.rejects(
-		orchestratePublish({
-			packages: ALL_SEVEN,
-			publishTag: "fork",
-			checkVersion: checkAllPublished(),
-			waitForVersion: waitImmediate(),
-			publishFn: () => {},
-			promoteTags: () => {
-				throw new Error("Dist-tag verification failed");
-			},
-			createTag: () => {
-				gitTags += 1;
-				return true;
-			},
-			writeOutput: () => {},
-		}),
-		/Dist-tag verification failed/,
-	);
-	assert.equal(gitTags, 0);
+	const result = await orchestratePublish({
+		packages: ALL_SEVEN,
+		publishTag: "fork",
+		checkVersion: checkAllPublished(),
+		waitForVersion: waitImmediate(),
+		publishFn: () => {},
+		promoteTags: () => {
+			throw new Error("dist-tag read raced");
+		},
+		createTag: () => {
+			gitTags += 1;
+			return true;
+		},
+		writeOutput: () => {},
+	});
+
+	assert.equal(gitTags, 1, "Git tag must be created even if the dist-tag read throws");
+	assert.equal(result.releaseState, "PUBLISHED_TAGS_PROPAGATING");
 });
 
 // ============================================================================

@@ -5,6 +5,10 @@
  * the Mission Contract and Requirement Ledger system.
  */
 
+// =============================================================================
+// Adaptive long-horizon runtime (1.5.0)
+// =============================================================================
+export * from "./adaptive/index.js";
 // Pure APIs
 export { toCanonicalJson } from "./canonical-json.js";
 // CLI
