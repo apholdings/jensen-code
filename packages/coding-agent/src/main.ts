@@ -22,6 +22,7 @@ import { KeybindingsManager } from "./core/keybindings.js";
 import { handleAdaptiveCommand } from "./core/long-horizon/adaptive/cli.js";
 import { ModelRegistry } from "./core/model-registry.js";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
+import { handleOperabilityCommand } from "./core/operability-cli.js";
 import { DefaultPackageManager } from "./core/package-manager.js";
 import { DefaultResourceLoader } from "./core/resource-loader.js";
 import { handleWorkspaceCommand } from "./core/safety/cli.js";
@@ -599,6 +600,10 @@ export async function main(args: string[]) {
 	}
 
 	if (await handleWorkspaceCommand(args)) {
+		return;
+	}
+
+	if (await handleOperabilityCommand(args)) {
 		return;
 	}
 
