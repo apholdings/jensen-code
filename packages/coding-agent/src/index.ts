@@ -170,6 +170,42 @@ export type {
 export { DefaultPackageManager } from "./core/package-manager.js";
 export type { ResourceCollision, ResourceDiagnostic, ResourceLoader } from "./core/resource-loader.js";
 export { DefaultResourceLoader } from "./core/resource-loader.js";
+export { defaultWorkspaceStateDir, handleWorkspaceCommand } from "./core/safety/cli.js";
+export type {
+	ExecutionMode,
+	LeaseRecord,
+	LeaseResult,
+	MutationLifecycleEvent,
+	MutationOutcome,
+	PolicyDecision,
+	PolicyEvaluation,
+	RecoveryClass,
+	RollbackConflict,
+	RollbackResult,
+	TransactionRecord,
+	WorkspaceCheckpoint,
+	WorkspaceEdit,
+	WorkspaceSafetyOptions,
+} from "./core/safety/index.js";
+// Safe autonomous execution
+export {
+	CheckpointError,
+	CheckpointStore,
+	isSecretPath,
+	PolicyApprovalRequiredError,
+	PolicyDeniedError,
+	PolicyEngine,
+	PRODUCTION_TOOL_EFFECTS,
+	sha256,
+	TransactionError,
+	validateToolEffects,
+	WorkspaceBoundary,
+	WorkspaceBoundaryError,
+	WorkspaceLeaseError,
+	WorkspaceLeaseStore,
+	WorkspaceSafety,
+	WorkspaceTransactionManager,
+} from "./core/safety/index.js";
 // SDK for programmatic usage
 export {
 	type CreateAgentSessionOptions,

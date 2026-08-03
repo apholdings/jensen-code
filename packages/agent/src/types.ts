@@ -275,10 +275,78 @@ export interface AgentToolResult<T> {
 // Callback for streaming tool execution updates
 export type AgentToolUpdateCallback<T = any> = (partialResult: AgentToolResult<T>) => void;
 
+/**
+ * Explicit effect scope for a tool. Used to describe what a tool may touch so
+ * that a deterministic policy engine can reason about it before execution.
+ */
+export type ToolEffectScope =
+	| { kind: "workspace"; paths?: string[] }
+	| { kind: "git" }
+	| { kind: "process" }
+	| { kind: "network"; hosts?: string[] }
+	| { kind: "external"; resource?: string }
+	| { kind: "unknown" };
+
+/**
+ * Canonical, typed effect metadata for a tool. Every production tool declares
+ * these so that a deterministic policy engine can classify effects before
+ * execution. These fields are derived facts about the tool, never influenced by
+ * model output, tool results or web content.
+ */
+export interface ToolEffects {
+	/** Reads files within the authorized workspace. */
+	readsWorkspace: boolean;
+	/** Writes within the authorized workspace. */
+	writesWorkspace: boolean;
+	/** Creates new files. */
+	createsFiles: boolean;
+	/** Deletes files or directories. */
+	deletesFiles: boolean;
+	/** Executes a child process / shell command. */
+	executesProcesses: boolean;
+	/** Starts a persistent (long-lived, non-exiting) process. */
+	startsPersistentProcesses: boolean;
+	/** Opens network connections / HTTP requests. */
+	accessesNetwork: boolean;
+	/** Mutates Git state (commits, refs, resets, force ops). */
+	mutatesGit: boolean;
+	/** Mutates external state outside the workspace. */
+	mutatesExternalState: boolean;
+	/** Reads, writes or otherwise handles secret material. */
+	handlesSecrets: boolean;
+	/** Capable of destructive, hard-to-reverse operations. */
+	potentiallyDestructive: boolean;
+	/** Requires exclusive workspace authority to run safely. */
+	requiresExclusiveWorkspaceLease: boolean;
+	/** Explicitly safe to run concurrently with other parallelSafe tools. */
+	parallelSafe: boolean;
+	/** Optional scopes describing what the tool touches. */
+	scopes?: ToolEffectScope[];
+}
+
+/** A read-only tool effect descriptor shared by many pure read tools. */
+export const READ_ONLY_TOOL_EFFECTS: ToolEffects = {
+	readsWorkspace: true,
+	writesWorkspace: false,
+	createsFiles: false,
+	deletesFiles: false,
+	executesProcesses: false,
+	startsPersistentProcesses: false,
+	accessesNetwork: false,
+	mutatesGit: false,
+	mutatesExternalState: false,
+	handlesSecrets: false,
+	potentiallyDestructive: false,
+	requiresExclusiveWorkspaceLease: false,
+	parallelSafe: true,
+};
+
 // AgentTool extends Tool but adds the execute function
 export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any> extends Tool<TParameters> {
 	// A human-readable label for the tool to be displayed in UI
 	label: string;
+	/** Canonical declared effect metadata. Absent only for non-production tools. */
+	effects?: ToolEffects;
 	/**
 	 * Optional per-tool concurrency classification for parallel tool execution.
 	 *
