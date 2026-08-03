@@ -114,6 +114,7 @@ export {
 } from "./write.js";
 
 import type { AgentTool } from "@apholdings/jensen-agent-core";
+import { PRODUCTION_TOOL_EFFECTS } from "../safety/effects.js";
 import { type BashToolOptions, bashTool, createBashTool } from "./bash.js";
 import { createDeepResearchTool, deepResearchTool } from "./deep-research.js";
 import { createEditTool, editTool } from "./edit.js";
@@ -135,8 +136,28 @@ import { createWriteTool, writeTool } from "./write.js";
 /** Tool type (AgentTool from pi-ai) */
 export type Tool = AgentTool<any>;
 
+/** Attach canonical declared effects to a tool from the production registry. */
+function attachEffects(tool: AgentTool<any>): AgentTool<any> {
+	const effects = PRODUCTION_TOOL_EFFECTS[tool.name];
+	if (effects) {
+		return Object.assign(tool, { effects });
+	}
+	return tool;
+}
+
+function withEffectsList(tools: unknown[]): Tool[] {
+	return (tools as AgentTool<any>[]).map((t) => attachEffects(t));
+}
+
+function withEffectsRecord(record: Record<string, AgentTool<any>>): Record<string, AgentTool<any>> {
+	for (const key of Object.keys(record)) {
+		record[key] = attachEffects(record[key]);
+	}
+	return record;
+}
+
 // Default tools for full access mode (using process.cwd())
-export const codingTools: Tool[] = [
+export const codingTools: Tool[] = withEffectsList([
 	readTool,
 	bashTool,
 	powershellTool,
@@ -147,13 +168,13 @@ export const codingTools: Tool[] = [
 	todoUpdateTool,
 	memoryWriteTool,
 	processManagerTool,
-];
+]);
 
 // Read-only tools for exploration without modification (using process.cwd())
-export const readOnlyTools: Tool[] = [readTool, grepTool, findTool, lsTool, todoReadTool];
+export const readOnlyTools: Tool[] = withEffectsList([readTool, grepTool, findTool, lsTool, todoReadTool]);
 
 // All available tools (using process.cwd())
-export const allTools = {
+export const allTools = withEffectsRecord({
 	read: readTool,
 	bash: bashTool,
 	powershell: powershellTool,
@@ -171,7 +192,7 @@ export const allTools = {
 	deep_research: deepResearchTool,
 	web_research_status: webResearchStatusTool,
 	process_manager: processManagerTool,
-};
+});
 
 export type ToolName = keyof typeof allTools;
 
@@ -190,7 +211,7 @@ export interface ToolsOptions {
  * Create coding tools configured for a specific working directory.
  */
 export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
-	return [
+	return withEffectsList([
 		createReadTool(cwd, options?.read),
 		createBashTool(cwd, options?.bash),
 		createPowerShellTool(cwd, options?.powershell),
@@ -201,27 +222,27 @@ export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
 		todoUpdateTool,
 		memoryWriteTool,
 		createProcessManagerTool(cwd, options?.process_manager),
-	];
+	]);
 }
 
 /**
  * Create read-only tools configured for a specific working directory.
  */
 export function createReadOnlyTools(cwd: string, options?: ToolsOptions): Tool[] {
-	return [
+	return withEffectsList([
 		createReadTool(cwd, options?.read),
 		createGrepTool(cwd),
 		createFindTool(cwd),
 		createLsTool(cwd),
 		todoReadTool,
-	];
+	]);
 }
 
 /**
  * Create all tools configured for a specific working directory.
  */
 export function createAllTools(cwd: string, options?: ToolsOptions): Record<ToolName, Tool> {
-	return {
+	return withEffectsRecord({
 		read: createReadTool(cwd, options?.read),
 		bash: createBashTool(cwd, options?.bash),
 		powershell: createPowerShellTool(cwd, options?.powershell),
@@ -239,5 +260,5 @@ export function createAllTools(cwd: string, options?: ToolsOptions): Record<Tool
 		deep_research: createDeepResearchTool(),
 		web_research_status: createWebResearchStatusTool(),
 		process_manager: createProcessManagerTool(cwd, options?.process_manager),
-	};
+	});
 }

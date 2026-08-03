@@ -23,6 +23,7 @@ import { ModelRegistry } from "./core/model-registry.js";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
 import { DefaultPackageManager } from "./core/package-manager.js";
 import { DefaultResourceLoader } from "./core/resource-loader.js";
+import { handleWorkspaceCommand } from "./core/safety/cli.js";
 import { type CreateAgentSessionOptions, createAgentSession } from "./core/sdk.js";
 import { SessionManager } from "./core/session-manager.js";
 import { SettingsManager } from "./core/settings-manager.js";
@@ -593,6 +594,10 @@ export async function main(args: string[]) {
 	}
 
 	if (await handleBenchmarkCommand(args)) {
+		return;
+	}
+
+	if (await handleWorkspaceCommand(args)) {
 		return;
 	}
 
