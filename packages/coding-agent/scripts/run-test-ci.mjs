@@ -23,7 +23,10 @@ export const continuationRevisionShardFiles = [
 	"test/long-horizon/continuation-cli-revision-scheduler.test.ts",
 	"test/long-horizon/continuation-cli-revision-controls.test.ts",
 ];
-export const cliShardFiles = ["test/long-horizon/cli.test.ts"];
+export const cliShardFiles = [
+	"test/long-horizon/cli.test.ts",
+	"test/long-horizon/cli-evidence.test.ts",
+];
 export const rpcIsolatedTestFiles = [
 	...continuationShardFiles,
 	...executionRevisionShardFiles,
