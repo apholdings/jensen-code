@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.6.2
+
+### Patch Changes
+
+- b565a26: Add a canonical policy-bound subagent registry with explicit OpenRouter model routing, typed unknown-agent resolution, structured output contracts, and validated Cavecrew investigator, builder, and reviewer roles.
+- 708dac4: Wire canonical subagent resolution, isolated context packets, parent output validation, and deterministic transactional Cavecrew orchestration into runtime dispatch. Make release artifact integrity checks build their inputs before verification.
+- Updated dependencies [b565a26]
+- Updated dependencies [708dac4]
+  - @apholdings/jensen-agent-core@1.6.2
+  - @apholdings/jensen-ai@1.6.2
+  - @apholdings/jensen-tui@1.6.2
+
 ## [Unreleased]
 
 ### Added
