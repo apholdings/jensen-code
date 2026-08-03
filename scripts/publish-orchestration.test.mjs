@@ -6,6 +6,7 @@ import {
 	STABLE_DIST_TAGS,
 	TOPOLOGICAL_ORDER,
 	EXPECTED_PACKAGE_COUNT,
+	waitForDistTag,
 } from "./publish-unpublished-packages.mjs";
 
 // ============================================================================
@@ -685,4 +686,58 @@ it("fails release and skips Git tag when dist-tag verification fails", async () 
 		/Dist-tag verification failed/,
 	);
 	assert.equal(gitTags, 0);
+});
+
+// ============================================================================
+// Dist-tag verification retry (npm propagation delays)
+// ============================================================================
+
+it("waitForDistTag retries stale reads with bounded backoff and succeeds once propagated", () => {
+	const sleeps = [];
+	let reads = 0;
+	// Stale for the first 2 reads, then propagated.
+	const checkTag = () => {
+		reads += 1;
+		return { matches: reads >= 3, summary: `read ${reads}` };
+	};
+	waitForDistTag("@apholdings/jensen-ai", "1.3.0", "latest", {
+		maxAttempts: 6,
+		initialDelayMs: 100,
+		maxDelayMs: 400,
+		checkTag,
+		sleep: (ms) => sleeps.push(ms),
+	});
+	assert.equal(reads, 3, "should stop after the tag becomes visible");
+	assert.deepEqual(sleeps, [100, 200], "exponential backoff between retries");
+});
+
+it("waitForDistTag fails only after exhausting the retry budget", () => {
+	const sleeps = [];
+	let reads = 0;
+	const checkTag = () => {
+		reads += 1;
+		return { matches: false, summary: "stale" };
+	};
+	assert.throws(
+		() =>
+			waitForDistTag("@apholdings/jensen-ai", "1.3.0", "latest", {
+				maxAttempts: 3,
+				initialDelayMs: 10,
+				maxDelayMs: 40,
+				checkTag,
+				sleep: (ms) => sleeps.push(ms),
+			}),
+		/Dist-tag verification failed/,
+	);
+	assert.equal(reads, 3);
+	assert.equal(sleeps.length, 2, "only retries between attempts");
+});
+
+it("promoteStableDistTags default path retries dist-tag verification via backoff", () => {
+	const verifyWithRetryCalls = [];
+	promoteStableDistTags(ALL_SEVEN, ALL_SEVEN[0].version, {
+		addTag: () => {},
+		verifyWithRetry: (name, version, tag) => verifyWithRetryCalls.push({ name, version, tag }),
+	});
+	assert.equal(verifyWithRetryCalls.length, ALL_SEVEN.length * STABLE_DIST_TAGS.length);
 });
