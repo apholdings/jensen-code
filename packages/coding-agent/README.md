@@ -16,7 +16,7 @@
 
 Pi is a minimal terminal coding harness. Adapt pi to your workflows, not the other way around, without having to fork and modify pi internals. Extend it with TypeScript [Extensions](#extensions), [Skills](#skills), [Prompt Templates](#prompt-templates), and [Themes](#themes). Put your extensions, skills, prompt templates, and themes in [Pi Packages](#pi-packages) and share them with others via npm or git.
 
-Pi ships with powerful defaults but skips features like sub agents and plan mode. Instead, you can ask pi to build what you want or install a third party pi package that matches your workflow.
+Pi ships with a canonical policy-bound subagent registry and Cavecrew runtime. The `subagent` extension resolves roles, models, tools, budgets, context packets, and output schemas through that registry; Cavecrew runs read-only investigators, a bounded planner, a transactional builder, and a read-only reviewer. User and workspace Markdown prompts cannot broaden runtime policy.
 
 Pi runs in four modes: interactive, print or JSON, RPC for process integration, and an SDK for embedding in your own apps. See [openclaw/openclaw](https://github.com/openclaw/openclaw) for a real-world SDK integration.
 
@@ -449,6 +449,21 @@ Pi is aggressively extensible so it doesn't have to dictate your workflow. Featu
 Read the [blog post](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) for the full rationale.
 
 ---
+
+## Subagents and Cavecrew
+
+Inspect the canonical registry and skill dependency state with:
+
+```bash
+jensen agents list
+jensen agents resolve cavecrew-investigator
+jensen agents validate
+jensen skills validate
+jensen skills migrate --preview
+jensen cavecrew validate
+```
+
+`cavecrew-builder` is limited to two affected files and uses the existing workspace boundary, policy engine, exclusive lease, checkpoint, transaction, focused validation, and rollback lifecycle. Builder edits are serialized; analytical children are read-only and may run in deterministic parallel assignment order. Parent-side validation rejects invalid child structures before results enter orchestration state.
 
 ## CLI Reference
 

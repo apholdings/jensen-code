@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Wire canonical subagent resolution, isolated context packets, parent-side structured-output validation, and deterministic transactional Cavecrew orchestration into runtime dispatch.
+
+### Fixed
+
+- Build canonical package artifacts before release-tooling integrity verification.
+
 ## 1.6.1
 
 ### Patch Changes

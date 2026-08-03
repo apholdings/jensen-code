@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { getAgentDir } from "../config.js";
+import { applySkillMigration, previewSkillMigration } from "./skill-migration.js";
 import type { Skill } from "./skills.js";
 import { loadSkills } from "./skills.js";
 import { getCanonicalSubagentRegistry, validateSkillAgentReferences } from "./subagent-registry.js";
@@ -14,6 +15,23 @@ function skillDependencies(skill: Skill) {
 }
 
 export async function handleSubagentCommand(args: string[]): Promise<boolean> {
+	if (args[0] === "skills" && args[1] === "migrate") {
+		const previews = args.includes("--apply") ? applySkillMigration() : previewSkillMigration();
+		printJson({ mode: args.includes("--apply") ? "apply" : "preview", previews }, args.includes("--json"));
+		return true;
+	}
+	if (args[0] === "cavecrew") {
+		if (args[1] !== "status" && args[1] !== "validate") throw new Error("Usage: jensen cavecrew status|validate");
+		const registry = getCanonicalSubagentRegistry();
+		const cavecrewAgents = ["cavecrew-investigator", "planner", "cavecrew-builder", "cavecrew-reviewer"];
+		const resolutions = cavecrewAgents.map((agent) => ({ agent, resolution: registry.resolve(agent) }));
+		printJson(
+			{ valid: resolutions.every(({ resolution }) => !("code" in resolution)), resolutions },
+			args.includes("--json"),
+		);
+		process.exitCode = resolutions.every(({ resolution }) => !("code" in resolution)) ? 0 : 1;
+		return true;
+	}
 	if (args[0] !== "agents" && args[0] !== "skills") return false;
 	const registry = getCanonicalSubagentRegistry();
 	const json = args.includes("--json");

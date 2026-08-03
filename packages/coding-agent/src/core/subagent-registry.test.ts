@@ -7,6 +7,12 @@ import {
 	validateSkillAgentReferences,
 	validateSubagentOutput,
 } from "./subagent-registry.js";
+import {
+	createSubagentContextPacket,
+	resolveSubagentInvocation,
+	SubagentRuntimeError,
+	validateParentSubagentOutput,
+} from "./subagent-runtime.js";
 
 describe("canonical subagent registry", () => {
 	it("contains all advertised agents in deterministic order", () => {
@@ -119,5 +125,50 @@ describe("canonical subagent registry", () => {
 		const registry = getCanonicalSubagentRegistry();
 		const result = registry.resolve("scout", { availableModels: ["deepseek/deepseek-v4-flash-0731"] });
 		expect(result).toMatchObject({ code: "SUBAGENT_MODEL_UNAVAILABLE", automaticFallbackAttempted: false });
+	});
+
+	it("creates an immutable isolated context packet from a resolved invocation", () => {
+		const invocation = resolveSubagentInvocation({
+			requestedAgent: "cavecrew-investigator",
+			parentRunId: "parent-1",
+		});
+		const packet = createSubagentContextPacket({
+			invocation,
+			objective: "Trace dispatch",
+			acceptanceCriteria: ["No mutation"],
+			selectedEvidenceIds: ["ev-1"],
+			selectedFileReferences: ["src/index.ts"],
+			constraints: ["No secrets"],
+		});
+		expect(packet).toMatchObject({
+			objective: "Trace dispatch",
+			effectiveExecutionMode: "observe",
+			requiredOutputSchema: "cavecrew-investigation-result-v1",
+			parentRunId: "parent-1",
+		});
+		expect(Object.isFrozen(packet)).toBe(true);
+		expect(packet).not.toHaveProperty("transcript");
+	});
+
+	it("rejects a child that exceeds parent tools or mode", () => {
+		expect(() =>
+			resolveSubagentInvocation({
+				requestedAgent: "worker",
+				parentRunId: "parent-1",
+				parentPolicy: { allowedTools: ["read"], executionMode: "observe" },
+			}),
+		).toThrowError(SubagentRuntimeError);
+	});
+
+	it("validates child structured output at the parent boundary", () => {
+		const invocation = resolveSubagentInvocation({ requestedAgent: "cavecrew-reviewer", parentRunId: "parent-1" });
+		const result = validateParentSubagentOutput({
+			invocation,
+			rawOutput: JSON.stringify({ verdict: "pass", findings: [], missingTests: [], acceptanceGaps: [] }),
+		});
+		expect(result.value.verdict).toBe("pass");
+		expect(() => validateParentSubagentOutput({ invocation, rawOutput: "arbitrary prose" })).toThrow(
+			"SUBAGENT_OUTPUT_INVALID",
+		);
 	});
 });

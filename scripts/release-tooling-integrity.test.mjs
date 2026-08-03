@@ -77,9 +77,10 @@ test("test:release-tooling script exists in root package.json", () => {
 	);
 });
 
-test("npm run check invokes test:release-tooling", () => {
+test("npm run check builds before release-tooling integrity verification", () => {
 	const rootPkg = readJson("package.json");
 	const checkScript = rootPkg.scripts.check;
+	ok(checkScript.includes("npm run build"), "check script must build canonical artifacts first");
 	ok(checkScript.includes("test:release-tooling"), "check script must invoke test:release-tooling");
 });
 

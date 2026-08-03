@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -93,9 +93,8 @@ try {
 	// Delete tarballs
 	for (const pkgDir of ['ai', 'agent', 'tui', 'coding-agent']) {
 		const pkgPath = join(rootDir, 'packages', pkgDir);
-		const files = execSync('dir /b *.tgz', { cwd: pkgPath }).toString().trim().split('\n');
-		for (const f of files) {
-			if (f.trim()) rmSync(join(pkgPath, f.trim()));
+		for (const file of readdirSync(pkgPath)) {
+			if (file.endsWith('.tgz')) rmSync(join(pkgPath, file), { force: true });
 		}
 	}
 	// Cleanup temp dir
