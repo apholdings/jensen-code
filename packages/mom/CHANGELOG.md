@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.1
+
+### Patch Changes
+
+- Updated dependencies [cbd624d]
+  - @apholdings/jensen-code@1.2.1
+  - @apholdings/jensen-agent-core@1.2.1
+  - @apholdings/jensen-ai@1.2.1
+
 ## 1.2.0
 
 ### Patch Changes

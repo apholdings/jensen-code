@@ -1,5 +1,0 @@
----
-"@apholdings/jensen-code": patch
----
-
-Fix deep research production failures: register and expose the web research tools (`web_search`, `web_fetch`, `deep_research`, `web_research_status`) in the default active tool set so a fresh session can use them; enforce that deep research collects evidence only through the secure `web_fetch` path (no shell-imported evidence); make every research claim addressable with per-claim evidence support and content hashes; add a deterministic temporal source-resolution engine that distinguishes historical, current, superseded, and contradictory values without blind recency; add a deterministic numerical verifier that applies flat versus percentage bonuses correctly and never labels an average-as-DPS without a sourced cadence; add a conclusion consistency gate over ranked metrics, unresolved temporal facts, and stale recommendations; and suppress internal tool bookkeeping from leaking into the research synthesis. Add deterministic regression fixtures for each failure class.
