@@ -23,11 +23,13 @@ export const continuationRevisionShardFiles = [
 	"test/long-horizon/continuation-cli-revision-scheduler.test.ts",
 	"test/long-horizon/continuation-cli-revision-controls.test.ts",
 ];
+export const cliShardFiles = ["test/long-horizon/cli.test.ts"];
 export const rpcIsolatedTestFiles = [
 	...continuationShardFiles,
 	...executionRevisionShardFiles,
 	...executionCliShardFiles,
 	...continuationRevisionShardFiles,
+	...cliShardFiles,
 ];
 const productionHarnessFile = "src/core/production-todo-provider-harness.test.ts";
 const orchestrationTestFile = "test/run-test-ci.test.mjs";
