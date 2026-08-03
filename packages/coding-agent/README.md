@@ -338,6 +338,14 @@ export default function (pi: ExtensionAPI) {
 
 Place in `~/.pi/agent/extensions/`, `.pi/extensions/`, or a [pi package](#pi-packages) to share with others. See [docs/extensions.md](docs/extensions.md) and [examples/extensions/](examples/extensions/).
 
+### Canonical subagents and Cavecrew
+
+Jensen ships one policy-bound subagent registry. Inspect it with `jensen agents list`, `jensen agents inspect <name>`, `jensen agents resolve <name>`, `jensen agents validate`, `jensen agents models`, or `jensen agents aliases`. Skill dependencies can be checked with `jensen skills validate` and `jensen skills dependencies <skill>`; use `jensen doctor subagents` and `jensen doctor skills` through the same diagnostics surface when available.
+
+The built-in roles are `scout`, `cavecrew-investigator`, `planner`, `cavecrew-builder`, `worker`, `cavecrew-reviewer`, `reviewer`, `librarian`, `security`, and `pentester`. Analytical/read-only roles use OpenRouter `deepseek/deepseek-v4-flash-latest`; `worker` and `cavecrew-builder` use OpenRouter `openai/gpt-5.6-luna`. The `~` profile marker is stripped before a provider request and model resolution is recorded. Unknown names fail with a typed error; Jensen never silently substitutes an agent.
+
+`cavecrew-investigator` and `cavecrew-reviewer` are read-only. `cavecrew-builder` is a restricted worker specialization limited to a bounded one- or two-file transactional change, with checkpoint, lease, focused validation, and rollback. Child permissions cannot exceed the parent, and fallback requires explicit policy and approval. User/workspace definitions may shadow packaged resources, but precedence is reported and cannot broaden the canonical policy.
+
 ### Themes
 
 Built-in: `dark`, `light`. Themes hot-reload: modify the active theme file and pi immediately applies changes.
@@ -456,6 +464,9 @@ pi remove <source> [-l]     # Remove package
 pi update [source]          # Update packages (skips pinned)
 pi list                     # List installed packages
 pi config                   # Enable/disable package resources
+jensen agents list --json   # Inspect the canonical subagent registry
+jensen agents validate      # Validate definitions and fallback references
+jensen skills validate      # Validate loaded skill dependencies before use
 ```
 
 ### Modes

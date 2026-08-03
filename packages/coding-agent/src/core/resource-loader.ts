@@ -19,6 +19,7 @@ import { findNearestProtocolContextFile } from "./protocol-status.js";
 import { SettingsManager } from "./settings-manager.js";
 import type { Skill } from "./skills.js";
 import { loadSkills } from "./skills.js";
+import { validateSkillAgentReferences } from "./subagent-registry.js";
 
 export interface ResourceExtensionPaths {
 	skillPaths?: Array<{ path: string; metadata: PathMetadata }>;
@@ -504,8 +505,23 @@ export class DefaultResourceLoader implements ResourceLoader {
 			});
 		}
 		const resolvedSkills = this.skillsOverride ? this.skillsOverride(skillsResult) : skillsResult;
-		this.skills = resolvedSkills.skills;
-		this.skillDiagnostics = resolvedSkills.diagnostics;
+		this.skills = resolvedSkills.skills.filter((skill) => {
+			const dependencyErrors = validateSkillAgentReferences(
+				skill.name,
+				skill.filePath,
+				readFileSync(skill.filePath, "utf8"),
+			);
+			if (dependencyErrors.length === 0) return true;
+			for (const dependencyError of dependencyErrors) {
+				this.skillDiagnostics.push({
+					type: "error",
+					message: `${dependencyError.code}: ${dependencyError.missingAgent ?? "invalid dependency"}. ${dependencyError.recommendedRemediation}`,
+					path: skill.filePath,
+				});
+			}
+			return false;
+		});
+		this.skillDiagnostics = [...this.skillDiagnostics, ...resolvedSkills.diagnostics];
 		this.applyExtensionMetadata(
 			extensionPaths,
 			this.skills.map((skill) => skill.filePath),

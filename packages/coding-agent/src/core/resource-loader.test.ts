@@ -154,6 +154,24 @@ describe("skill discovery", () => {
 		}
 	});
 
+	it("rejects a skill with an unregistered Cavecrew dependency before activation", async () => {
+		const rootDir = createTempDir();
+		tempDirs.push(rootDir);
+		const skillsDir = join(rootDir, ".jensen", "skills", "broken");
+		writeFile(
+			join(skillsDir, "SKILL.md"),
+			`---\nname: broken\ndescription: Broken skill.\n---\nUse cavecrew-investigator-typo.\n`,
+		);
+		const loader = createLoader(rootDir, join(rootDir, "agent"));
+		await loader.reload();
+		expect(loader.getSkills().skills.some((skill) => skill.name === "broken")).toBe(false);
+		expect(loader.getSkills().diagnostics).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ type: "error", message: expect.stringContaining("SKILL_DEPENDENCY_INVALID") }),
+			]),
+		);
+	});
+
 	it("loads only SKILL.md entrypoints and ignores README inventory docs", () => {
 		const rootDir = createTempDir();
 		tempDirs.push(rootDir);
