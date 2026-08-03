@@ -3,6 +3,7 @@ import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import type { AgentMessage } from "@apholdings/jensen-agent-core";
 import type { FileEntry, SessionEntry, SessionHeader, SessionMessageEntry } from "./session-manager.js";
+import { workspaceDoctorChecks } from "./workspace/index.js";
 
 export const OBSERVABILITY_SCHEMA_VERSION = 1;
 export const DEFAULT_PAGE_SIZE = 50;
@@ -636,6 +637,8 @@ export function collectDiagnostics(
 			reasonCode: "live_probe_not_enabled",
 			summary: "MCP live probes are opt-in and not run by default",
 		});
+	// Workspace intelligence index/embedding/retrieval checks (1.7.0, read-only).
+	checks.push(...workspaceDoctorChecks(cwd));
 	const hasFail = checks.some((check) => check.status === "fail");
 	const hasWarn = checks.some((check) => check.status === "warn" || check.status === "unavailable");
 	return { checks, generatedAt: new Date().toISOString(), readOnly: true, exitCode: hasFail ? 2 : hasWarn ? 1 : 0 };

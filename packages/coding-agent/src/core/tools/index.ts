@@ -131,6 +131,7 @@ import { todoWriteTool } from "./todo-write.js";
 import { createWebFetchTool, webFetchTool } from "./web-fetch.js";
 import { createWebResearchStatusTool, webResearchStatusTool } from "./web-research-status.js";
 import { createWebSearchTool, webSearchTool } from "./web-search.js";
+import { createWorkspaceSearchTools } from "./workspace-search.js";
 import { createWriteTool, writeTool } from "./write.js";
 
 /** Tool type (AgentTool from pi-ai) */
@@ -168,10 +169,22 @@ export const codingTools: Tool[] = withEffectsList([
 	todoUpdateTool,
 	memoryWriteTool,
 	processManagerTool,
+	...Object.values(createWorkspaceSearchTools(process.cwd())),
 ]);
 
 // Read-only tools for exploration without modification (using process.cwd())
-export const readOnlyTools: Tool[] = withEffectsList([readTool, grepTool, findTool, lsTool, todoReadTool]);
+export const readOnlyTools: Tool[] = withEffectsList([
+	readTool,
+	grepTool,
+	findTool,
+	lsTool,
+	todoReadTool,
+	createWorkspaceSearchTools(process.cwd()).workspace_search,
+	createWorkspaceSearchTools(process.cwd()).workspace_search_lexical,
+	createWorkspaceSearchTools(process.cwd()).workspace_search_semantic,
+	createWorkspaceSearchTools(process.cwd()).workspace_search_symbols,
+	createWorkspaceSearchTools(process.cwd()).workspace_retrieval_status,
+]);
 
 // All available tools (using process.cwd())
 export const allTools = withEffectsRecord({
@@ -192,6 +205,7 @@ export const allTools = withEffectsRecord({
 	deep_research: deepResearchTool,
 	web_research_status: webResearchStatusTool,
 	process_manager: processManagerTool,
+	...createWorkspaceSearchTools(process.cwd()),
 });
 
 export type ToolName = keyof typeof allTools;
@@ -260,5 +274,6 @@ export function createAllTools(cwd: string, options?: ToolsOptions): Record<Tool
 		deep_research: createDeepResearchTool(),
 		web_research_status: createWebResearchStatusTool(),
 		process_manager: createProcessManagerTool(cwd, options?.process_manager),
+		...createWorkspaceSearchTools(cwd),
 	});
 }

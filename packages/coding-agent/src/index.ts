@@ -407,7 +407,9 @@ export {
 	SubagentRegistry,
 	type SubagentResolutionError,
 	type SubagentResolutionErrorCode,
+	type SubagentRetrievalPolicy,
 	type SubagentRole,
+	subagentRetrievalPolicy,
 	validateSkillAgentReferences,
 	validateSubagentOutput,
 } from "./core/subagent-registry.js";
@@ -500,6 +502,50 @@ export {
 	type WorkingContextMemorySummary,
 	type WorkingContextTodoSummary,
 } from "./core/working-context.js";
+export { defaultIndexConfig, resolveIndexConfig, type WorkspaceIndexConfig } from "./core/workspace/config.js";
+export {
+	buildRetrievalContextPacket,
+	type RetrievalEvidenceRecord,
+	renderPacketAsEvidence,
+	toEvidenceRecord,
+} from "./core/workspace/context-packet.js";
+export {
+	DisabledEmbeddingBackend,
+	type EmbeddingConfig,
+	type EmbeddingMode,
+	FixtureEmbeddingBackend,
+	LocalEmbeddingBackend,
+	resolveEmbeddingBackend,
+} from "./core/workspace/embedding.js";
+export {
+	sanitizeEventPayload,
+	WORKSPACE_INDEX_EVENTS,
+	type WorkspaceIndexDurableEvent,
+	type WorkspaceIndexEventName,
+} from "./core/workspace/events.js";
+export { resolveWorkspaceIdentity, workspaceIndexDir } from "./core/workspace/identity.js";
+// Workspace intelligence (1.7.0): durable, hybrid lexical/symbolic/semantic retrieval
+export {
+	type IndexStatus,
+	type SearchOptions,
+	WorkspaceIndex,
+	workspaceDoctorChecks,
+} from "./core/workspace/index.js";
+export { type PlannerInput, planQuery } from "./core/workspace/planner.js";
+export { executeRetrieval, type RetrieveOptions, revalidateResult } from "./core/workspace/retrieve.js";
+export type {
+	EmbeddingBackend,
+	HybridCandidateScore,
+	IndexedChunk,
+	IndexedFileRecord,
+	IndexedSymbol,
+	RetrievalContextPacket,
+	RetrievalPlan,
+	SymbolRelation,
+	WorkspaceIdentity,
+	WorkspaceIndexGeneration,
+	WorkspaceRetrievalResult,
+} from "./core/workspace/types.js";
 // Main entry point
 export { main } from "./main.js";
 // Run modes for programmatic SDK usage

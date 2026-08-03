@@ -29,7 +29,7 @@ function usage(): string {
 		"Usage: jensen <run|evidence|doctor|support-bundle|mcp|storage> ...",
 		"  run inspect|status|timeline|events|replay|simulate|reexecute|replay-state|diff <session-file> [other-session-file]",
 		"  evidence list|inspect <session-file>",
-		"  doctor [providers|tools|workspace|safety|web|lsp|jobs|budgets|routing|events|evidence|mcp|release]",
+		"  doctor [providers|tools|workspace|safety|web|lsp|jobs|budgets|routing|events|evidence|mcp|release|index|embeddings|retrieval]",
 		"  support-bundle create|preview|inspect|verify <session-file|bundle> <destination>",
 		"  mcp validate-config|validate-tools|resources|resource|prompts|prompt <json-file|config-file>",
 		"  storage prune --preview|--execute <directory>",
