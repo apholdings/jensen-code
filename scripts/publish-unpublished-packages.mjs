@@ -149,8 +149,50 @@ function checkDistTag(name, version, tag) {
 	}
 }
 
+/**
+ * Retry dist-tag verification with bounded exponential backoff.
+ *
+ * npm is eventually consistent after a dist-tag write: a freshly promoted tag
+ * can briefly still resolve to the previous version. This treats such reads as
+ * propagation state and fails only after the documented retry budget.
+ */
+export function waitForDistTag(name, version, tag, options = {}) {
+	const {
+		maxAttempts = 6,
+		initialDelayMs = 1000,
+		maxDelayMs = 10000,
+		checkTag = checkDistTag,
+		sleep = delay,
+	} = options;
+
+	let lastSummary = "no registry response";
+
+	for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+		const result = checkTag(name, version, tag);
+		const matches = typeof result === "boolean" ? result : result.matches;
+		lastSummary = typeof result === "boolean" ? "verification returned false" : result.summary;
+
+		if (matches) {
+			console.log(`[dist-tag] ${name}@${tag} resolved to ${version} (${lastSummary})`);
+			return;
+		}
+
+		console.log(`[dist-tag] ${name}@${tag} not propagated yet: ${lastSummary}`);
+
+		if (attempt < maxAttempts) {
+			const waitMs = Math.min(initialDelayMs * 2 ** (attempt - 1), maxDelayMs);
+			console.log(`[dist-tag] waiting ${waitMs}ms before retrying ${name}@${tag}`);
+			sleep(waitMs);
+		}
+	}
+
+	throw new Error(
+		`Dist-tag verification failed: ${name}@${tag} does not resolve to ${version} after ${maxAttempts} attempts. Last: ${lastSummary}`,
+	);
+}
+
 export function promoteStableDistTags(packages, releaseVersion, options = {}) {
-	const { addTag = addDistTag, verifyTag = checkDistTag } = options;
+	const { addTag = addDistTag, verifyTag, verifyWithRetry = waitForDistTag } = options;
 
 	if (packages.length !== EXPECTED_PACKAGE_COUNT) {
 		throw new Error(
@@ -180,13 +222,20 @@ export function promoteStableDistTags(packages, releaseVersion, options = {}) {
 
 	for (const tag of STABLE_DIST_TAGS) {
 		for (const pkg of packages) {
-			const verification = verifyTag(pkg.name, releaseVersion, tag);
-			const matches = typeof verification === "boolean" ? verification : verification.matches;
-			if (!matches) {
-				const details = typeof verification === "boolean" ? "verification returned false" : verification.summary;
-				throw new Error(
-					`Dist-tag verification failed: ${pkg.name}@${tag} does not resolve to ${releaseVersion}. ${details}`,
-				);
+			if (verifyTag) {
+				// Single-shot injection path (used by deterministic tests).
+				const verification = verifyTag(pkg.name, releaseVersion, tag);
+				const matches = typeof verification === "boolean" ? verification : verification.matches;
+				if (!matches) {
+					const details = typeof verification === "boolean" ? "verification returned false" : verification.summary;
+					throw new Error(
+						`Dist-tag verification failed: ${pkg.name}@${tag} does not resolve to ${releaseVersion}. ${details}`,
+					);
+				}
+			} else {
+				// Default path: bounded-backoff retry to absorb npm propagation
+				// delays before failing.
+				verifyWithRetry(pkg.name, releaseVersion, tag);
 			}
 		}
 	}
