@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.6.0
+
+### Minor Changes
+
+- 24c2d95: Add canonical run observability projections, deterministic render and projection replay, evidence and diagnostic inspection, sanitized support-bundle previews, and conservative MCP configuration/schema/effect validation surfaces.
+
+### Patch Changes
+
+- Updated dependencies [24c2d95]
+  - @apholdings/jensen-agent-core@1.6.0
+  - @apholdings/jensen-ai@1.6.0
+  - @apholdings/jensen-code@1.6.0
+
 ## 1.5.0
 
 ### Patch Changes

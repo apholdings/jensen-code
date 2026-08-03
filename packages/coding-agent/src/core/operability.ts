@@ -236,6 +236,14 @@ export function readSessionEvents(filePath: string, maxEvents = 100_000): EventR
 			runId = parsed.id;
 		}
 		const envelope = envelopeForEntry(parsed, runId, events.length);
+		const persistedHash = parsed.type === "session" ? undefined : parsed.payloadSha256;
+		if (typeof persistedHash === "string" && persistedHash !== sha256({ ...parsed, payloadSha256: undefined }))
+			issues.push({
+				line: index + 1,
+				class: "integrity_failure",
+				reasonCode: "payload_hash_mismatch",
+				detail: envelope.eventId,
+			});
 		if (eventIds.has(envelope.eventId))
 			issues.push({
 				line: index + 1,
