@@ -368,6 +368,31 @@ export {
 	TOOL_CALL_STORM_BLOCKED,
 	TOOL_STRATEGY_PIVOT_REQUIRED,
 } from "./core/storm/index.js";
+export { handleSubagentCommand } from "./core/subagent-cli.js";
+// Canonical subagent registry and policy contracts
+export {
+	ANALYTICAL_MODEL,
+	ANALYTICAL_PROVIDER,
+	assertCanonicalProductionAgents,
+	BUILTIN_SUBAGENT_DEFINITIONS,
+	getCanonicalSubagentRegistry,
+	type ModelResolutionPolicy,
+	type RegistryDiagnostic,
+	type ResolvedSubagent,
+	resolveSubagentModel,
+	type SkillDependencyDiagnostic,
+	SUBAGENT_POLICY_EFFECTS,
+	type SubagentBudget,
+	type SubagentDefinition,
+	type SubagentExecutionMode,
+	type SubagentModelResolution,
+	SubagentRegistry,
+	type SubagentResolutionError,
+	type SubagentResolutionErrorCode,
+	type SubagentRole,
+	validateSkillAgentReferences,
+	validateSubagentOutput,
+} from "./core/subagent-registry.js";
 // Tool-call normalization & conservative repair (1.4.0)
 export {
 	canonicalStableStringify,

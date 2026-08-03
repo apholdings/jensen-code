@@ -18,6 +18,7 @@ import {
 	simulateReplay,
 	storagePrune,
 } from "./operability-runtime.js";
+import { handleSubagentCommand } from "./subagent-cli.js";
 
 function output(value: unknown): void {
 	console.log(JSON.stringify(value, null, 2));
@@ -37,6 +38,9 @@ function usage(): string {
 }
 
 export async function handleOperabilityCommand(args: string[]): Promise<boolean> {
+	if (args[0] === "doctor" && (args[1] === "subagents" || args[1] === "skills")) {
+		return handleSubagentCommand([args[1] === "subagents" ? "agents" : "skills", "validate", "--json"]);
+	}
 	const namespace = args[0];
 	if (!["run", "evidence", "doctor", "support-bundle", "mcp", "storage"].includes(namespace ?? "")) return false;
 	try {

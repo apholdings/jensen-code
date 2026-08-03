@@ -29,6 +29,7 @@ import { handleWorkspaceCommand } from "./core/safety/cli.js";
 import { type CreateAgentSessionOptions, createAgentSession } from "./core/sdk.js";
 import { SessionManager } from "./core/session-manager.js";
 import { SettingsManager } from "./core/settings-manager.js";
+import { handleSubagentCommand } from "./core/subagent-cli.js";
 import { printTimings, time } from "./core/timings.js";
 import { allTools } from "./core/tools/index.js";
 import { runMigrations, showDeprecationWarnings } from "./migrations.js";
@@ -604,6 +605,10 @@ export async function main(args: string[]) {
 	}
 
 	if (await handleOperabilityCommand(args)) {
+		return;
+	}
+
+	if (await handleSubagentCommand(args)) {
 		return;
 	}
 
