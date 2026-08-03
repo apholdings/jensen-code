@@ -72,7 +72,7 @@ const MAX_SCHEMA_BYTES = 128 * 1024;
 const MAX_SCHEMA_DEPTH = 12;
 const MAX_DESCRIPTION_LENGTH = 8 * 1024;
 const MAX_TOOLS = 256;
-const URI_SCHEMES = new Set(["https:", "http:", "file:"]);
+const URI_SCHEMES = new Set(["https:", "http:"]);
 
 function canonical(value: unknown): string {
 	if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -92,10 +92,21 @@ export function mcpSha256(value: unknown): string {
 	return createHash("sha256").update(canonical(value)).digest("hex");
 }
 
-function depth(value: unknown, current = 0): number {
-	if (!value || typeof value !== "object") return current;
-	if (Array.isArray(value)) return Math.max(current, ...value.map((item) => depth(item, current + 1)));
-	return Math.max(current, ...Object.values(value as Record<string, unknown>).map((item) => depth(item, current + 1)));
+function depth(value: unknown): number {
+	if (!value || typeof value !== "object") return 0;
+	let maximum = 0;
+	const pending: Array<{ value: unknown; level: number }> = [{ value, level: 0 }];
+	while (pending.length > 0) {
+		const current = pending.pop();
+		if (!current || !current.value || typeof current.value !== "object") continue;
+		maximum = Math.max(maximum, current.level);
+		if (maximum > MAX_SCHEMA_DEPTH) return maximum;
+		const children = Array.isArray(current.value)
+			? current.value
+			: Object.values(current.value as Record<string, unknown>);
+		for (const child of children) pending.push({ value: child, level: current.level + 1 });
+	}
+	return maximum;
 }
 
 function isJsonSchema(schema: unknown): schema is Record<string, unknown> {
@@ -128,8 +139,17 @@ export function validateMcpToolSchemas(tools: McpToolSchema[]): McpValidationRes
 			});
 			continue;
 		}
+		const schemaDepth = depth(tool.inputSchema);
+		if (schemaDepth > MAX_SCHEMA_DEPTH) {
+			rejected.push({
+				code: "schema_depth_limit",
+				message: "schema exceeds safety limits",
+				toolName: tool.name,
+			});
+			continue;
+		}
 		const schemaBytes = Buffer.byteLength(canonical(tool.inputSchema));
-		if (schemaBytes > MAX_SCHEMA_BYTES || depth(tool.inputSchema) > MAX_SCHEMA_DEPTH) {
+		if (schemaBytes > MAX_SCHEMA_BYTES) {
 			rejected.push({
 				code: schemaBytes > MAX_SCHEMA_BYTES ? "schema_size_limit" : "schema_depth_limit",
 				message: "schema exceeds safety limits",
@@ -256,7 +276,10 @@ export function validateMcpResourceUri(uri: string): boolean {
 	}
 }
 
+const MCP_SECRET_VALUE =
+	/(?:bearer\s+|sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|-----BEGIN [A-Z ]+-----|eyJ[A-Za-z0-9_-]{8,}\.)/i;
 export function redactMcpDiagnostics(value: unknown): unknown {
+	if (typeof value === "string") return MCP_SECRET_VALUE.test(value) ? "[REDACTED]" : value;
 	if (Array.isArray(value)) return value.map(redactMcpDiagnostics);
 	if (!value || typeof value !== "object") return value;
 	const out: Record<string, unknown> = {};

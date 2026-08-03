@@ -274,7 +274,7 @@ export function readSessionEvents(filePath: string, maxEvents = 100_000): EventR
 
 export function queryEvents(result: EventReadResult, query: EventQuery = {}): EventPage {
 	const size = Math.min(Math.max(query.pageSize ?? DEFAULT_PAGE_SIZE, 1), MAX_PAGE_SIZE);
-	const start = query.pageToken ? Number.parseInt(query.pageToken, 10) : 0;
+	const start = query.pageToken === undefined ? 0 : /^\d+$/.test(query.pageToken) ? Number(query.pageToken) : 0;
 	const filtered = result.events.filter((event) => {
 		if (query.eventType && event.eventType !== query.eventType) return false;
 		if (query.component && event.source.component !== query.component) return false;
@@ -642,7 +642,10 @@ export function collectDiagnostics(
 }
 
 const SECRET_KEY = /(api[-_]?key|token|secret|password|authorization|cookie|private[-_]?key)/i;
+const SECRET_VALUE =
+	/(?:bearer\s+|sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|-----BEGIN [A-Z ]+-----|eyJ[A-Za-z0-9_-]{8,}\.)/i;
 export function sanitize(value: unknown): unknown {
+	if (typeof value === "string") return SECRET_VALUE.test(value) ? "[REDACTED]" : value;
 	if (Array.isArray(value)) return value.map(sanitize);
 	if (!value || typeof value !== "object") return value;
 	const out: Record<string, unknown> = {};

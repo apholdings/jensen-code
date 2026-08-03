@@ -58,3 +58,11 @@ jobs:
           src/core/process-runner.test.ts
           src/core/tools/powershell.test.ts
           src/core/tools/process-manager.windows.test.ts
+
+      - name: Run Windows operability and MCP validation
+        working-directory: packages/coding-agent
+        run: >-
+          npx tsx ../../node_modules/vitest/dist/cli.js --run
+          test/operability-mcp.test.ts
+          src/core/process-runner.test.ts
+          src/core/tools/process-manager.windows.test.ts

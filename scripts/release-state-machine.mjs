@@ -24,18 +24,34 @@
 
 export const RELEASE_STATE = Object.freeze({
 	NOT_PUBLISHED: "NOT_PUBLISHED",
-	PUBLISHED_TAGS_PROPAGATING: "PUBLISHED_TAGS_PROPAGATING",
-	PUBLISHED_TAGS_CONVERGED: "PUBLISHED_TAGS_CONVERGED",
-	TAGGED: "TAGGED",
+	PUBLISHING: "PUBLISHING",
+	PUBLISHED_VERSION_UNVERIFIED: "PUBLISHED_VERSION_UNVERIFIED",
+	PUBLISHED_VERSION_VERIFIED: "PUBLISHED_VERSION_VERIFIED",
+	DIST_TAG_PROPAGATING: "DIST_TAG_PROPAGATING",
+	DIST_TAG_PERMISSION_DENIED: "DIST_TAG_PERMISSION_DENIED",
+	DIST_TAG_AUTHENTICATION_FAILED: "DIST_TAG_AUTHENTICATION_FAILED",
+	DIST_TAG_POLICY_BLOCKED: "DIST_TAG_POLICY_BLOCKED",
+	DIST_TAG_CONVERGED: "DIST_TAG_CONVERGED",
+	GIT_TAGGED: "GIT_TAGGED",
 	GITHUB_RELEASED: "GITHUB_RELEASED",
 	COMPLETE: "COMPLETE",
+	// Compatibility names retained for existing consumers.
+	PUBLISHED_TAGS_PROPAGATING: "DIST_TAG_PROPAGATING",
+	PUBLISHED_TAGS_CONVERGED: "DIST_TAG_CONVERGED",
+	TAGGED: "GIT_TAGGED",
 });
 
 export const RELEASE_STATE_ORDER = Object.freeze([
 	RELEASE_STATE.NOT_PUBLISHED,
-	RELEASE_STATE.PUBLISHED_TAGS_PROPAGATING,
-	RELEASE_STATE.PUBLISHED_TAGS_CONVERGED,
-	RELEASE_STATE.TAGGED,
+	RELEASE_STATE.PUBLISHING,
+	RELEASE_STATE.PUBLISHED_VERSION_UNVERIFIED,
+	RELEASE_STATE.PUBLISHED_VERSION_VERIFIED,
+	RELEASE_STATE.DIST_TAG_PROPAGATING,
+	RELEASE_STATE.DIST_TAG_PERMISSION_DENIED,
+	RELEASE_STATE.DIST_TAG_AUTHENTICATION_FAILED,
+	RELEASE_STATE.DIST_TAG_POLICY_BLOCKED,
+	RELEASE_STATE.DIST_TAG_CONVERGED,
+	RELEASE_STATE.GIT_TAGGED,
 	RELEASE_STATE.GITHUB_RELEASED,
 	RELEASE_STATE.COMPLETE,
 ]);
@@ -53,9 +69,15 @@ export const RELEASE_STATE_ORDER = Object.freeze([
  */
 export function classifyReleaseState(facts) {
 	if (facts.anyUnpublished) return RELEASE_STATE.NOT_PUBLISHED;
-	if (!facts.tagsConverged) return RELEASE_STATE.PUBLISHED_TAGS_PROPAGATING;
-	if (!facts.tagExists) return RELEASE_STATE.PUBLISHED_TAGS_CONVERGED;
-	if (!facts.githubReleaseExists) return RELEASE_STATE.TAGGED;
+	if (facts.publishInProgress) return RELEASE_STATE.PUBLISHING;
+	if (facts.versionVerificationFailed) return RELEASE_STATE.PUBLISHED_VERSION_UNVERIFIED;
+	if (facts.distTagError === "permission") return RELEASE_STATE.DIST_TAG_PERMISSION_DENIED;
+	if (facts.distTagError === "authentication") return RELEASE_STATE.DIST_TAG_AUTHENTICATION_FAILED;
+	if (facts.distTagError === "policy") return RELEASE_STATE.DIST_TAG_POLICY_BLOCKED;
+	const legacyFacts = !Object.hasOwn(facts, "publishInProgress") && !Object.hasOwn(facts, "distTagError");
+	if (!facts.tagsConverged) return legacyFacts ? RELEASE_STATE.PUBLISHED_TAGS_PROPAGATING : RELEASE_STATE.DIST_TAG_PROPAGATING;
+	if (!facts.tagExists) return legacyFacts ? RELEASE_STATE.PUBLISHED_TAGS_CONVERGED : RELEASE_STATE.DIST_TAG_CONVERGED;
+	if (!facts.githubReleaseExists) return legacyFacts ? RELEASE_STATE.TAGGED : RELEASE_STATE.GIT_TAGGED;
 	if (!facts.finalVerified) return RELEASE_STATE.GITHUB_RELEASED;
 	return RELEASE_STATE.COMPLETE;
 }
@@ -132,7 +154,10 @@ export function recoveryDecision(facts) {
  * per-package read result with full context so callers never treat a stale tag
  * as a publication failure.
  */
-export function classifyDistTagRead({ versionVerified, latestConverged }) {
+export function classifyDistTagRead({ versionVerified, latestConverged, httpStatus, policyBlocked = false }) {
+	if (httpStatus === 401) return "DIST_TAG_AUTHENTICATION_FAILED";
+	if (httpStatus === 403) return policyBlocked ? "DIST_TAG_POLICY_BLOCKED" : "DIST_TAG_PERMISSION_DENIED";
+	if (httpStatus === 404 && versionVerified) return "PROPAGATING";
 	if (!versionVerified) return "NOT_PUBLISHED";
 	if (!latestConverged) return "PROPAGATING";
 	return "CONVERGED";

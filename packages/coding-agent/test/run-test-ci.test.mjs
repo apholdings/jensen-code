@@ -10,6 +10,7 @@ import {
 	executionCliShardFiles,
 	executionRevisionShardFiles,
 	rpcIsolatedTestFiles,
+	behavioralShardFiles,
 	runTestCi,
 	runVitestProcess,
 } from "../scripts/run-test-ci.mjs";
@@ -20,6 +21,7 @@ const orchestrationTestFile = "test/run-test-ci.test.mjs";
 const exampleFile = "test/example.test.ts";
 const authoritativeFixture = [
 	...rpcIsolatedTestFiles,
+	...behavioralShardFiles.flatMap(([, shard]) => shard),
 	productionHarnessFile,
 	orchestrationTestFile,
 	exampleFile,
@@ -73,7 +75,10 @@ describe("coding-agent CI test orchestration", () => {
 		const partitions = commands.map(commandFiles);
 		const flattened = partitions.flat();
 
-		expect(partitions.slice(0, -1)).toEqual(rpcIsolatedTestFiles.map((filePath) => [filePath]));
+		expect(partitions.slice(0, rpcIsolatedTestFiles.length)).toEqual(rpcIsolatedTestFiles.map((filePath) => [filePath]));
+		expect(partitions.slice(rpcIsolatedTestFiles.length, -1)).toEqual(
+			behavioralShardFiles.map(([, shard]) => shard),
+		);
 		expect(partitions.at(-1)).toContain(productionHarnessFile);
 		expect(partitions.at(-1)).toContain(orchestrationTestFile);
 		expect(flattened).toHaveLength(authoritativeFixture.length);
@@ -204,14 +209,14 @@ describe("coding-agent CI test orchestration", () => {
 
 	it("propagates the remaining-suite exit code", async () => {
 		const runProcess = vi.fn();
-		for (const _filePath of rpcIsolatedTestFiles) {
+		for (const _filePath of buildTestCommands(authoritativeFixture).slice(0, -1)) {
 			runProcess.mockResolvedValueOnce(0);
 		}
 		runProcess.mockResolvedValueOnce(23);
 		const exitCode = await runTestCi({ getFiles: () => authoritativeFixture, runProcess });
 
 		expect(exitCode).toBe(23);
-		expect(runProcess).toHaveBeenCalledTimes(rpcIsolatedTestFiles.length + 1);
+		expect(runProcess).toHaveBeenCalledTimes(buildTestCommands(authoritativeFixture).length);
 	});
 
 	it("spawns Vitest directly with inherited environment and transparent output", async () => {

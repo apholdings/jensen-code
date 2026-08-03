@@ -39,6 +39,14 @@ export const rpcIsolatedTestFiles = [
 const productionHarnessFile = "src/core/production-todo-provider-harness.test.ts";
 const orchestrationTestFile = "test/run-test-ci.test.mjs";
 
+// Keep long-running behavioral domains in separate Vitest processes so one
+// slow or leaked fixture cannot hide the terminal status of the rest.
+export const behavioralShardFiles = [
+	["operability and MCP", ["test/operability-mcp.test.ts"]],
+	["tool reliability", ["src/core/tools/bash.test.ts", "src/core/process-runner.test.ts", "src/core/tools/process-manager.test.ts"]],
+	["web research", ["src/core/web-research/fetch.test.ts", "src/core/web-research/search.test.ts", "src/core/web-research/research.test.ts"]],
+];
+
 function normalizeInventoryPath(filePath) {
 	return filePath.replaceAll("\\", "/");
 }
@@ -84,13 +92,14 @@ export function buildTestCommands(files) {
 		throw new Error(`Vitest test inventory is missing ${orchestrationTestFile}`);
 	}
 
-	const isolatedSet = new Set(rpcIsolatedTestFiles);
+	const isolatedSet = new Set([...rpcIsolatedTestFiles, ...behavioralShardFiles.flatMap(([, shard]) => shard)]);
 	const remainingFiles = normalizedFiles.filter((filePath) => !isolatedSet.has(filePath));
 	const remainingSet = new Set(remainingFiles);
 	if (rpcIsolatedTestFiles.some((filePath) => remainingSet.has(filePath))) {
 		throw new Error("An RPC-isolated shard appears in both CI partitions");
 	}
-	if (remainingSet.size + rpcIsolatedTestFiles.length !== uniqueFiles.size) {
+	const behavioralFiles = behavioralShardFiles.flatMap(([, shard]) => shard);
+	if (remainingSet.size + rpcIsolatedTestFiles.length + behavioralFiles.length !== uniqueFiles.size) {
 		throw new Error("Vitest CI process inventories are not disjoint and complete");
 	}
 
@@ -98,6 +107,10 @@ export function buildTestCommands(files) {
 		...rpcIsolatedTestFiles.map((filePath) => ({
 			name: `RPC-isolated test shard: ${filePath}`,
 			args: ["run", "--passWithNoTests", filePath],
+		})),
+		...behavioralShardFiles.map(([name, shard]) => ({
+			name: `${name} behavioral shard`,
+			args: ["run", "--passWithNoTests", ...shard],
 		})),
 		{
 			name: "remaining coding-agent tests",
