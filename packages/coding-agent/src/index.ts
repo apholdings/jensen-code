@@ -23,6 +23,17 @@ export {
 	InMemoryAuthStorageBackend,
 	type OAuthCredential,
 } from "./core/auth-storage.js";
+export {
+	type CavecrewBuilderResult,
+	type CavecrewInvestigationResult,
+	type CavecrewPlan,
+	type CavecrewProviderFixtures,
+	type CavecrewRequest,
+	type CavecrewResult,
+	type CavecrewReviewResult,
+	type CavecrewTerminalState,
+	runCavecrew,
+} from "./core/cavecrew-runtime.js";
 // Compaction
 export {
 	type BranchPreparation,
@@ -350,6 +361,13 @@ export {
 	type RetrySettings,
 	SettingsManager,
 } from "./core/settings-manager.js";
+export {
+	applySkillMigration,
+	packagedCavecrewPath,
+	previewSkillMigration,
+	type SkillMigrationPreview,
+	skillMigrationSourceExists,
+} from "./core/skill-migration.js";
 // Skills
 export {
 	formatSkillsForPrompt,
@@ -393,6 +411,17 @@ export {
 	validateSkillAgentReferences,
 	validateSubagentOutput,
 } from "./core/subagent-registry.js";
+export {
+	createSubagentContextPacket,
+	getResolvedModelForDispatch,
+	type ParentSubagentPolicy,
+	type ResolvedSubagentInvocation,
+	resolveSubagentInvocation,
+	type SubagentContextPacket,
+	SubagentRuntimeError,
+	type SubagentRuntimeErrorCode,
+	validateParentSubagentOutput,
+} from "./core/subagent-runtime.js";
 // Tool-call normalization & conservative repair (1.4.0)
 export {
 	canonicalStableStringify,

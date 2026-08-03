@@ -11,12 +11,16 @@ import type { Message } from "@apholdings/jensen-ai";
 import { StringEnum } from "@apholdings/jensen-ai";
 import {
 	APP_NAME,
+	createSubagentContextPacket,
 	type ExtensionAPI,
 	type ExtensionContext,
 	getMarkdownTheme,
+	type ResolvedSubagentInvocation,
+	resolveSubagentInvocation,
 	type Theme,
 	type ToolDefinition,
 	type ToolRenderResultOptions,
+	validateParentSubagentOutput,
 } from "@apholdings/jensen-code";
 import { Container, Markdown, Spacer, Text } from "@apholdings/jensen-tui";
 import { type Static, Type } from "@sinclair/typebox";
@@ -86,6 +90,7 @@ type DisplayItem = { type: "text"; text: string } | { type: "toolCall"; name: st
 interface SubagentRunRequest {
 	invocation: SubagentInvocation;
 	agent: AgentConfig;
+	resolvedInvocation: ResolvedSubagentInvocation;
 	onMessage: (message: Message) => void;
 	signal?: AbortSignal;
 }
@@ -270,14 +275,16 @@ function resolveCliCommandPrefix(): { command: string; prefixArgs: string[] } {
 
 export function buildSubagentInvocation(
 	defaultCwd: string,
-	agent: AgentConfig,
+	_agent: AgentConfig,
 	task: string,
 	cwd?: string,
+	resolvedInvocation?: ResolvedSubagentInvocation,
 ): SubagentInvocation {
 	const { command, prefixArgs } = resolveCliCommandPrefix();
 	const args = [...prefixArgs, "--mode", "json", "-p", "--no-session"];
-	if (agent.model) args.push("--model", agent.model);
-	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
+	if (resolvedInvocation) args.push("--model", resolvedInvocation.resolvedModel);
+	if (resolvedInvocation && resolvedInvocation.effectiveAllowedTools.length > 0)
+		args.push("--tools", resolvedInvocation.effectiveAllowedTools.join(","));
 	args.push(`Task: ${task}`);
 
 	return {
@@ -466,6 +473,7 @@ async function runSingleAgent(
 	onUpdate: OnUpdateCallback | undefined,
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
 	runSubagent: SubagentRunner,
+	modelRegistry: ExtensionContext["modelRegistry"],
 ): Promise<SingleResult> {
 	const agent = agents.find((candidate) => candidate.name === agentName);
 
@@ -512,7 +520,20 @@ async function runSingleAgent(
 	let tempPromptPath: string | null = null;
 
 	try {
-		const invocation = buildSubagentInvocation(defaultCwd, agent, task, cwd);
+		let resolvedInvocation: ResolvedSubagentInvocation;
+		try {
+			resolvedInvocation = resolveSubagentInvocation({
+				requestedAgent: agentName,
+				parentRunId: `subagent-parent-${process.pid}`,
+				modelRegistry,
+				source: agent.source === "project" ? "workspace" : "user",
+			});
+		} catch (error) {
+			currentResult.failureStage = "lookup";
+			currentResult.diagnosticMessage = error instanceof Error ? error.message : String(error);
+			return currentResult;
+		}
+		const invocation = buildSubagentInvocation(defaultCwd, agent, task, cwd, resolvedInvocation);
 		currentResult.invocation = invocation;
 
 		if (agent.systemPrompt.trim().length > 0) {
@@ -523,9 +544,19 @@ async function runSingleAgent(
 			invocation.displayCommand = [invocation.command, ...invocation.args].join(" ");
 		}
 
+		const contextPacket = createSubagentContextPacket({
+			invocation: resolvedInvocation,
+			objective: task,
+			roleContract: agent.description,
+			constraints: resolvedInvocation.effectiveDeniedEffects,
+		});
+		invocation.args[invocation.args.length - 1] =
+			`Context packet (JSON): ${JSON.stringify(contextPacket)}\nTask: ${task}`;
+		invocation.displayCommand = [invocation.command, ...invocation.args].join(" ");
 		const runResult = await runSubagent({
 			invocation,
 			agent,
+			resolvedInvocation,
 			signal,
 			onMessage: (message) => {
 				currentResult.messages.push(message);
@@ -561,6 +592,17 @@ async function runSingleAgent(
 		if (!currentResult.failureStage && output.text.length === 0) {
 			currentResult.failureStage = "result";
 			currentResult.diagnosticMessage = `Final assistant output was empty: ${output.reason ?? "unknown reason"}.`;
+		}
+		if (!currentResult.failureStage && resolvedInvocation.outputSchemaId.startsWith("cavecrew-")) {
+			try {
+				validateParentSubagentOutput({
+					invocation: resolvedInvocation,
+					rawOutput: output.text,
+				});
+			} catch (error) {
+				currentResult.failureStage = "result";
+				currentResult.diagnosticMessage = error instanceof Error ? error.message : String(error);
+			}
 		}
 
 		return currentResult;
@@ -730,6 +772,7 @@ export function createSubagentTool(options?: {
 						chainUpdate,
 						makeDetails,
 						runSubagent,
+						ctx.modelRegistry,
 					);
 					results.push(result);
 
@@ -816,6 +859,7 @@ export function createSubagentTool(options?: {
 						},
 						makeDetails,
 						runSubagent,
+						ctx.modelRegistry,
 					);
 					allResults[index] = result;
 					emitParallelUpdate();
@@ -856,6 +900,7 @@ export function createSubagentTool(options?: {
 					onUpdate,
 					makeDetails,
 					runSubagent,
+					ctx.modelRegistry,
 				);
 				if (
 					result.exitCode !== 0 ||

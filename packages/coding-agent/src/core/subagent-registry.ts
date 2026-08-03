@@ -31,6 +31,7 @@ export interface SubagentBudget {
 	maxInputTokens?: number;
 	maxOutputTokens?: number;
 	maxCostUsd?: number;
+	maxAffectedFiles?: number;
 }
 
 export interface SubagentDefinition {
@@ -232,7 +233,13 @@ export const BUILTIN_SUBAGENT_DEFINITIONS: readonly SubagentDefinition[] = [
 		deniedTools: ["publish", "merge", "git_push", "npm_publish", "subagent"],
 		deniedEffects: ["publishes", "merges", "mutatesReleaseTags", "scopeExpansion", "externalWrites"],
 		requiredCapabilities: ["workspace-lease", "checkpoint", "transaction", "rollback"],
-		budget: { maxModelTurns: 12, maxToolCalls: 40, maxWallTimeMs: 300_000, maxOutputTokens: 5_000 },
+		budget: {
+			maxModelTurns: 12,
+			maxToolCalls: 40,
+			maxWallTimeMs: 300_000,
+			maxOutputTokens: 5_000,
+			maxAffectedFiles: 2,
+		},
 		concurrency: { parallelSafe: false, maximumInstances: 1 },
 		recursion: { maySpawnSubagents: false, maximumDepth: 0 },
 		inputSchema: "subagent-context-packet-v1",
