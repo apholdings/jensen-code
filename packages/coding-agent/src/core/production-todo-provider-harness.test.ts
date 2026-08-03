@@ -382,12 +382,16 @@ describe("production todo/provider harness", () => {
 			const firstToolNames = firstTools.map((tool) => tool.function.name);
 			expect(firstToolNames).toEqual([
 				"bash",
+				"deep_research",
 				"edit",
 				"memory_write",
 				"read",
 				"todo_read",
 				"todo_update",
 				"todo_write",
+				"web_fetch",
+				"web_research_status",
+				"web_search",
 				"write",
 			]);
 			expect(firstTools.filter((tool) => tool.type !== "function")).toEqual([]);
