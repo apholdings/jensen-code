@@ -162,6 +162,28 @@ export {
 	LspServerManager,
 } from "./core/lsp/index.js";
 export {
+	canonicalizeMcp,
+	classifyMcpToolEffects,
+	createMcpCapabilitySnapshot,
+	createMcpIdentity,
+	detectCapabilityDrift,
+	type McpCapabilitySnapshot,
+	type McpEffectClass,
+	type McpHealth,
+	type McpServerConfig,
+	type McpServerIdentity,
+	type McpToolEffects,
+	type McpToolSchema,
+	type McpTransport,
+	type McpValidationIssue,
+	type McpValidationResult,
+	mcpSha256,
+	redactMcpDiagnostics,
+	validateMcpConfig,
+	validateMcpResourceUri,
+	validateMcpToolSchemas,
+} from "./core/mcp.js";
+export {
 	buildStructuredMemoryCompareData,
 	buildStructuredMemoryHistoryData,
 	type MemorySnapshotContractContext,
@@ -178,6 +200,33 @@ export {
 } from "./core/memory-snapshot-contract.js";
 export { convertToLlm } from "./core/messages.js";
 export { ModelRegistry } from "./core/model-registry.js";
+export {
+	collectDiagnostics,
+	createSupportBundle,
+	type DiagnosticCheckResult,
+	type DiagnosticReport,
+	diffRuns,
+	type EventPage,
+	type EventQuery,
+	type EventReadIssue,
+	type EventReadResult,
+	envelopeForEntry,
+	type JensenEventEnvelope,
+	listEvidence,
+	loadProjectionFromSession,
+	OBSERVABILITY_SCHEMA_VERSION,
+	projectionReplay,
+	projectRun,
+	queryEvents,
+	type RunDiff,
+	type RunDiffField,
+	type RunProjection,
+	readSessionEvents,
+	renderReplay,
+	type SupportBundleManifest,
+	sanitize,
+	supportBundlePreview,
+} from "./core/operability.js";
 export type {
 	PackageManager,
 	PathMetadata,

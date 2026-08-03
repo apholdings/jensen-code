@@ -1,7 +1,7 @@
 import type { AgentMessage } from "@apholdings/jensen-agent-core";
 import type { ImageContent, Message, TextContent } from "@apholdings/jensen-ai";
 import { validateToolSpanIntegrity } from "@apholdings/jensen-ai";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import {
 	appendFileSync,
 	closeSync,
@@ -50,6 +50,10 @@ export interface SessionHeader {
 	parentSession?: string;
 }
 
+function stableSessionPayloadHash(value: unknown): string {
+	return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
 export interface NewSessionOptions {
 	id?: string;
 	parentSession?: string;
@@ -62,6 +66,8 @@ export interface SessionEntryBase {
 	id: string;
 	parentId: string | null;
 	timestamp: string;
+	/** Optional persisted integrity digest for observability readers. */
+	payloadSha256?: string;
 }
 
 export interface SessionMessageEntry extends SessionEntryBase {
@@ -876,6 +882,7 @@ export class SessionManager {
 	}
 
 	private _appendEntry(entry: SessionEntry): void {
+		entry.payloadSha256 = stableSessionPayloadHash({ ...entry, payloadSha256: undefined });
 		this.fileEntries.push(entry);
 		this.byId.set(entry.id, entry);
 		this.leafId = entry.id;
