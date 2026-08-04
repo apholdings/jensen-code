@@ -1,3 +1,19 @@
+export type {
+	TodoEvent,
+	TodoEventType,
+	TodoFailureFingerprint,
+	TodoMutationError,
+	TodoPatchOp,
+	TodoRebaseResult,
+	TodoRecoveryAction,
+	TodoStatus,
+} from "../todo/index.js";
+export {
+	allowedTransitions,
+	computeStateHash,
+	TodoEngine,
+	validateTransition,
+} from "../todo/index.js";
 export {
 	type BashOperations,
 	type BashSpawnContext,

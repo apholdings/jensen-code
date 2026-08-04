@@ -336,8 +336,12 @@ describe("todo runtime tool registration", () => {
 			});
 			const staleText = staleResult.content[0];
 			if (staleText.type !== "text") throw new Error("expected text content");
-			expect(staleText.text).toContain("TODO_READ_REQUIRED");
-			expect(mutated).toBe(false);
+			// Stale revisions are now recovered internally: the non-conflicting
+			// update applies automatically with no TODO_READ_REQUIRED and no
+			// run termination.
+			expect(staleText.text).not.toContain("TODO_READ_REQUIRED");
+			expect(staleText.text).toContain("rebase");
+			expect(mutated).toBe(true);
 		});
 	});
 
@@ -705,17 +709,17 @@ describe("integrated todo tool dispatcher simulation", () => {
 		const readResult2 = await readTool.execute("call_4", {});
 		expect(readResult2.details!.todos.length).toBe(7);
 
-		// 7. Stale revision update
+		// 7. Stale revision update is auto-recovered (internal rebase), not rejected
 		const staleResult = await updateTool.execute("call_5", {
 			updates: [{ id: ids[2], status: "completed" }],
 			expectedRevision: readRevision, // stale
 		});
 		const staleText = staleResult.content[0];
 		if (staleText.type !== "text") throw new Error("expected text content");
-		expect(staleText.text).toContain("TODO_READ_REQUIRED");
+		expect(staleText.text).not.toContain("TODO_READ_REQUIRED");
 
-		// 8. Confirm no mutation from stale update
-		expect(todos[2].status).toBe("pending");
+		// 8. The stale non-conflicting update was applied automatically
+		expect(todos[2].status).toBe("completed");
 	});
 });
 

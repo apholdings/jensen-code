@@ -476,6 +476,55 @@ function checkPowerShell(): { result: DoctorCheckResult; details: PowerShellDoct
 }
 
 /**
+ * Check the TODO subsystem health. Read-only.
+ * Accepts an optional diagnostics snapshot from an active TodoEngine.
+ */
+export function checkTodoHealth(diagnostics?: {
+	scopeId?: string;
+	progressEpoch?: number;
+	snapshotCount?: number;
+	ledgerCount?: number;
+	eventCount?: number;
+	chainActive?: boolean;
+	chainConsecutive?: number;
+	isLoopBlocked?: boolean;
+}): DoctorCheckResult {
+	if (!diagnostics) {
+		// No active session TODOs to inspect — this is a warning, not an error.
+		return {
+			name: "todo",
+			status: "warn",
+			message: "No active TODO session to inspect (this is expected outside a session)",
+		};
+	}
+
+	const problems: string[] = [];
+	if (diagnostics.chainConsecutive && diagnostics.chainConsecutive >= 3) {
+		problems.push(`no-progress loop chain active (${diagnostics.chainConsecutive} consecutive)`);
+	}
+	if (diagnostics.ledgerCount && diagnostics.ledgerCount > 200) {
+		problems.push("idempotency ledger near retention bound");
+	}
+	if (diagnostics.eventCount && diagnostics.eventCount > 400) {
+		problems.push("event log near retention bound");
+	}
+
+	if (problems.length > 0) {
+		return {
+			name: "todo",
+			status: "warn",
+			message: problems.join("; "),
+		};
+	}
+
+	return {
+		name: "todo",
+		status: "ok",
+		message: `TODO subsystem healthy (${diagnostics.scopeId ?? "session"}): ${String(diagnostics.snapshotCount ?? 0)} snapshots, ${String(diagnostics.ledgerCount ?? 0)} applied intents`,
+	};
+}
+
+/**
  * Run all doctor diagnostics checks.
  */
 export async function runDoctorChecks(options: DoctorOptions = {}): Promise<DoctorResult> {

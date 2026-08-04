@@ -524,19 +524,20 @@ describe("production todo/provider harness", () => {
 		}
 	});
 
-	it("terminates repeated todo_write and keeps next turn usable", async () => {
+	it("degrades repeated todo_write without terminating and keeps next turn usable", async () => {
 		const writeArgs = { todos: [...todoList] };
 		resetMock([
 			{ type: "tool", calls: [{ id: "write-1", name: "todo_write", args: writeArgs }] },
 			{ type: "tool", calls: [{ id: "write-2", name: "todo_write", args: writeArgs }] },
 			{ type: "tool", calls: [{ id: "write-3", name: "todo_write", args: writeArgs }] },
 			{ type: "text", text: "new turn works" },
+			{ type: "text", text: "new turn works" },
 		]);
 		const harness = await createHarness(deepSeekRoute);
 		try {
 			await runPrompt(harness, "repeat todo write");
-			expect(mockState.transportCount).toBe(3);
-			expect(harness.session.agent.state.error).toContain("REPEATED_TOOL_CALL_LOOP");
+			expect(mockState.transportCount).toBe(4);
+			expect(harness.session.agent.state.error).toBeUndefined();
 			expect(
 				harness.events.filter(
 					(event) =>
@@ -552,19 +553,19 @@ describe("production todo/provider harness", () => {
 						event.message.role === "toolResult" &&
 						toolResultDetails(event)?.todoWriteAlreadyApplied === true,
 				),
-			).toHaveLength(1);
+			).toHaveLength(2);
 			expect(harness.session.todoRevision).toBe(1);
 			const terminalTransportCount = mockState.transportCount;
 
 			await runPrompt(harness, "recover after repeated write");
 			expect(mockState.transportCount).toBe(terminalTransportCount + 1);
-			expect(assistantFinalMessages(harness.events)).toHaveLength(1);
+			expect(assistantFinalMessages(harness.events)).toHaveLength(2);
 		} finally {
 			closeHarness(harness);
 		}
 	});
 
-	it("terminates repeated stale todo_update and recovers with fresh read", async () => {
+	it("repeated stale todo_update auto-recovers; run is never terminated", async () => {
 		resetMock([
 			{ type: "tool", calls: [{ id: "seed-write", name: "todo_write", args: { todos: [...todoList] } }] },
 			{ type: "text", text: "seeded" },
@@ -585,55 +586,39 @@ describe("production todo/provider harness", () => {
 					{
 						id: "stale-update-2",
 						name: "todo_update",
-						args: { updates: [{ id: "task-a", status: "completed" }], expectedRevision: 0 },
+						args: { updates: [{ id: "task-b", status: "in_progress" }], expectedRevision: 0 },
 					},
 				],
 			},
-			{ type: "tool", calls: [{ id: "recovery-read", name: "todo_read", args: {} }] },
-			{
-				type: "tool",
-				calls: [
-					{
-						id: "recovery-update",
-						name: "todo_update",
-						args: { updates: [{ id: "task-a", status: "completed" }], expectedRevision: 1 },
-					},
-				],
-			},
-			{ type: "text", text: "stale recovery complete" },
+			{ type: "text", text: "two stale updates handled" },
 		]);
 		const harness = await createHarness(deepSeekRoute);
 		try {
 			await runPrompt(harness, "seed todos");
-			await runPrompt(harness, "repeat stale update");
-			expect(mockState.transportCount).toBe(5);
-			expect(harness.session.agent.state.error).toContain("REPEATED_TODO_UPDATE_LOOP");
-			expect(harness.session.todoRevision).toBe(1);
-			expect(
-				harness.events.filter(
-					(event) =>
-						event.type === "message_end" &&
-						event.message.role === "toolResult" &&
-						toolResultDetails(event)?.errorCode === "TODO_READ_REQUIRED",
-				),
-			).toHaveLength(1);
-			expect(
-				harness.events.filter(
-					(event) => event.type === "tool_execution_end" && event.toolName === "todo_update" && !event.isError,
-				),
-			).toHaveLength(1);
-			const terminalTransportCount = mockState.transportCount;
+			expect(mockState.transportCount).toBe(2);
 
-			await runPrompt(harness, "recover stale update");
-			expect(mockState.transportCount).toBe(8);
-			expect(mockState.transportCount).toBeGreaterThan(terminalTransportCount);
-			const updateCalls = assistantToolCalls(harness.events).filter((call) => call.name === "todo_update");
-			expect(updateCalls.at(-1)?.args).toEqual({
-				updates: [{ id: "task-a", status: "completed" }],
-				expectedRevision: 1,
-			});
-			expect(harness.session.todoRevision).toBe(2);
-			expect(assistantFinalMessages(harness.events)).toHaveLength(2);
+			await runPrompt(harness, "repeat stale update");
+			// Both stale updates consumed one read + two updates + a text.
+			expect(mockState.transportCount).toBe(6);
+
+			// No run termination and no model-required todo_read.
+			expect(String(harness.session.agent.state.error ?? "")).not.toContain("REPEATED_TODO_UPDATE_LOOP");
+			const readRequired = harness.events.filter(
+				(event) =>
+					event.type === "message_end" &&
+					event.message.role === "toolResult" &&
+					toolResultDetails(event)?.errorCode === "TODO_READ_REQUIRED",
+			);
+			expect(readRequired).toHaveLength(0);
+
+			// Both stale updates were recovered internally (non-error executions).
+			const updateEnds = harness.events.filter(
+				(event) => event.type === "tool_execution_end" && event.toolName === "todo_update" && !event.isError,
+			);
+			expect(updateEnds.length).toBeGreaterThanOrEqual(2);
+
+			// The durable store advanced for each applied update (write->1, two updates->3).
+			expect(harness.session.todoRevision).toBe(3);
 		} finally {
 			closeHarness(harness);
 		}
