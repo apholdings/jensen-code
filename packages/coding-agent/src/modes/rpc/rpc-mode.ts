@@ -19,6 +19,7 @@ import type {
 	ExtensionUIDialogOptions,
 	ExtensionWidgetOptions,
 } from "../../core/extensions/index.js";
+import { RoutingRpcService } from "../../core/routing/rpc.js";
 import { type Theme, theme } from "../interactive/theme/theme.js";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.js";
 import { buildRpcMemoryCompareData, buildRpcMemoryHistoryData } from "./rpc-memory.js";
@@ -64,6 +65,7 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 		return { id, type: "response", command, success: false, error: message };
 	};
 	const evaluationRpc = new EvaluationRpcService();
+	const routingRpc = new RoutingRpcService();
 
 	// Pending extension UI requests waiting for response
 	const pendingExtensionRequests = new Map<
@@ -618,6 +620,10 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 
 			case "evaluation": {
 				return success(id, "evaluation", { response: await evaluationRpc.handle(command.request) });
+			}
+
+			case "routing": {
+				return success(id, "routing", { response: routingRpc.handle(command.request) });
 			}
 
 			default: {

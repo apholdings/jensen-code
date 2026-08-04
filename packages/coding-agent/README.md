@@ -499,6 +499,14 @@ pi config                   # Enable/disable package resources
 jensen agents list --json   # Inspect the canonical subagent registry
 jensen agents validate      # Validate definitions and fallback references
 jensen skills validate      # Validate loaded skill dependencies before use
+jensen routing status --json   # Evidence-driven orchestration status
+jensen routing decide --task "..." --json   # Produce a routing decision (offline, deterministic)
+jensen routing explain <decision-id>        # Explain a past decision with provenance
+jensen routing replay <decision-id>         # Replay a decision with zero effects
+jensen routing compare <decision-a> <decision-b>
+jensen routing policy list|generate|validate|promote|rollback
+jensen routing drift status
+jensen doctor routing --json                # Read-only routing subsystem diagnostics
 jensen eval packs --json    # List built-in and local evaluation packs
 jensen eval validate --json # Validate scenario schemas and fixture references
 jensen eval run core-runtime --mode fixture --json

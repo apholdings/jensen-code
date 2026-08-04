@@ -23,6 +23,7 @@ import type {
 	StructuredSnapshotSelectorCandidate,
 	StructuredSnapshotSelectorIssue,
 } from "../../core/memory-snapshot-contract.js";
+import type { RoutingRpcError, RoutingRpcRequest, RoutingRpcResponse } from "../../core/routing/rpc.js";
 import type { WorkingContext } from "../../core/working-context.js";
 
 export type { MemoryItem } from "../../core/memory.js";
@@ -116,7 +117,9 @@ export type RpcCommand =
 	| { id?: string; type: "get_working_context" }
 
 	// Evaluation runtime
-	| { id?: string; type: "evaluation"; request: EvaluationRpcRequest };
+	| { id?: string; type: "evaluation"; request: EvaluationRpcRequest }
+	// Routing runtime
+	| { id?: string; type: "routing"; request: RoutingRpcRequest };
 
 // ============================================================================
 // RPC Slash Command (for get_commands response)
@@ -262,6 +265,13 @@ export type RpcResponse =
 
 	// Evaluation runtime
 	| { id?: string; type: "response"; command: "evaluation"; success: true; data: { response: EvaluationRpcResponse } }
+	| {
+			id?: string;
+			type: "response";
+			command: "routing";
+			success: true;
+			data: { response: RoutingRpcResponse | RoutingRpcError };
+	  }
 
 	// Error response (any command can fail)
 	| { id?: string; type: "response"; command: string; success: false; error: string };
