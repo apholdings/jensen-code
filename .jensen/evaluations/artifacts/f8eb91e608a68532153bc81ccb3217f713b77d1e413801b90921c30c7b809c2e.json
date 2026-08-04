@@ -1,0 +1,101 @@
+{
+  "run": {
+    "evaluationRunId": "96a0043d-4973-43a4-943f-cdfebe56d4ed",
+    "scenarioId": "todo-recovery.historical-false-positive",
+    "scenarioVersion": 1,
+    "scenarioContentHash": "35b592a31dccbd4a4d24047f282f2c835436f2d914ca551874a8f704a1a36845",
+    "mode": "fixture",
+    "candidate": {
+      "jensenVersion": "unknown",
+      "providerProfile": "fixture",
+      "provider": "fixture",
+      "configuredModel": "deterministic-fixture",
+      "systemPromptHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "toolSchemaHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "policyHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "skillSetHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "subagentRegistryHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "retrievalConfigurationHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "runtimeFeatureFlags": {}
+    },
+    "environmentIdentity": {
+      "os": "linux",
+      "architecture": "x64",
+      "nodeVersion": "v24.18.0",
+      "packageManager": "npm",
+      "fixtureHash": "273d788815cce870a78a47c41eacec6832f21e556c3e676b9206fd6cdb64fee3",
+      "timezone": "UTC",
+      "locale": "en-US",
+      "availableTools": [
+        "node",
+        "git"
+      ],
+      "sandboxPolicyVersion": "1"
+    },
+    "startedAt": "2026-08-04T04:13:41.176Z",
+    "status": "completed",
+    "completedAt": "2026-08-04T04:13:41.215Z"
+  },
+  "scenario": {
+    "scenarioId": "todo-recovery.historical-false-positive",
+    "scenarioVersion": 1,
+    "scenarioContentHash": "35b592a31dccbd4a4d24047f282f2c835436f2d914ca551874a8f704a1a36845"
+  },
+  "candidate": {
+    "jensenVersion": "unknown",
+    "providerProfile": "fixture",
+    "provider": "fixture",
+    "configuredModel": "deterministic-fixture",
+    "systemPromptHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "toolSchemaHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "policyHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "skillSetHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "subagentRegistryHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "retrievalConfigurationHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "runtimeFeatureFlags": {}
+  },
+  "assertions": [
+    {
+      "assertionId": "progress-event",
+      "status": "pass",
+      "expected": true,
+      "observed": true,
+      "evidenceIds": [
+        "65b4a442-e989-43fe-94c4-dbaf131d78ca"
+      ],
+      "reasonCode": "EVENT_PRESENT"
+    },
+    {
+      "assertionId": "no-false-loop",
+      "status": "pass",
+      "expected": false,
+      "observed": false,
+      "evidenceIds": [],
+      "reasonCode": "EVENT_ABSENT",
+      "severity": "high"
+    }
+  ],
+  "metrics": [
+    {
+      "metricId": "stall_events",
+      "value": 0,
+      "source": "durable_event",
+      "version": 1
+    }
+  ],
+  "semanticResults": [],
+  "verdict": "pass",
+  "evidenceIds": [
+    "65b4a442-e989-43fe-94c4-dbaf131d78ca"
+  ],
+  "provenance": {
+    "createdAt": "2026-08-04T04:13:41.215Z",
+    "sourceRunIds": [
+      "96a0043d-4973-43a4-943f-cdfebe56d4ed"
+    ],
+    "evaluatorVersion": "1.0.0"
+  },
+  "schemaVersion": 1,
+  "evaluatorVersion": "1.0.0",
+  "artifactHash": "f8eb91e608a68532153bc81ccb3217f713b77d1e413801b90921c30c7b809c2e"
+}

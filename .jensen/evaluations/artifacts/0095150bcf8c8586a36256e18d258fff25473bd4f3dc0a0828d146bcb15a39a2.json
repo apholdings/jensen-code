@@ -1,0 +1,109 @@
+{
+  "run": {
+    "evaluationRunId": "7ad3590c-d6f1-42d3-9ed3-518c020f78cf",
+    "scenarioId": "core-runtime.tool-failure-recovery",
+    "scenarioVersion": 1,
+    "scenarioContentHash": "da5bcbb303edf3eca7a8a67d09a016867a6905ba82e2820e145af516366af82e",
+    "mode": "fixture",
+    "candidate": {
+      "jensenVersion": "unknown",
+      "providerProfile": "fixture",
+      "provider": "fixture",
+      "configuredModel": "deterministic-fixture",
+      "systemPromptHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "toolSchemaHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "policyHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "skillSetHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "subagentRegistryHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "retrievalConfigurationHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "runtimeFeatureFlags": {}
+    },
+    "environmentIdentity": {
+      "os": "linux",
+      "architecture": "x64",
+      "nodeVersion": "v24.18.0",
+      "packageManager": "npm",
+      "fixtureHash": "01d5ae4597324596f3da87e79b74955dd208e2239059899bf72c879abc43bff8",
+      "timezone": "UTC",
+      "locale": "en-US",
+      "availableTools": [
+        "node",
+        "git"
+      ],
+      "sandboxPolicyVersion": "1"
+    },
+    "startedAt": "2026-08-04T04:13:38.711Z",
+    "status": "completed",
+    "completedAt": "2026-08-04T04:13:38.751Z"
+  },
+  "scenario": {
+    "scenarioId": "core-runtime.tool-failure-recovery",
+    "scenarioVersion": 1,
+    "scenarioContentHash": "da5bcbb303edf3eca7a8a67d09a016867a6905ba82e2820e145af516366af82e"
+  },
+  "candidate": {
+    "jensenVersion": "unknown",
+    "providerProfile": "fixture",
+    "provider": "fixture",
+    "configuredModel": "deterministic-fixture",
+    "systemPromptHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "toolSchemaHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "policyHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "skillSetHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "subagentRegistryHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "retrievalConfigurationHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "runtimeFeatureFlags": {}
+  },
+  "assertions": [
+    {
+      "assertionId": "failure-recorded",
+      "status": "pass",
+      "expected": true,
+      "observed": true,
+      "evidenceIds": [
+        "02e08767-fc0d-41c5-98c5-41a41b2c3f81"
+      ],
+      "reasonCode": "EVENT_PRESENT"
+    },
+    {
+      "assertionId": "retry-bounded",
+      "status": "pass",
+      "expected": 3,
+      "observed": 0,
+      "evidenceIds": [
+        "retry-bounded"
+      ],
+      "reasonCode": "BUDGET_WITHIN_BOUND"
+    }
+  ],
+  "metrics": [
+    {
+      "metricId": "tool_failures",
+      "value": 1,
+      "source": "durable_event",
+      "version": 1
+    },
+    {
+      "metricId": "retries",
+      "value": 0,
+      "source": "durable_event",
+      "version": 1
+    }
+  ],
+  "semanticResults": [],
+  "verdict": "pass",
+  "evidenceIds": [
+    "02e08767-fc0d-41c5-98c5-41a41b2c3f81",
+    "retry-bounded"
+  ],
+  "provenance": {
+    "createdAt": "2026-08-04T04:13:38.751Z",
+    "sourceRunIds": [
+      "7ad3590c-d6f1-42d3-9ed3-518c020f78cf"
+    ],
+    "evaluatorVersion": "1.0.0"
+  },
+  "schemaVersion": 1,
+  "evaluatorVersion": "1.0.0",
+  "artifactHash": "0095150bcf8c8586a36256e18d258fff25473bd4f3dc0a0828d146bcb15a39a2"
+}
