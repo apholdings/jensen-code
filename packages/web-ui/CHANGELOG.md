@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.1
+
+### Patch Changes
+
+- @apholdings/jensen-ai@1.7.1
+- @apholdings/jensen-tui@1.7.1
+
 ## 1.7.0
 
 ### Minor Changes
