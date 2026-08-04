@@ -1,5 +1,11 @@
 # @apholdings/jensen-pods
 
+## 1.7.1
+
+### Patch Changes
+
+- @apholdings/jensen-agent-core@1.7.1
+
 ## 1.7.0
 
 ### Minor Changes
