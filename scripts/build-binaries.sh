@@ -164,10 +164,30 @@ done
 
 # Validate every extracted executable before packaging release metadata.
 echo "==> Running binary smoke tests..."
+HOST_PLATFORM=""
+case "$(uname -s)" in
+    Linux)
+        case "$(uname -m)" in
+            x86_64) HOST_PLATFORM="linux-x64" ;;
+            aarch64|arm64) HOST_PLATFORM="linux-arm64" ;;
+        esac
+        ;;
+    Darwin)
+        case "$(uname -m)" in
+            x86_64) HOST_PLATFORM="darwin-x64" ;;
+            arm64|aarch64) HOST_PLATFORM="darwin-arm64" ;;
+        esac
+        ;;
+    MINGW*|MSYS*|CYGWIN*) HOST_PLATFORM="windows-x64" ;;
+esac
 for platform in "${PLATFORMS[@]}"; do
-    if [[ "$platform" == "windows-x64" && "$(uname -s)" != MINGW* && "$(uname -s)" != MSYS* && "$(uname -s)" != CYGWIN* ]]; then
-        test -f "$platform/pi.exe"
-        echo "Skipping Windows PE execution on $(uname -s); Windows CI performs smoke tests."
+    if [[ "$platform" != "$HOST_PLATFORM" ]]; then
+        if [[ "$platform" == "windows-x64" ]]; then
+            test -f "$platform/pi.exe"
+        else
+            test -f "$platform/pi"
+        fi
+        echo "Skipping $platform execution on $(uname -s)/$(uname -m); host smoke target is $HOST_PLATFORM."
         continue
     fi
     if [[ "$platform" == "windows-x64" ]]; then
@@ -187,7 +207,7 @@ node ../../../scripts/create-binary-manifest.mjs \
     --directory . \
     --output binary-manifest.json \
     --version "$(node -p 'require("../package.json").version')" \
-    --commit "$(git rev-parse HEAD)"
+    --commit "${JENSEN_BINARY_COMMIT:-$(git rev-parse HEAD)}"
 CHECKSUM_FILES=()
 for archive in *.tar.gz *.zip; do
     if [[ -f "$archive" ]]; then
