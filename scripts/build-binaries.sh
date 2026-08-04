@@ -207,7 +207,7 @@ node ../../../scripts/create-binary-manifest.mjs \
     --directory . \
     --output binary-manifest.json \
     --version "$(node -p 'require("../package.json").version')" \
-    --commit "$(git rev-parse HEAD)"
+    --commit "${JENSEN_BINARY_COMMIT:-$(git rev-parse HEAD)}"
 CHECKSUM_FILES=()
 for archive in *.tar.gz *.zip; do
     if [[ -f "$archive" ]]; then
