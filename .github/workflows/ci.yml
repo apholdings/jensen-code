@@ -72,3 +72,11 @@ jobs:
         run: >-
           npx tsx ../../node_modules/vitest/dist/cli.js --run
           test/evaluation/production-runtime.test.ts
+
+      - name: Run Windows routing store and CLI validation
+        working-directory: packages/coding-agent
+        run: >-
+          npx tsx ../../node_modules/vitest/dist/cli.js --run
+          src/core/routing/routing.windows.test.ts
+          src/core/routing/routing.test.ts
+          src/core/routing/routing-cli.test.ts

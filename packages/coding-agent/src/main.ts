@@ -27,6 +27,7 @@ import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/mod
 import { handleOperabilityCommand } from "./core/operability-cli.js";
 import { DefaultPackageManager } from "./core/package-manager.js";
 import { DefaultResourceLoader } from "./core/resource-loader.js";
+import { handleRoutingCommand } from "./core/routing/cli.js";
 import { handleWorkspaceCommand } from "./core/safety/cli.js";
 import { type CreateAgentSessionOptions, createAgentSession } from "./core/sdk.js";
 import { SessionManager } from "./core/session-manager.js";
@@ -703,6 +704,10 @@ export async function main(args: string[]) {
 	}
 
 	if (await handleWorkspaceRetrievalCommand(args)) {
+		return;
+	}
+
+	if (await handleRoutingCommand(args)) {
 		return;
 	}
 
