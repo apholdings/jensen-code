@@ -524,19 +524,20 @@ describe("production todo/provider harness", () => {
 		}
 	});
 
-	it("terminates repeated todo_write and keeps next turn usable", async () => {
+	it("degrades repeated todo_write without terminating and keeps next turn usable", async () => {
 		const writeArgs = { todos: [...todoList] };
 		resetMock([
 			{ type: "tool", calls: [{ id: "write-1", name: "todo_write", args: writeArgs }] },
 			{ type: "tool", calls: [{ id: "write-2", name: "todo_write", args: writeArgs }] },
 			{ type: "tool", calls: [{ id: "write-3", name: "todo_write", args: writeArgs }] },
 			{ type: "text", text: "new turn works" },
+			{ type: "text", text: "new turn works" },
 		]);
 		const harness = await createHarness(deepSeekRoute);
 		try {
 			await runPrompt(harness, "repeat todo write");
-			expect(mockState.transportCount).toBe(3);
-			expect(harness.session.agent.state.error).toContain("REPEATED_TOOL_CALL_LOOP");
+			expect(mockState.transportCount).toBe(4);
+			expect(harness.session.agent.state.error).toBeUndefined();
 			expect(
 				harness.events.filter(
 					(event) =>
@@ -552,13 +553,13 @@ describe("production todo/provider harness", () => {
 						event.message.role === "toolResult" &&
 						toolResultDetails(event)?.todoWriteAlreadyApplied === true,
 				),
-			).toHaveLength(1);
+			).toHaveLength(2);
 			expect(harness.session.todoRevision).toBe(1);
 			const terminalTransportCount = mockState.transportCount;
 
 			await runPrompt(harness, "recover after repeated write");
 			expect(mockState.transportCount).toBe(terminalTransportCount + 1);
-			expect(assistantFinalMessages(harness.events)).toHaveLength(1);
+			expect(assistantFinalMessages(harness.events)).toHaveLength(2);
 		} finally {
 			closeHarness(harness);
 		}

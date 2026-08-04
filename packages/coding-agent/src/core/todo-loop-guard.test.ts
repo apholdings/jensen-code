@@ -6,7 +6,7 @@ import { createTodoUpdateTool } from "./tools/todo-update.js";
 import { createPerTurnLock, createTodoWriteTool, redactSecrets, type TodoItem } from "./tools/todo-write.js";
 
 describe("Todo write per-user-turn duplicate contract (R01-R14)", () => {
-	it("R01 writes mutate exactly once; duplicate is rejected; repeat terminates", async () => {
+	it("R01 writes mutate exactly once; duplicate is rejected; repeat degrades", async () => {
 		let persisted: TodoItem[] = [];
 		const guard = new TodoLoopGuard();
 		const lock = createPerTurnLock();
@@ -32,8 +32,10 @@ describe("Todo write per-user-turn duplicate contract (R01-R14)", () => {
 		expect(persisted).toMatchObject(items1);
 		expect(persisted).toHaveLength(1);
 
-		// Second equivalent duplicate: terminates with REPEATED_TOOL_CALL_LOOP
-		await expect(tool.execute("w03", { todos: items1 })).rejects.toThrow("REPEATED_TOOL_CALL_LOOP");
+		// Second equivalent duplicate: bounded nonfatal degradation
+		const res3 = await tool.execute("w03", { todos: items1 });
+		expect((res3.details as { errorCode?: string }).errorCode).toBe("TODO_TOOL_TEMPORARILY_DEGRADED");
+		expect((res3.details as { runMustContinue?: boolean }).runMustContinue).toBe(true);
 		// State unchanged
 		expect(persisted).toMatchObject(items1);
 		expect(persisted).toHaveLength(1);
@@ -264,7 +266,7 @@ describe("Todo write per-user-turn duplicate contract (R01-R14)", () => {
 		expect(text.includes("call it again")).toBe(false);
 	});
 
-	it("R14 second equivalent duplicate terminates with REPEATED_TOOL_CALL_LOOP", async () => {
+	it("R14 second equivalent duplicate degrades without terminating", async () => {
 		const lock = createPerTurnLock();
 		let persisted: TodoItem[] = [];
 		const tool = createTodoWriteTool(
@@ -280,9 +282,9 @@ describe("Todo write per-user-turn duplicate contract (R01-R14)", () => {
 		await tool.execute("w1", { todos: [{ content: "A", activeForm: "A", status: "pending" }] });
 		await tool.execute("w2", { todos: [{ content: "A", activeForm: "A", status: "pending" }] });
 
-		await expect(
-			tool.execute("w3", { todos: [{ content: "A", activeForm: "A", status: "pending" }] }),
-		).rejects.toThrow("REPEATED_TOOL_CALL_LOOP");
+		const result = await tool.execute("w3", { todos: [{ content: "A", activeForm: "A", status: "pending" }] });
+		expect((result.details as { errorCode?: string }).errorCode).toBe("TODO_TOOL_TEMPORARILY_DEGRADED");
+		expect((result.details as { runMustContinue?: boolean }).runMustContinue).toBe(true);
 		expect(persisted).toHaveLength(1);
 	});
 

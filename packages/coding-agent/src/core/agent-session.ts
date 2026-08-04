@@ -385,7 +385,7 @@ export class AgentSession {
 	private _todoPerTurnLock = createPerTurnLock();
 	private _todoReadSnapshot: { revision: number; timestamp: number } | null = null;
 	private _todoUpdateRejectionState = { count: 0 };
-	private _todoEngine = new TodoEngine("session");
+	private _todoEngine!: TodoEngine;
 	private _memoryItems: MemoryItem[] = [];
 	private _delegatedTasks: DelegatedTask[] = [];
 	private _tasks: Task[] = [];
@@ -444,6 +444,7 @@ export class AgentSession {
 
 		const restoredContext = this.sessionManager.buildSessionContext();
 		this._todos = restoredContext.todos as TodoItem[];
+		this._resetTodoEngine();
 		this._memoryItems = restoredContext.memoryItems;
 		this._tasks = this.sessionManager.getLatestSessionTasks();
 
@@ -491,20 +492,6 @@ export class AgentSession {
 		});
 
 		this.agent.setAfterToolCall(async ({ toolCall, args, result, isError }) => {
-			// Local run termination for repeated todo_write after the per-turn lock
-			// is active. The tool already threw REPEATED_TOOL_CALL_LOOP; rethrow so
-			// the agent loop surfaces an error assistant message and stops without
-			// another provider request.
-			if ((toolCall.name === "todo_write" || toolCall.name === "todo_update") && isError) {
-				const text = (result.content ?? [])
-					.filter((c) => c.type === "text")
-					.map((c) => (c as { text?: string }).text ?? "")
-					.join(" ");
-				if (/REPEATED_TOOL_CALL_LOOP|REPEATED_TODO_UPDATE_LOOP/.test(text)) {
-					throw new Error(text);
-				}
-			}
-
 			if (toolCall.name === "todo_write" && !isError) {
 				const details = result.details as Record<string, unknown> | undefined;
 				if (details?.changed === true || details?.todoWriteAlreadyApplied === true) {
@@ -1067,6 +1054,19 @@ export class AgentSession {
 		return this._todoEngine.getDiagnostics();
 	}
 
+	private _resetTodoEngine(): void {
+		this._todoEngine = new TodoEngine(`session:${this.sessionManager.getSessionId()}`, {}, Date.now, {
+			load: () => this.sessionManager.getLatestTodoEngineState(),
+			save: (state) => {
+				this.sessionManager.appendTodoEngineState(state);
+			},
+		});
+		this._todoRevision = this._todoEngine.getCurrentRevision();
+		if (this._todoRevision === 0 && this._todos.length > 0) {
+			this._todoEngine.recordState(0, this._todos);
+		}
+	}
+
 	/**
 	 * Get the current todo revision number.
 	 * Increments on every non-no-op todo_write or todo_update mutation.
@@ -1106,6 +1106,7 @@ export class AgentSession {
 		}));
 		this._todos = withIds;
 		this._todoRevision++;
+		this._todoEngine.recordState(this._todoRevision, this._todos);
 		// Invalidate read snapshot - external revision changed, any cached read is stale
 		this._todoReadSnapshot = null;
 		this.sessionManager.appendSessionTodos(withIds);
@@ -2252,6 +2253,7 @@ export class AgentSession {
 		this._pendingNextTurnMessages = [];
 		this._todos = [];
 		this._todoRevision = 0;
+		this._resetTodoEngine();
 		this._todoReadSnapshot = null;
 		this._todoUpdateRejectionState.count = 0;
 		this._todoPerTurnLock.currentTurn = 0;
@@ -3672,7 +3674,8 @@ export class AgentSession {
 		// Reload messages
 		const sessionContext = this.sessionManager.buildSessionContext();
 		this._todos = sessionContext.todos as TodoItem[];
-		this._todoRevision = 0;
+		this._resetTodoEngine();
+		this._todoRevision = this._todoEngine.getCurrentRevision();
 		this._todoReadSnapshot = null;
 		this._todoUpdateRejectionState.count = 0;
 		this._todoPerTurnLock.currentTurn = 0;

@@ -1,4 +1,6 @@
 export type {
+	TodoEnginePersistence,
+	TodoEngineState,
 	TodoEvent,
 	TodoEventType,
 	TodoFailureFingerprint,

@@ -155,6 +155,21 @@ export interface TodoEvent {
 	recoveryAction?: TodoRecoveryAction;
 }
 
+export interface TodoEngineState {
+	currentRevision: number;
+	progressEpoch: number;
+	lastTodoReadRevision: number;
+	snapshots: Array<{ revision: number; items: TodoItem[] }>;
+	ledger: Array<{ idempotencyKey: string; applicationRevision: number; applied: boolean }>;
+	events: TodoEvent[];
+	chain: { fingerprint: TodoFailureFingerprint; consecutive: number; lastAt: number } | null;
+}
+
+export interface TodoEnginePersistence {
+	load: () => TodoEngineState | undefined;
+	save: (state: TodoEngineState) => void;
+}
+
 // ---------------------------------------------------------------------------
 // Limits / bounds
 // ---------------------------------------------------------------------------
@@ -274,14 +289,55 @@ export class TodoEngine {
 	private events: TodoEvent[] = [];
 	private chain: FailureChain | null = null;
 	private progressEpoch = 0;
+	private currentRevision = 0;
+	private readonly persistence?: TodoEnginePersistence;
 
 	constructor(
 		scopeId: string,
 		limits: Partial<TodoEngineLimits> = {},
 		private readonly now: () => number = Date.now,
+		persistence?: TodoEnginePersistence,
 	) {
 		this.scopeId = scopeId;
 		this.limits = { ...DEFAULT_TODO_ENGINE_LIMITS, ...limits };
+		this.persistence = persistence;
+		this.restore(persistence?.load());
+	}
+
+	private restore(state: TodoEngineState | undefined): void {
+		if (!state) return;
+		this.currentRevision = state.currentRevision;
+		this.progressEpoch = state.progressEpoch;
+		this.lastTodoReadRevision = state.lastTodoReadRevision;
+		for (const snapshot of state.snapshots.slice(-this.limits.maxSnapshots)) {
+			this.snapshots.set(
+				snapshot.revision,
+				snapshot.items.map((item) => ({ ...item })),
+			);
+		}
+		for (const entry of state.ledger.slice(-this.limits.maxLedger)) {
+			this.ledger.set(entry.idempotencyKey, {
+				applicationRevision: entry.applicationRevision,
+				applied: entry.applied,
+			});
+		}
+		this.events = state.events.slice(-this.limits.maxEvents).map((event) => ({ ...event }));
+		this.chain = state.chain ? { ...state.chain, fingerprint: { ...state.chain.fingerprint } } : null;
+	}
+
+	private persist(): void {
+		this.persistence?.save({
+			currentRevision: this.currentRevision,
+			progressEpoch: this.progressEpoch,
+			lastTodoReadRevision: this.lastTodoReadRevision,
+			snapshots: [...this.snapshots.entries()].map(([revision, items]) => ({
+				revision,
+				items: items.map((item) => ({ ...item })),
+			})),
+			ledger: [...this.ledger.entries()].map(([idempotencyKey, value]) => ({ idempotencyKey, ...value })),
+			events: this.events.map((event) => ({ ...event })),
+			chain: this.chain ? { ...this.chain, fingerprint: { ...this.chain.fingerprint } } : null,
+		});
 	}
 
 	// -- progress epoch ------------------------------------------------------
@@ -293,6 +349,7 @@ export class TodoEngine {
 			this.emit("TODO_LOOP_CHAIN_RESET_BY_PROGRESS");
 			this.chain = null;
 		}
+		this.persist();
 	}
 
 	/**
@@ -303,6 +360,7 @@ export class TodoEngine {
 	recordTodoRead(revision: number): void {
 		if (revision > this.lastTodoReadRevision) {
 			this.lastTodoReadRevision = revision;
+			this.currentRevision = Math.max(this.currentRevision, revision);
 			this.recordProgress();
 		}
 	}
@@ -314,6 +372,7 @@ export class TodoEngine {
 	// -- snapshot history ----------------------------------------------------
 
 	recordReadSnapshot(revision: number, items: TodoItem[]): void {
+		this.currentRevision = Math.max(this.currentRevision, revision);
 		if (this.snapshots.size >= this.limits.maxSnapshots) {
 			const oldest = [...this.snapshots.keys()].sort((a, b) => a - b)[0];
 			if (oldest !== undefined) this.snapshots.delete(oldest);
@@ -322,6 +381,16 @@ export class TodoEngine {
 			revision,
 			items.map((t) => ({ ...t })),
 		);
+		this.persist();
+	}
+
+	recordState(revision: number, items: TodoItem[]): void {
+		this.currentRevision = revision;
+		this.recordReadSnapshot(revision, items);
+	}
+
+	getCurrentRevision(): number {
+		return this.currentRevision;
 	}
 
 	private getSnapshot(revision: number): TodoItem[] | undefined {
@@ -344,6 +413,8 @@ export class TodoEngine {
 			if (oldest !== undefined) this.ledger.delete(oldest as string);
 		}
 		this.ledger.set(idempotencyKey, { applicationRevision, applied: true });
+		this.currentRevision = Math.max(this.currentRevision, applicationRevision);
+		this.persist();
 	}
 
 	// -- events --------------------------------------------------------------
@@ -354,6 +425,7 @@ export class TodoEngine {
 		if (this.events.length > this.limits.maxEvents) {
 			this.events = this.events.slice(-this.limits.maxEvents);
 		}
+		this.persist();
 	}
 
 	getEvents(limit = 50): TodoEvent[] {
@@ -392,6 +464,7 @@ export class TodoEngine {
 				intentId: fp.intentHash,
 			});
 		}
+		this.persist();
 		return { blocked, consecutive: this.chain.consecutive };
 	}
 
@@ -400,15 +473,18 @@ export class TodoEngine {
 		if (this.chain) {
 			this.emit("TODO_LOOP_CHAIN_RESET_BY_PROGRESS");
 			this.chain = null;
+			this.persist();
 		}
 	}
 
 	private sameFingerprint(a: TodoFailureFingerprint, b: TodoFailureFingerprint): boolean {
 		return (
+			a.scopeId === b.scopeId &&
 			a.errorCode === b.errorCode &&
 			a.intentHash === b.intentHash &&
 			a.requestedRevision === b.requestedRevision &&
-			a.currentRevision === b.currentRevision
+			a.currentRevision === b.currentRevision &&
+			JSON.stringify(a.conflictItemIds ?? []) === JSON.stringify(b.conflictItemIds ?? [])
 		);
 	}
 

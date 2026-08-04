@@ -20,6 +20,7 @@ export interface SessionMemoryState {
 
 export const SESSION_MEMORY_CUSTOM_TYPE = "session_memory";
 export const SESSION_TODOS_CUSTOM_TYPE = "session_todos";
+export const SESSION_TODO_ENGINE_CUSTOM_TYPE = "session_todo_engine";
 export const SESSION_TASKS_CUSTOM_TYPE = "session_tasks";
 
 export const SESSION_MEMORY_PREFIX = `Session memory recorded during this conversation. Treat it as active working context, but prefer newer user instructions if they conflict.\n\n<memory>\n`;

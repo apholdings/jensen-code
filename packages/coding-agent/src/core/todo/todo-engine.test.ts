@@ -4,7 +4,14 @@
  *   and progress-aware loop detection.
  */
 import { describe, expect, it } from "vitest";
-import { allowedTransitions, computeStateHash, hashIntent, TodoEngine, validateTransition } from "./todo-engine.js";
+import {
+	allowedTransitions,
+	computeStateHash,
+	hashIntent,
+	TodoEngine,
+	type TodoEngineState,
+	validateTransition,
+} from "./todo-engine.js";
 
 const item = (id: string, content = id, status: "pending" | "in_progress" | "completed" = "pending") => ({
 	id,
@@ -127,6 +134,24 @@ describe("idempotency", () => {
 			e.recordApplied(`k${i}`, i);
 		}
 		expect(e.getDiagnostics().ledgerCount).toBeLessThanOrEqual(3);
+	});
+
+	it("restores applied intents and snapshots after a process restart", () => {
+		let durableState: TodoEngineState | undefined;
+		const persistence = {
+			load: () => durableState,
+			save: (state: TodoEngineState) => {
+				durableState = state;
+			},
+		};
+		const first = new TodoEngine("s", {}, Date.now, persistence);
+		first.recordState(4, [item("a")]);
+		first.recordApplied("intent-a", 5);
+
+		const resumed = new TodoEngine("s", {}, Date.now, persistence);
+		expect(resumed.getCurrentRevision()).toBe(5);
+		expect(resumed.lookupApplied("intent-a")).toBe(true);
+		expect(resumed.rebase(4, 5, [item("a")], [{ id: "a", status: "completed" }]).status).toBe("rebased");
 	});
 });
 

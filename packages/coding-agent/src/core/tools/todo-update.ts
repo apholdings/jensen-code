@@ -1,6 +1,6 @@
 import type { AgentTool } from "@apholdings/jensen-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
-import { hashIntent, TodoEngine, type TodoPatchOp } from "../todo/index.js";
+import { hashIntent, TodoEngine, type TodoPatchOp, validateTransition } from "../todo/index.js";
 import { TodoLoopGuard } from "./todo-loop-guard.js";
 
 /** Schema for the todo_update tool */
@@ -145,14 +145,21 @@ export function createTodoUpdateTool(
 			const { updates } = input;
 			const requestedRevision = input.expectedRevision;
 
-			const returnConflict = (result: { message: string; currentItems: TodoItem[]; currentRevision: number }) => {
+			const returnConflict = (result: {
+				message: string;
+				currentItems: TodoItem[];
+				currentRevision: number;
+				errorCode?: string;
+				consecutiveFailures?: number;
+			}) => {
 				const sum = summarize(result.currentItems);
 				return {
 					content: [{ type: "text" as const, text: result.message }],
 					details: {
-						errorCode: "TODO_REBASE_CONFLICT",
+						errorCode: result.errorCode ?? "TODO_REBASE_CONFLICT",
 						recoverable: true,
 						runMustContinue: true,
+						consecutiveFailures: result.consecutiveFailures,
 						requestedRevision,
 						currentRevision: result.currentRevision,
 						conflictItemIds: undefined,
@@ -160,6 +167,20 @@ export function createTodoUpdateTool(
 					},
 				};
 			};
+
+			const registerNonfatalFailure = (
+				errorCode: string,
+				currentRevision: number,
+				conflictItemIds: string[] = [],
+			): { blocked: boolean; consecutive: number } =>
+				engine.registerFailure({
+					scopeId: engine.scopeId,
+					errorCode,
+					intentHash,
+					requestedRevision,
+					currentRevision,
+					conflictItemIds,
+				});
 
 			// Validate updates non-empty
 			if (!Array.isArray(updates) || updates.length === 0) {
@@ -241,8 +262,6 @@ export function createTodoUpdateTool(
 				};
 			}
 
-			// Any mutation is progress: breaks any outstanding failure chain.
-			engine.recordProgress();
 			engine.emit({
 				type: "TODO_MUTATION_INTENT_CREATED",
 				intentId: intentHash,
@@ -257,6 +276,7 @@ export function createTodoUpdateTool(
 				const knownIds = new Set(currentItems.map((t) => t.id).filter(Boolean));
 				for (const op of ops) {
 					if (!knownIds.has(op.id)) {
+						const failure = registerNonfatalFailure("TODO_ITEM_NOT_FOUND", currentRevision, [op.id]);
 						const sum = summarize(currentItems);
 						return {
 							content: [
@@ -265,7 +285,34 @@ export function createTodoUpdateTool(
 									text: `Error: unknown todo id "${op.id}". Call todo_read to get current IDs and retry.`,
 								},
 							],
-							details: { unknownId: op.id, errorCode: "TODO_ITEM_NOT_FOUND", sum },
+							details: {
+								unknownId: op.id,
+								errorCode: failure.blocked ? "TODO_NO_PROGRESS_LOOP" : "TODO_ITEM_NOT_FOUND",
+								recoverable: true,
+								runMustContinue: true,
+								consecutiveFailures: failure.consecutive,
+								sum,
+							},
+						};
+					}
+				}
+				for (const op of ops) {
+					if (op.status === undefined) continue;
+					const item = currentItems.find((candidate) => candidate.id === op.id);
+					if (!item) continue;
+					const transition = validateTransition(item.status, op.status);
+					if (!transition.ok) {
+						const failure = registerNonfatalFailure("TODO_INVALID_STATUS_TRANSITION", currentRevision, [op.id]);
+						const sum = summarize(currentItems);
+						return {
+							content: [{ type: "text", text: `TODO_INVALID_STATUS_TRANSITION: ${transition.reason}` }],
+							details: {
+								errorCode: failure.blocked ? "TODO_NO_PROGRESS_LOOP" : "TODO_INVALID_STATUS_TRANSITION",
+								recoverable: true,
+								runMustContinue: true,
+								consecutiveFailures: failure.consecutive,
+								sum,
+							},
 						};
 					}
 				}
@@ -296,7 +343,9 @@ export function createTodoUpdateTool(
 				}
 				setSessionTodos(items);
 				const newRevision = getRevision();
+				engine.recordState(newRevision, items);
 				engine.recordApplied(idempotencyKey, newRevision);
+				engine.recordProgress();
 				engine.emit({
 					type: "TODO_MUTATION_COMMITTED",
 					intentId: intentHash,
@@ -333,42 +382,50 @@ export function createTodoUpdateTool(
 
 			const maxAttempts = engine.limits.maxInternalRebaseAttempts;
 			let attempt = 0;
-			let rebase = engine.rebase(requestedRevision, currentRevision, currentItems, ops);
+			let rebasedItems = currentItems;
+			let rebasedRevision = currentRevision;
+			let rebase = engine.rebase(requestedRevision, rebasedRevision, rebasedItems, ops);
 
 			// Bounded retry: if the state advanced again during our read, retry once.
 			while (rebase.status === "conflict" && attempt < maxAttempts && getRevision() !== currentRevision) {
-				const latestItems = getSessionTodos().map((t) => ({ ...t }));
-				const latestRevision = getRevision();
+				rebasedItems = getSessionTodos().map((t) => ({ ...t }));
+				rebasedRevision = getRevision();
 				engine.emit({
 					type: "TODO_INTERNAL_READ_COMPLETED",
-					currentRevision: latestRevision,
+					currentRevision: rebasedRevision,
 				});
-				rebase = engine.rebase(requestedRevision, latestRevision, latestItems, ops);
+				engine.recordReadSnapshot(rebasedRevision, rebasedItems);
+				rebase = engine.rebase(requestedRevision, rebasedRevision, rebasedItems, ops);
 				attempt++;
 			}
 
 			if (rebase.status === "conflict") {
-				if (rebase.status === "conflict") {
-					engine.emit({
-						type: "TODO_REBASE_CONFLICT",
-						intentId: intentHash,
-						currentRevision,
-						conflictItemIds: rebase.conflictItemIds,
-					});
-					engine.emit({
-						type: "TODO_MUTATION_REJECTED",
-						intentId: intentHash,
-						requestedRevision,
-						currentRevision,
-					});
-				}
+				const failure = registerNonfatalFailure(
+					"TODO_REBASE_CONFLICT",
+					rebase.currentRevision,
+					rebase.conflictItemIds,
+				);
+				engine.emit({
+					type: "TODO_REBASE_CONFLICT",
+					intentId: intentHash,
+					currentRevision: rebase.currentRevision,
+					conflictItemIds: rebase.conflictItemIds,
+				});
+				engine.emit({
+					type: "TODO_MUTATION_REJECTED",
+					intentId: intentHash,
+					requestedRevision,
+					currentRevision: rebase.currentRevision,
+				});
 				// Typed, nonfatal conflict (or rebase ambiguity). Run continues.
 				const conflictList =
 					rebase.conflictItemIds.length > 0 ? rebase.conflictItemIds.join(", ") : "unknown items";
 				return returnConflict({
-					message: `TODO_REBASE_CONFLICT: The todo list advanced to revision ${currentRevision}; your intent based on revision ${requestedRevision} conflicts with concurrent changes (items: ${conflictList}). No update was applied and execution continues. Read current state with todo_read if you want to retry.`,
-					currentItems,
-					currentRevision,
+					message: `${failure.blocked ? "TODO_NO_PROGRESS_LOOP" : "TODO_REBASE_CONFLICT"}: The todo list advanced to revision ${rebase.currentRevision}; your intent based on revision ${requestedRevision} conflicts with concurrent changes (items: ${conflictList}). No update was applied and execution continues.`,
+					currentItems: rebasedItems,
+					currentRevision: rebase.currentRevision,
+					errorCode: failure.blocked ? "TODO_NO_PROGRESS_LOOP" : "TODO_REBASE_CONFLICT",
+					consecutiveFailures: failure.consecutive,
 				});
 			}
 
@@ -406,11 +463,13 @@ export function createTodoUpdateTool(
 			}
 
 			// Conflict-free rebase: apply rebased ops onto the current state.
-			const { items, changed } = applyOps(currentItems, ops);
+			const { items, changed } = applyOps(rebasedItems, ops);
 			if (changed) {
 				setSessionTodos(items);
 				const newRevision = getRevision();
+				engine.recordState(newRevision, items);
 				engine.recordApplied(idempotencyKey, newRevision);
+				engine.recordProgress();
 				engine.emit({
 					type: "TODO_REBASE_SUCCEEDED",
 					intentId: intentHash,

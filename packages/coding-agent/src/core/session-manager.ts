@@ -26,6 +26,7 @@ import {
 	parseTodoSnapshot,
 	SESSION_MEMORY_CUSTOM_TYPE,
 	SESSION_TASKS_CUSTOM_TYPE,
+	SESSION_TODO_ENGINE_CUSTOM_TYPE,
 	SESSION_TODOS_CUSTOM_TYPE,
 	type Task,
 	type TodoSnapshotItem,
@@ -38,6 +39,7 @@ import {
 	createCustomMessage,
 } from "./messages.js";
 import { resolveSnapshotSelector, type SnapshotResolution } from "./snapshot-selector-resolver.js";
+import type { TodoEngineState } from "./todo/todo-engine.js";
 
 export const CURRENT_SESSION_VERSION = 3;
 
@@ -977,6 +979,21 @@ export class SessionManager {
 
 	appendSessionTodos(todos: TodoSnapshotItem[]): string {
 		return this.appendCustomEntry(SESSION_TODOS_CUSTOM_TYPE, todos);
+	}
+
+	appendTodoEngineState(state: TodoEngineState): string {
+		return this.appendCustomEntry(SESSION_TODO_ENGINE_CUSTOM_TYPE, state);
+	}
+
+	getLatestTodoEngineState(): TodoEngineState | undefined {
+		const entries = this.getBranch();
+		for (let i = entries.length - 1; i >= 0; i--) {
+			const entry = entries[i];
+			if (entry.type === "custom" && entry.customType === SESSION_TODO_ENGINE_CUSTOM_TYPE) {
+				return entry.data as TodoEngineState;
+			}
+		}
+		return undefined;
 	}
 
 	appendSessionTasks(tasks: Task[]): string {

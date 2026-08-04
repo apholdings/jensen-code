@@ -139,12 +139,22 @@ export function createTodoWriteTool(
 			const completedCount = list.filter((t) => t.status === "completed").length;
 
 			if (!firstDuplicate) {
-				// Second equivalent duplicate within the same user turn: terminate the
-				// active agent run locally. This must not mutate state and must not
-				// result in another provider request.
-				throw new Error(
-					"REPEATED_TOOL_CALL_LOOP: todo_write was called again after it was removed. The active agent run is terminated. Start a new user message to continue.",
-				);
+				return {
+					content: [
+						{
+							type: "text",
+							text: "TODO_TOOL_TEMPORARILY_DEGRADED: todo_write is blocked for this user turn after repeated equivalent writes. Execution continues; use todo_update or another authorized tool.",
+						},
+					],
+					details: {
+						changed: false,
+						todoWriteAlreadyApplied: true,
+						errorCode: "TODO_TOOL_TEMPORARILY_DEGRADED",
+						recoverable: true,
+						runMustContinue: true,
+						loopBlocked: true,
+					},
+				};
 			}
 
 			return {
