@@ -9,6 +9,7 @@ import {
 	hasExplicitLiveOptIn,
 	scenarioContentHash,
 } from "./identity.js";
+import { type EvaluationCandidateLauncher, resolveCandidateLauncher } from "./launcher.js";
 import {
 	createLiveProviderExecutor,
 	type EvaluationProviderClient,
@@ -61,6 +62,7 @@ export interface EvaluationRunOptions {
 	budget?: EvaluationBudget;
 	signal?: AbortSignal;
 	liveProvider?: { profile: EvaluationProviderProfile; client: EvaluationProviderClient };
+	launcher?: EvaluationCandidateLauncher;
 }
 
 export async function runEvaluation(
@@ -100,14 +102,17 @@ export async function runEvaluation(
 	let sandbox: Awaited<ReturnType<typeof createEvaluationSandbox>> | undefined;
 	let failed = false;
 	let artifact: EvaluationArtifact | undefined;
+	let launcher = options.launcher;
 	try {
 		if (options.mode === "sandbox" || options.mode === "live") {
+			if (!launcher) launcher = await resolveCandidateLauncher();
 			sandbox = await createEvaluationSandbox({
 				evaluationRunId: run.evaluationRunId,
 				fixture: scenario.fixture,
 				policy: scenario.candidatePolicy,
 				retainOnFailure: options.retainFailedWorkspace,
 				signal: options.signal,
+				launcher,
 			});
 			run.sandboxIdentity = sandbox.identity;
 		} else if (options.mode === "fixture") {
@@ -270,14 +275,10 @@ async function executeSandboxCandidate(
 	scenario: EvaluationScenario,
 	signal?: AbortSignal,
 ): Promise<EvaluationExecutionResult> {
-	const processResult = await sandbox.runProcess(
-		process.execPath,
-		[
-			"-e",
-			"const fs = require('node:fs'); const root = process.cwd(); fs.writeFileSync('.jensen-candidate-complete', 'candidate'); process.stdout.write(root);",
-		],
-		{ signal },
-	);
+	const launcher = sandbox.policy.authorizedLauncher;
+	if (!launcher) throw new Error("sandbox candidate requires an authorized launcher");
+	const args = [...launcher.invocationPrefix];
+	const processResult = await sandbox.runProcess(launcher.executablePath, args, { signal });
 	const fixtureEvents = defaultExecution(scenario, "sandbox").events;
 	return {
 		events: [
@@ -286,7 +287,11 @@ async function executeSandboxCandidate(
 				eventId: randomUUID(),
 				type: "candidate.process",
 				timestamp: new Date().toISOString(),
-				details: { exitCode: processResult.exitCode ?? -1, outputBytes: Buffer.byteLength(processResult.stdout) },
+				details: {
+					exitCode: processResult.exitCode ?? -1,
+					outputBytes: Buffer.byteLength(processResult.stdout),
+					launcher: launcher.executableIdentity,
+				},
 			},
 		],
 		workspaceRoot: sandbox.root,

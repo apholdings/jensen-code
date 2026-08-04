@@ -216,7 +216,10 @@ export type EvaluationSandboxEventType =
 	| "EVAL_CANDIDATE_FAILED"
 	| "EVAL_SANDBOX_CLEANUP_STARTED"
 	| "EVAL_SANDBOX_CLEANUP_COMPLETED"
-	| "EVAL_SANDBOX_RETAINED";
+	| "EVAL_SANDBOX_RETAINED"
+	| "EVAL_LAUNCHER_IDENTITY"
+	| "EVAL_LAUNCHER_AUTHORIZED"
+	| "EVAL_LAUNCHER_REJECTED";
 
 export interface EvaluationReviewerAssignment {
 	reviewerRunId: string;
@@ -285,7 +288,22 @@ export interface ReleaseConvergenceState {
 	assetUpload: "pending" | "partial" | "complete" | "failed";
 	assetVerification: "pending" | "passed" | "failed";
 	githubRelease: "pending" | "published" | "failed";
+	runtimeAcceptance: ArtifactRuntimeAcceptance;
 	finalVerdict: "incomplete" | "blocked" | "pass";
+}
+
+/**
+ * Per-artifact sandbox runtime acceptance. Individual states (rather than one
+ * broad binary-smoke boolean) so a release cannot be marked PASS from a basic
+ * `--version` smoke alone; each applicable artifact must run a real sandboxed
+ * candidate process.
+ */
+export interface ArtifactRuntimeAcceptance {
+	source: "pending" | "pass" | "fail";
+	packedNpm: "pending" | "pass" | "fail";
+	registryNpm: "pending" | "pass" | "fail";
+	builtBinary: "pending" | "pass" | "fail";
+	downloadedBinary: "pending" | "pass" | "fail";
 }
 
 export interface EvaluationRun {

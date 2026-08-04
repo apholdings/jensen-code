@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import chalk from "chalk";
 import { runCavecrew } from "../cavecrew-runtime.js";
@@ -28,7 +29,7 @@ import {
 	verifyBaseline,
 	writeArtifact,
 } from "./index.js";
-import type { EvaluationArtifact, EvaluationReleaseGate } from "./types.js";
+import type { EvaluationArtifact, EvaluationReleaseGate, EvaluationVerdict } from "./types.js";
 
 const evaluationRoot = () => join(process.cwd(), ".jensen", "evaluations");
 const baselineRoot = () => join(evaluationRoot(), "baselines");
@@ -48,11 +49,51 @@ function option(args: string[], name: string): string | undefined {
 	return index === -1 ? undefined : args[index + 1];
 }
 
+/**
+ * Map an evaluation verdict to a stable process exit code. JSON and human
+ * output share the same result object, so the render mode cannot change the
+ * exit status. CI relies on the process exit matching the artifact verdict.
+ *
+ * 0 -> pass
+ * 1 -> fail
+ * 2 -> invalid
+ * 3 -> cancelled / timed out
+ * 4 -> invocation / runtime / internal error
+ */
+export function verdictExitCode(verdict: "pass" | "fail" | "invalid" | "cancelled" | "error"): number {
+	switch (verdict) {
+		case "pass":
+			return 0;
+		case "fail":
+			return 1;
+		case "invalid":
+			return 2;
+		case "cancelled":
+			return 3;
+		default:
+			return 4;
+	}
+}
+
+export async function runEvaluationSelfProbe(
+	options: { root?: string } = {},
+): Promise<{ root: string; marker: string }> {
+	await mkdir(options.root ?? process.cwd(), { recursive: true });
+	const root = options.root ?? process.cwd();
+	const markerPath = join(root, ".jensen-candidate-complete");
+	await writeFile(markerPath, "candidate", "utf8");
+	return { root, marker: markerPath };
+}
+
 export async function handleEvaluationCommand(args: string[]): Promise<boolean> {
 	const isDoctor = args[0] === "doctor" && args[1] === "eval";
 	if (args[0] !== "eval" && !isDoctor) return false;
 	const command = isDoctor ? "doctor" : (args[1] ?? "help");
 	const json = jsonOutput(args);
+	if (command === "self-probe") {
+		print(await runEvaluationSelfProbe(), json);
+		return true;
+	}
 	if (command === "help") {
 		console.log(
 			`${chalk.bold("Usage:")} jensen eval <packs|scenarios|validate|run|compare-agents|compare|replay|rescore|stability|failures|prune|baseline|gate|doctor>`,
@@ -209,6 +250,13 @@ export async function handleEvaluationCommand(args: string[]): Promise<boolean> 
 			},
 			json,
 		);
+		// Process exit must reflect the artifact verdict so CI cannot be fooled
+		// by a completed-but-failing evaluation run.
+		const worstVerdict = artifacts.reduce<EvaluationVerdict>((worst, artifact) => {
+			const severity: Record<EvaluationVerdict, number> = { pass: 0, fail: 1, invalid: 2, cancelled: 3 };
+			return severity[artifact.verdict] > severity[worst] ? artifact.verdict : worst;
+		}, "pass");
+		process.exitCode = verdictExitCode(worstVerdict);
 		return true;
 	}
 	if (command === "compare-agents") {
