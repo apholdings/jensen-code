@@ -55,6 +55,35 @@ export interface SubagentDefinition {
 	outputSchema: string;
 	fallbackAgents: string[];
 	resultCompression?: { enabled: boolean; maximumCharacters?: number };
+	/** Workspace retrieval policy (1.7.0). */
+	retrieval?: SubagentRetrievalPolicy;
+}
+
+/**
+ * Retrieval permissions and budget for a subagent. Child permission is always
+ * the intersection of parent authorization, policy, agent, skill and retrieval
+ * policy; retrieval can never expand workspace scope.
+ */
+export interface SubagentRetrievalPolicy {
+	allowed: boolean;
+	mode: "lexical" | "hybrid" | "semantic";
+	maxResults: number;
+	maxContextTokens: number;
+	revalidateBeforeMutation: boolean;
+}
+
+export const DEFAULT_RETRIEVAL_POLICY: SubagentRetrievalPolicy = {
+	allowed: false,
+	mode: "hybrid",
+	maxResults: 20,
+	maxContextTokens: 2048,
+	revalidateBeforeMutation: false,
+};
+
+/** Resolve the retrieval policy declared by a built-in subagent, if any. */
+export function subagentRetrievalPolicy(name: string): SubagentRetrievalPolicy | undefined {
+	const def = BUILTIN_SUBAGENT_DEFINITIONS.find((d) => d.name === name || d.aliases.includes(name));
+	return def?.retrieval;
 }
 
 export interface SubagentModelResolution {
@@ -109,9 +138,43 @@ export interface ResolvedSubagent {
 	model: SubagentModelResolution;
 }
 
-const OBSERVE_TOOLS = ["read", "grep", "find", "ls", "bash"];
-const BUILDER_TOOLS = ["read", "grep", "find", "ls", "edit", "write", "bash"];
-const WORKER_TOOLS = ["read", "grep", "find", "ls", "edit", "write", "bash", "powershell"];
+const OBSERVE_TOOLS = [
+	"read",
+	"grep",
+	"find",
+	"ls",
+	"bash",
+	"workspace_search",
+	"workspace_search_lexical",
+	"workspace_search_symbols",
+	"workspace_retrieval_status",
+	"workspace_search_semantic",
+];
+const BUILDER_TOOLS = [
+	"read",
+	"grep",
+	"find",
+	"ls",
+	"edit",
+	"write",
+	"bash",
+	"workspace_search",
+	"workspace_search_lexical",
+	"workspace_search_symbols",
+];
+const WORKER_TOOLS = [
+	"read",
+	"grep",
+	"find",
+	"ls",
+	"edit",
+	"write",
+	"bash",
+	"powershell",
+	"workspace_search",
+	"workspace_search_lexical",
+	"workspace_search_symbols",
+];
 const OBSERVE_EFFECTS = ["writesWorkspace", "mutatesGit", "publishes", "terminatesProcesses", "spawnsSubagents"];
 const PLAN_EFFECTS = ["writesWorkspace", "mutatesGit", "publishes", "terminatesProcesses", "spawnsSubagents"];
 const EXECUTE_EFFECTS = ["publishes", "mutatesReleaseTags", "merges", "spawnsSubagents"];
@@ -149,33 +212,84 @@ function analytical(
 }
 
 export const BUILTIN_SUBAGENT_DEFINITIONS: readonly SubagentDefinition[] = [
-	analytical("librarian", "Find documented, historical, and release facts.", "research", "librarian-result-v1"),
+	analytical("librarian", "Find documented, historical, and release facts.", "research", "librarian-result-v1", {
+		retrieval: {
+			allowed: true,
+			mode: "lexical",
+			maxResults: 20,
+			maxContextTokens: 2048,
+			revalidateBeforeMutation: false,
+		},
+	}),
 	analytical(
 		"pentester",
 		"Run bounded authorized adversarial tests against existing defenses.",
 		"testing",
 		"pentest-result-v1",
+		{
+			retrieval: {
+				allowed: true,
+				mode: "hybrid",
+				maxResults: 25,
+				maxContextTokens: 2048,
+				revalidateBeforeMutation: false,
+			},
+		},
 	),
 	analytical("planner", "Turn evidence into a bounded implementation plan.", "planning", "planner-result-v1", {
 		executionMode: "plan",
+		retrieval: {
+			allowed: true,
+			mode: "hybrid",
+			maxResults: 20,
+			maxContextTokens: 2048,
+			revalidateBeforeMutation: false,
+		},
 	}),
 	analytical(
 		"reviewer",
 		"Perform a broad read-only review against objective and acceptance criteria.",
 		"review",
 		"review-result-v1",
+		{
+			retrieval: {
+				allowed: true,
+				mode: "hybrid",
+				maxResults: 25,
+				maxContextTokens: 2048,
+				revalidateBeforeMutation: false,
+			},
+		},
 	),
 	analytical(
 		"scout",
 		"Perform fast, shallow repository orientation and locate probable symbols.",
 		"exploration",
 		"scout-result-v1",
+		{
+			retrieval: {
+				allowed: true,
+				mode: "lexical",
+				maxResults: 15,
+				maxContextTokens: 1024,
+				revalidateBeforeMutation: false,
+			},
+		},
 	),
 	analytical(
 		"security",
 		"Review trust boundaries, authorization, secrets, and unsafe defaults.",
 		"security",
 		"security-result-v1",
+		{
+			retrieval: {
+				allowed: true,
+				mode: "hybrid",
+				maxResults: 25,
+				maxContextTokens: 2048,
+				revalidateBeforeMutation: false,
+			},
+		},
 	),
 	{
 		name: "worker",
@@ -191,6 +305,13 @@ export const BUILTIN_SUBAGENT_DEFINITIONS: readonly SubagentDefinition[] = [
 		deniedTools: ["publish", "merge", "git_push", "npm_publish"],
 		deniedEffects: ["publishes", "merges", "mutatesReleaseTags", "scopeExpansion"],
 		requiredCapabilities: ["workspace-lease", "checkpoint", "transaction", "rollback"],
+		retrieval: {
+			allowed: true,
+			mode: "hybrid",
+			maxResults: 30,
+			maxContextTokens: 2048,
+			revalidateBeforeMutation: true,
+		},
 		budget: { maxModelTurns: 20, maxToolCalls: 80, maxWallTimeMs: 600_000, maxOutputTokens: 8_000 },
 		concurrency: { parallelSafe: false, maximumInstances: 1 },
 		recursion: { maySpawnSubagents: false, maximumDepth: 0 },
@@ -205,6 +326,13 @@ export const BUILTIN_SUBAGENT_DEFINITIONS: readonly SubagentDefinition[] = [
 		"cavecrew-investigation-result-v1",
 		{
 			aliases: ["cavecrew-investigate"],
+			retrieval: {
+				allowed: true,
+				mode: "hybrid",
+				maxResults: 40,
+				maxContextTokens: 3072,
+				revalidateBeforeMutation: false,
+			},
 			budget: { maxModelTurns: 12, maxToolCalls: 48, maxWallTimeMs: 180_000, maxOutputTokens: 5_000 },
 		},
 	),
@@ -216,6 +344,13 @@ export const BUILTIN_SUBAGENT_DEFINITIONS: readonly SubagentDefinition[] = [
 			"cavecrew-review-result-v1",
 			{
 				aliases: ["cavecrew-review"],
+				retrieval: {
+					allowed: true,
+					mode: "hybrid",
+					maxResults: 25,
+					maxContextTokens: 2048,
+					revalidateBeforeMutation: false,
+				},
 			},
 		),
 	},
@@ -233,6 +368,13 @@ export const BUILTIN_SUBAGENT_DEFINITIONS: readonly SubagentDefinition[] = [
 		deniedTools: ["publish", "merge", "git_push", "npm_publish", "subagent"],
 		deniedEffects: ["publishes", "merges", "mutatesReleaseTags", "scopeExpansion", "externalWrites"],
 		requiredCapabilities: ["workspace-lease", "checkpoint", "transaction", "rollback"],
+		retrieval: {
+			allowed: true,
+			mode: "hybrid",
+			maxResults: 30,
+			maxContextTokens: 2048,
+			revalidateBeforeMutation: true,
+		},
 		budget: {
 			maxModelTurns: 12,
 			maxToolCalls: 40,

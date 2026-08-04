@@ -32,6 +32,7 @@ import { SettingsManager } from "./core/settings-manager.js";
 import { handleSubagentCommand } from "./core/subagent-cli.js";
 import { printTimings, time } from "./core/timings.js";
 import { allTools } from "./core/tools/index.js";
+import { handleWorkspaceRetrievalCommand } from "./core/workspace-cli.js";
 import { runMigrations, showDeprecationWarnings } from "./migrations.js";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.js";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.js";
@@ -601,6 +602,10 @@ export async function main(args: string[]) {
 	}
 
 	if (await handleWorkspaceCommand(args)) {
+		return;
+	}
+
+	if (await handleWorkspaceRetrievalCommand(args)) {
 		return;
 	}
 

@@ -346,6 +346,23 @@ The built-in roles are `scout`, `cavecrew-investigator`, `planner`, `cavecrew-bu
 
 `cavecrew-investigator` and `cavecrew-reviewer` are read-only. `cavecrew-builder` is a restricted worker specialization limited to a bounded one- or two-file transactional change, with checkpoint, lease, focused validation, and rollback. Child permissions cannot exceed the parent, and fallback requires explicit policy and approval. User/workspace definitions may shadow packaged resources, but precedence is reported and cannot broaden the canonical policy.
 
+### Workspace Intelligence (1.7.0)
+
+Jensen adds durable, local-first workspace indexing and hybrid lexical/symbolic/
+semantic retrieval over the current workspace. See `docs/workspace-intelligence.md`.
+
+- CLI: `jensen index` (status/build/refresh/rebuild/verify/generations/inspect/
+  files/symbols/stats/prune), `jensen search` (lexical|symbol|semantic|hybrid|path),
+  `jensen retrieval plan|explain`, and `jensen doctor index|embeddings|retrieval`.
+- Tools: `workspace_search`, `workspace_search_lexical`, `workspace_search_semantic`,
+  `workspace_search_symbols`, `workspace_retrieval_status` (read-only), and
+  `workspace_index_refresh`.
+- Backend: built-in `node:sqlite` (no new dependency). Embeddings are local by
+  default (deterministic fixture); remote embedding is opt-in policy-only.
+- Privacy: source is never uploaded by default; secret-sensitive files are
+  excluded; the index is disposable/rebuildable and never an execution authority.
+- Requires Node.js `>=22.5.0`.
+
 ### Themes
 
 Built-in: `dark`, `light`. Themes hot-reload: modify the active theme file and pi immediately applies changes.
