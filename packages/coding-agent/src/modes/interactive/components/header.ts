@@ -1,23 +1,15 @@
-import { createRequire } from "node:module";
 import os from "node:os";
 import { type Component, truncateToWidth, visibleWidth } from "@apholdings/jensen-tui";
+import { APP_NAME, VERSION } from "../../../config.js";
 import type { AgentSession } from "../../../core/agent-session.js";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.js";
-
-const require = createRequire(import.meta.url);
-const packageJson = require("../../../../package.json") as {
-	title?: string;
-	version?: string;
-	displayTitle?: string;
-	productTitle?: string;
-};
 
 type RGB = { r: number; g: number; b: number };
 const ANSI_ESCAPE_AT_START = /^\x1b\[[0-9;]*m/;
 
-const TITLE = packageJson.displayTitle ?? packageJson.productTitle ?? packageJson.title ?? "Jensen Code";
+const TITLE = APP_NAME || "Jensen Code";
 
-const VERSION = packageJson.version ? `v${packageJson.version}` : "v0.0.0";
+const VERSION_LABEL = VERSION ? `v${VERSION}` : "v0.0.0";
 
 const LOGO = [" ████████████ ", "██▓░░░░░░░░▓██", "█░░░░█░░█░░░░█", "█░░░░░░░░░░░░█", " ████████████ "];
 
@@ -202,7 +194,7 @@ export class Header implements Component {
 	private renderCompact(width: number): string[] {
 		const { branch, cwd, host, repo, workspace } = this.getData();
 
-		const line1 = truncateAnsi(`${bold(color(COLORS.title, TITLE))} ${dim(VERSION)}`, width);
+		const line1 = truncateAnsi(`${bold(color(COLORS.title, TITLE))} ${dim(VERSION_LABEL)}`, width);
 		const line2 = subtle(truncateAnsi(bulletJoin([maybePrefix("repo", repo), maybePrefix("branch", branch)]), width));
 		const line3 = subtle(
 			truncateAnsi(bulletJoin([maybePrefix("workspace", workspace), maybePrefix("host", host)]), width),
@@ -224,7 +216,7 @@ export class Header implements Component {
 		const maxTextWidth = Math.max(minTextWidth, width - logoWidth - gap - sidePadding * 2 - 2);
 
 		const baseRows = [
-			`${bold(color(COLORS.title, TITLE))} ${dim(VERSION)}`,
+			`${bold(color(COLORS.title, TITLE))} ${dim(VERSION_LABEL)}`,
 			color(COLORS.title, bulletJoin([maybePrefix("repo", repo), maybePrefix("branch", branch)])),
 			color(COLORS.title, bulletJoin([maybePrefix("workspace", workspace), maybePrefix("host", host)])),
 			"",

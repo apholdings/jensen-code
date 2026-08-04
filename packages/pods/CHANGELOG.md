@@ -1,5 +1,13 @@
 # @apholdings/jensen-pods
 
+## 1.8.1
+
+### Patch Changes
+
+- Harden the evaluation artifact store and doctor exit semantics, complete deterministic replay, stability, retrieval, clustering, pruning, RPC, and dashboard projections, and make binary builds resolve Playwright's Chromium BiDi dependency from a clean checkout with verified release manifests.
+- Updated dependencies
+  - @apholdings/jensen-agent-core@1.8.1
+
 ## 1.8.0
 
 ### Minor Changes

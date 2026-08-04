@@ -34,6 +34,7 @@ jobs:
           node packages/coding-agent/dist/cli.js eval run core-runtime --mode fixture --json
           node packages/coding-agent/dist/cli.js eval run safe-execution --mode fixture --json
           node packages/coding-agent/dist/cli.js eval run todo-recovery --mode fixture --json
+          node packages/coding-agent/dist/cli.js doctor eval --json
 
   evaluation-windows:
     name: Windows deterministic evaluation
@@ -54,3 +55,4 @@ jobs:
         run: |
           node packages/coding-agent/dist/cli.js eval validate --json
           node packages/coding-agent/dist/cli.js eval run cross-platform --mode fixture --json
+          node packages/coding-agent/dist/cli.js doctor eval --json
