@@ -1,5 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import chalk from "chalk";
+import { runCavecrew } from "../cavecrew-runtime.js";
+import { compareAgents } from "./compare-agents.js";
 import { checkReleaseGate } from "./gates.js";
 import {
 	aggregateStability,
@@ -7,6 +10,9 @@ import {
 	compareArtifacts,
 	createArtifact,
 	createBaseline,
+	createLiveProviderExecutor,
+	createOpenAiCompatibleProvider,
+	createPruneManifest,
 	discoverEvaluationPacks,
 	inspectArtifactStore,
 	listArtifacts,
@@ -16,6 +22,7 @@ import {
 	readArtifact,
 	replayArtifact,
 	rescoreArtifact,
+	resolveProviderProfile,
 	runEvaluation,
 	verifyArtifact,
 	verifyBaseline,
@@ -48,7 +55,7 @@ export async function handleEvaluationCommand(args: string[]): Promise<boolean> 
 	const json = jsonOutput(args);
 	if (command === "help") {
 		console.log(
-			`${chalk.bold("Usage:")} jensen eval <packs|scenarios|validate|run|compare|replay|rescore|stability|failures|prune|baseline|gate|doctor>`,
+			`${chalk.bold("Usage:")} jensen eval <packs|scenarios|validate|run|compare-agents|compare|replay|rescore|stability|failures|prune|baseline|gate|doctor>`,
 		);
 		return true;
 	}
@@ -105,7 +112,8 @@ export async function handleEvaluationCommand(args: string[]): Promise<boolean> 
 	if (command === "prune") {
 		const execute = args.includes("--execute");
 		if (!execute && !args.includes("--preview")) throw new Error("eval prune requires --preview or --execute");
-		print(await pruneEvaluationStore(evaluationRoot(), execute), json);
+		const preview = await createPruneManifest(evaluationRoot());
+		print(execute ? await pruneEvaluationStore(evaluationRoot(), true, undefined, preview) : preview, json);
 		return true;
 	}
 	if (command === "run") {
@@ -137,7 +145,8 @@ export async function handleEvaluationCommand(args: string[]): Promise<boolean> 
 						configuredModel: option(args, "--model") ?? "deterministic-fixture",
 						seed: repetition,
 					},
-					live: args.includes("--live"),
+					live: args.includes("--live") || args.includes("--confirm-live"),
+					confirmLive: args.includes("--confirm-live"),
 					budget: {
 						maximumCostUsd: option(args, "--max-cost-usd") ? Number(option(args, "--max-cost-usd")) : undefined,
 						maximumModelCalls: option(args, "--max-model-calls")
@@ -147,6 +156,28 @@ export async function handleEvaluationCommand(args: string[]): Promise<boolean> 
 							? Number(option(args, "--max-wall-time-ms"))
 							: undefined,
 					},
+					executor:
+						mode === "live"
+							? (() => {
+									const profile = resolveProviderProfile({
+										profileId: option(args, "--provider-profile") ?? "openrouter",
+										provider:
+											option(args, "--provider") ?? option(args, "--provider-profile") ?? "openrouter",
+										configuredModel: option(args, "--model") ?? "unknown",
+									});
+									return createLiveProviderExecutor(profile, createOpenAiCompatibleProvider(profile), {
+										maximumCostUsd: option(args, "--max-cost-usd")
+											? Number(option(args, "--max-cost-usd"))
+											: undefined,
+										maximumModelCalls: option(args, "--max-model-calls")
+											? Number(option(args, "--max-model-calls"))
+											: undefined,
+										maximumWallTimeMs: option(args, "--max-wall-time-ms")
+											? Number(option(args, "--max-wall-time-ms"))
+											: undefined,
+									});
+								})()
+							: undefined,
 				});
 				await writeArtifact(evaluationRoot(), artifact);
 				repetitions.push(artifact);
@@ -178,6 +209,82 @@ export async function handleEvaluationCommand(args: string[]): Promise<boolean> 
 			},
 			json,
 		);
+		return true;
+	}
+	if (command === "compare-agents") {
+		const scenarioId = args[2] ?? "";
+		const scenario = discovered.scenarios.find((candidate) => candidate.scenarioId === scenarioId);
+		if (!scenario) throw new Error(`unknown evaluation scenario: ${scenarioId}`);
+		if (option(args, "--single-agent") === undefined || option(args, "--orchestration") !== "cavecrew")
+			throw new Error("compare-agents requires --single-agent and --orchestration cavecrew");
+		const singleAgent = {
+			execute: async () => ({
+				events: [{ eventId: randomUUID(), type: "single-agent.completed", timestamp: new Date().toISOString() }],
+			}),
+		};
+		const cavecrew = {
+			execute: async ({ workspaceRoot }: { workspaceRoot?: string }) => {
+				if (!workspaceRoot) throw new Error("Cavecrew comparison requires a sandbox workspace");
+				const result = await runCavecrew({
+					objective: scenario.task.prompt,
+					assignments: [scenario.task.prompt],
+					cwd: workspaceRoot,
+					storageDir: join(workspaceRoot, ".cavecrew"),
+					fixtures: {
+						investigator: async () => ({
+							objective: scenario.task.prompt,
+							summary: "fixture investigation",
+							flow: [],
+							rootCauses: [],
+							relevantFiles: [],
+							unknowns: [],
+							recommendedNextAgent: "planner",
+						}),
+						planner: async () => ({
+							scope: [],
+							nonGoals: [],
+							implementationSteps: [],
+							invariants: [],
+							focusedTests: [],
+							acceptanceCriteria: [],
+							rollbackExpectations: [],
+						}),
+						builder: async () => ({
+							edits: [],
+							output: {
+								objective: scenario.task.prompt,
+								status: "implemented",
+								filesChanged: [],
+								validations: ["fixture"],
+								rollbackState: "confirmed",
+								remainingRisks: [],
+							},
+						}),
+						reviewer: async () => ({ verdict: "pass", findings: [], missingTests: [], acceptanceGaps: [] }),
+					},
+				});
+				return {
+					events: [
+						{
+							eventId: randomUUID(),
+							type: "cavecrew.completed",
+							timestamp: new Date().toISOString(),
+							details: { state: result.state, childRunCount: result.childRunIds.length },
+						},
+					],
+				};
+			},
+		};
+		const result = await compareAgents({
+			scenario,
+			singleAgent,
+			cavecrew,
+			mode: "sandbox",
+			orderSeed: Date.now(),
+		});
+		await writeArtifact(evaluationRoot(), result.singleAgent);
+		await writeArtifact(evaluationRoot(), result.cavecrew);
+		print(result.comparison, json);
 		return true;
 	}
 	if (command === "compare") {

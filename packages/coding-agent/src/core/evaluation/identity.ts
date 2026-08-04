@@ -73,13 +73,18 @@ export function createCandidateIdentity(input: Partial<EvaluationCandidateIdenti
 export function hasExplicitLiveOptIn(options: {
 	mode?: string;
 	live?: boolean;
-	budget?: { maximumCostUsd?: number };
+	confirmed?: boolean;
+	budget?: { maximumCostUsd?: number; maximumModelCalls?: number; maximumWallTimeMs?: number };
 }): boolean {
 	return (
 		options.mode === "live" &&
 		options.live === true &&
+		(options.confirmed === true || env.JENSEN_EVAL_LIVE === "1") &&
 		options.budget?.maximumCostUsd !== undefined &&
 		options.budget.maximumCostUsd > 0 &&
-		env.JENSEN_EVAL_LIVE === "1"
+		options.budget.maximumModelCalls !== undefined &&
+		options.budget.maximumModelCalls > 0 &&
+		options.budget.maximumWallTimeMs !== undefined &&
+		options.budget.maximumWallTimeMs > 0
 	);
 }

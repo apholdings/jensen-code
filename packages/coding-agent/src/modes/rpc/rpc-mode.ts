@@ -13,6 +13,7 @@
 
 import * as crypto from "node:crypto";
 import type { AgentSession } from "../../core/agent-session.js";
+import { EvaluationRpcService } from "../../core/evaluation/rpc.js";
 import type {
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
@@ -62,6 +63,7 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 	const error = (id: string | undefined, command: string, message: string): RpcResponse => {
 		return { id, type: "response", command, success: false, error: message };
 	};
+	const evaluationRpc = new EvaluationRpcService();
 
 	// Pending extension UI requests waiting for response
 	const pendingExtensionRequests = new Map<
@@ -612,6 +614,10 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 
 			case "get_working_context": {
 				return success(id, "get_working_context", session.getWorkingContext());
+			}
+
+			case "evaluation": {
+				return success(id, "evaluation", { response: await evaluationRpc.handle(command.request) });
 			}
 
 			default: {

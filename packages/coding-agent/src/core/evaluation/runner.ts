@@ -9,7 +9,15 @@ import {
 	hasExplicitLiveOptIn,
 	scenarioContentHash,
 } from "./identity.js";
+import {
+	createLiveProviderExecutor,
+	type EvaluationProviderClient,
+	type EvaluationProviderProfile,
+	preflightLiveEvaluation,
+	resolveProviderProfile,
+} from "./live-provider.js";
 import { calculateMetrics } from "./metrics.js";
+import { createEvaluationSandbox } from "./sandbox.js";
 import {
 	EVALUATOR_VERSION,
 	type EvaluationArtifact,
@@ -26,6 +34,13 @@ export interface EvaluationExecutionResult {
 	workspaceRoot?: string;
 	benchmarkReport?: BenchmarkEvaluationResult;
 	semanticResults?: SemanticEvaluationResult[];
+	usage?: {
+		inputTokens?: number;
+		outputTokens?: number;
+		modelCalls?: number;
+		estimatedCostUsd?: number;
+		providerReportedCostUsd?: number;
+	};
 }
 
 export interface EvaluationExecutor {
@@ -42,7 +57,10 @@ export interface EvaluationRunOptions {
 	executor?: EvaluationExecutor;
 	retainFailedWorkspace?: boolean;
 	live?: boolean;
+	confirmLive?: boolean;
 	budget?: EvaluationBudget;
+	signal?: AbortSignal;
+	liveProvider?: { profile: EvaluationProviderProfile; client: EvaluationProviderClient };
 }
 
 export async function runEvaluation(
@@ -55,9 +73,16 @@ export async function runEvaluation(
 		throw new Error("live provider evaluation is disabled by scenario policy");
 	if (
 		options.mode === "live" &&
-		!hasExplicitLiveOptIn({ mode: options.mode, live: options.live, budget: options.budget })
+		!hasExplicitLiveOptIn({
+			mode: options.mode,
+			live: options.live,
+			confirmed: options.confirmLive,
+			budget: options.budget,
+		})
 	)
-		throw new Error("live evaluation requires JENSEN_EVAL_LIVE=1, --live, and an explicit positive budget");
+		throw new Error(
+			"live evaluation requires JENSEN_EVAL_LIVE=1 or --confirm-live plus positive cost, model-call, and wall-time budgets",
+		);
 	const startedAt = new Date().toISOString();
 	const candidate = createCandidateIdentity(options.candidate);
 	const run: EvaluationRun = {
@@ -72,18 +97,64 @@ export async function runEvaluation(
 		status: "running",
 	};
 	let fixture: Awaited<ReturnType<typeof materializeFixture>> | undefined;
+	let sandbox: Awaited<ReturnType<typeof createEvaluationSandbox>> | undefined;
+	let failed = false;
+	let artifact: EvaluationArtifact | undefined;
 	try {
-		if (options.mode === "fixture" || options.mode === "sandbox" || options.mode === "live")
+		if (options.mode === "sandbox" || options.mode === "live") {
+			sandbox = await createEvaluationSandbox({
+				evaluationRunId: run.evaluationRunId,
+				fixture: scenario.fixture,
+				policy: scenario.candidatePolicy,
+				retainOnFailure: options.retainFailedWorkspace,
+				signal: options.signal,
+			});
+			run.sandboxIdentity = sandbox.identity;
+		} else if (options.mode === "fixture") {
 			fixture = await materializeFixture(scenario.fixture, { retainOnFailure: options.retainFailedWorkspace });
-		const execution = options.executor
-			? await options.executor.execute({ scenario, mode: options.mode, workspaceRoot: fixture?.root })
-			: defaultExecution(scenario, options.mode);
-		run.environmentIdentity = createEnvironmentIdentity(fixture?.fixtureHash ?? "offline", {
-			gitCommit: candidate.gitCommit,
-		});
+		}
+		let executor = options.executor;
+		if (options.mode === "live") {
+			const profile =
+				options.liveProvider?.profile ??
+				resolveProviderProfile({
+					profileId: candidate.providerProfile,
+					configuredModel: candidate.configuredModel,
+					resolvedModel: candidate.resolvedModel,
+					provider: candidate.provider,
+				});
+			preflightLiveEvaluation({
+				profile,
+				budget: options.budget,
+				confirmed: options.confirmLive === true || process.env.JENSEN_EVAL_LIVE === "1",
+			});
+			if (!executor)
+				executor = createLiveProviderExecutor(
+					profile,
+					options.liveProvider?.client ?? {
+						complete: async () => {
+							throw new Error("live provider client is not configured");
+						},
+					},
+					options.budget ?? {},
+					options.signal,
+				);
+		}
+		const execution = executor
+			? await executor.execute({ scenario, mode: options.mode, workspaceRoot: sandbox?.root ?? fixture?.root })
+			: sandbox
+				? await executeSandboxCandidate(sandbox, scenario, options.signal)
+				: defaultExecution(scenario, options.mode);
+		run.environmentIdentity = createEnvironmentIdentity(
+			sandbox?.identity.fixtureHash ?? fixture?.fixtureHash ?? "offline",
+			{
+				gitCommit: candidate.gitCommit,
+			},
+		);
+		const events = [...(sandbox?.events ?? []), ...execution.events];
 		const metrics = calculateMetrics({
 			run: { ...run, completedAt: new Date().toISOString() },
-			events: execution.events,
+			events,
 			specs: scenario.metrics,
 			benchmarkReport: execution.benchmarkReport,
 		});
@@ -91,7 +162,7 @@ export async function runEvaluation(
 			workspaceRoot: execution.workspaceRoot ?? fixture?.root,
 			events: execution.events,
 			metrics: Object.fromEntries(metrics.map((metric) => [metric.metricId, metric.value])),
-			evidenceIds: new Set(execution.events.map((event) => event.eventId)),
+			evidenceIds: new Set(events.map((event) => event.eventId)),
 			timeoutMs: scenario.timeoutMs,
 		});
 		const hasInvalid = assertionResults.some(
@@ -105,7 +176,7 @@ export async function runEvaluation(
 			assertionResults.length > 0 && assertionResults.every((assertion) => assertion.status === "pass");
 		const completedAt = new Date().toISOString();
 		const completedRun = { ...run, completedAt, status: "completed" as const };
-		return createArtifact({
+		artifact = createArtifact({
 			run: completedRun,
 			scenario: {
 				scenarioId: scenario.scenarioId,
@@ -116,6 +187,8 @@ export async function runEvaluation(
 			assertions: assertionResults,
 			metrics,
 			semanticResults: execution.semanticResults ?? [],
+			events,
+			usage: execution.usage,
 			verdict: hasInvalid ? "invalid" : safetyFailure || !deterministicPass ? "fail" : "pass",
 			evidenceIds: assertionResults.flatMap((assertion) => assertion.evidenceIds),
 			provenance: {
@@ -125,9 +198,11 @@ export async function runEvaluation(
 			},
 		});
 	} catch (error) {
+		failed = true;
 		const completedAt = new Date().toISOString();
-		return createArtifact({
-			run: { ...run, completedAt, status: "failed" },
+		const cancelled = options.signal?.aborted === true;
+		artifact = createArtifact({
+			run: { ...run, completedAt, status: cancelled ? "cancelled" : "failed" },
 			scenario: {
 				scenarioId: scenario.scenarioId,
 				scenarioVersion: scenario.scenarioVersion,
@@ -147,7 +222,7 @@ export async function runEvaluation(
 			],
 			metrics: [],
 			semanticResults: [],
-			verdict: "invalid",
+			verdict: cancelled ? "cancelled" : "invalid",
 			evidenceIds: [],
 			provenance: {
 				createdAt: completedAt,
@@ -156,8 +231,23 @@ export async function runEvaluation(
 			},
 		});
 	} finally {
-		if (fixture) await cleanupFixture(fixture);
+		if (sandbox) {
+			if (failed && options.retainFailedWorkspace) await sandbox.retain().catch(() => undefined);
+			await sandbox.cleanup();
+		} else if (fixture) await cleanupFixture(fixture);
+		if (artifact && sandbox) {
+			const { artifactHash: _artifactHash, ...unsigned } = artifact;
+			const events = [...(artifact.events ?? []), ...sandbox.events].filter(
+				(event, index, all) => all.findIndex((candidate) => candidate.eventId === event.eventId) === index,
+			);
+			artifact = createArtifact({
+				...unsigned,
+				run: { ...artifact.run, sandboxIdentity: sandbox.identity, eventCount: events.length },
+				events,
+			});
+		}
 	}
+	return artifact!;
 }
 
 function defaultExecution(scenario: EvaluationScenario, mode: EvaluationMode): EvaluationExecutionResult {
@@ -173,4 +263,32 @@ function defaultExecution(scenario: EvaluationScenario, mode: EvaluationMode): E
 			events.push({ eventId: randomUUID(), type: assertion.pattern, timestamp: now, details: { status: "pass" } });
 	}
 	return { events };
+}
+
+async function executeSandboxCandidate(
+	sandbox: Awaited<ReturnType<typeof createEvaluationSandbox>>,
+	scenario: EvaluationScenario,
+	signal?: AbortSignal,
+): Promise<EvaluationExecutionResult> {
+	const processResult = await sandbox.runProcess(
+		process.execPath,
+		[
+			"-e",
+			"const fs = require('node:fs'); const root = process.cwd(); fs.writeFileSync('.jensen-candidate-complete', 'candidate'); process.stdout.write(root);",
+		],
+		{ signal },
+	);
+	const fixtureEvents = defaultExecution(scenario, "sandbox").events;
+	return {
+		events: [
+			...fixtureEvents,
+			{
+				eventId: randomUUID(),
+				type: "candidate.process",
+				timestamp: new Date().toISOString(),
+				details: { exitCode: processResult.exitCode ?? -1, outputBytes: Buffer.byteLength(processResult.stdout) },
+			},
+		],
+		workspaceRoot: sandbox.root,
+	};
 }
