@@ -42,15 +42,19 @@ jobs:
 
       - name: Evaluate release quality gates
         run: |
+          set -euo pipefail
           evaluation_tmp="$(mktemp -d)"
           trap 'rm -rf "$evaluation_tmp"' EXIT
           (
             cd "$evaluation_tmp"
             node "$GITHUB_WORKSPACE/packages/coding-agent/dist/cli.js" eval validate --json
-            node "$GITHUB_WORKSPACE/packages/coding-agent/dist/cli.js" eval run core-runtime --mode fixture --json > core.json
+            # Source sandbox acceptance: the trusted launcher must spawn a
+            # sandboxed candidate with verdict pass and process exit 0.
+            node "$GITHUB_WORKSPACE/packages/coding-agent/dist/cli.js" eval run core-runtime --mode sandbox --json > core.json
+            node "$GITHUB_WORKSPACE/packages/coding-agent/dist/cli.js" eval run release-acceptance --mode sandbox --json > release.json
             node "$GITHUB_WORKSPACE/packages/coding-agent/dist/cli.js" eval run safe-execution --mode fixture --json > safety.json
             node "$GITHUB_WORKSPACE/packages/coding-agent/dist/cli.js" eval run todo-recovery --mode fixture --json > todo.json
-            ids="$(node -e 'const fs=require("node:fs"); const files=["core.json","safety.json","todo.json"]; const ids=files.flatMap((file)=>JSON.parse(fs.readFileSync(file,"utf8")).artifacts.map((item)=>item.artifactId)); process.stdout.write(ids.join(" "));')"
+            ids="$(node -e 'const fs=require("node:fs"); const files=["core.json","release.json","safety.json","todo.json"]; const ids=files.flatMap((file)=>JSON.parse(fs.readFileSync(file,"utf8")).artifacts.map((item)=>item.artifactId)); process.stdout.write(ids.join(" "));')"
             node "$GITHUB_WORKSPACE/packages/coding-agent/dist/cli.js" eval gate check $ids --json
             node "$GITHUB_WORKSPACE/packages/coding-agent/dist/cli.js" doctor eval --json
           )

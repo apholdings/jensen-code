@@ -1,11 +1,23 @@
 import { sha256, stableStringify } from "./identity.js";
-import type { EvaluationArtifact, EvaluationGateResult, ReleaseConvergenceState } from "./types.js";
+import type {
+	ArtifactRuntimeAcceptance,
+	EvaluationArtifact,
+	EvaluationGateResult,
+	ReleaseConvergenceState,
+} from "./types.js";
 
 export function createReleaseConvergenceState(
 	releaseId: string,
 	version: string,
 	releaseCommit: string,
 ): ReleaseConvergenceState {
+	const runtimeAcceptance: ArtifactRuntimeAcceptance = {
+		source: "pending",
+		packedNpm: "pending",
+		registryNpm: "pending",
+		builtBinary: "pending",
+		downloadedBinary: "pending",
+	};
 	return {
 		releaseId,
 		version,
@@ -19,6 +31,7 @@ export function createReleaseConvergenceState(
 		assetUpload: "pending",
 		assetVerification: "pending",
 		githubRelease: "pending",
+		runtimeAcceptance,
 		finalVerdict: "incomplete",
 	};
 }
@@ -63,9 +76,19 @@ export function checkFunctionalEvaluationGate(artifacts: EvaluationArtifact[]): 
 
 export function updateReleaseConvergenceState(
 	state: ReleaseConvergenceState,
-	update: Partial<Omit<ReleaseConvergenceState, "releaseId" | "version" | "releaseCommit" | "finalVerdict">>,
+	update: Partial<
+		Omit<ReleaseConvergenceState, "releaseId" | "version" | "releaseCommit" | "finalVerdict" | "runtimeAcceptance">
+	> & { runtimeAcceptance?: Partial<ArtifactRuntimeAcceptance> },
 ): ReleaseConvergenceState {
-	const next = { ...state, ...update };
+	const runtimeAcceptance = { ...state.runtimeAcceptance, ...update.runtimeAcceptance };
+	const next: ReleaseConvergenceState = {
+		...state,
+		...update,
+		releaseId: state.releaseId,
+		version: state.version,
+		releaseCommit: state.releaseCommit,
+		runtimeAcceptance,
+	};
 	const required = [
 		next.functionalEvaluation,
 		next.packageBuild,
@@ -77,7 +100,15 @@ export function updateReleaseConvergenceState(
 		next.assetVerification,
 		next.githubRelease,
 	];
-	if (required.some((value) => value === "failed")) next.finalVerdict = "blocked";
+	const runtimeRequired = [
+		next.runtimeAcceptance.source,
+		next.runtimeAcceptance.packedNpm,
+		next.runtimeAcceptance.registryNpm,
+		next.runtimeAcceptance.builtBinary,
+		next.runtimeAcceptance.downloadedBinary,
+	];
+	if (required.some((value) => value === "failed") || runtimeRequired.some((value) => value === "fail"))
+		next.finalVerdict = "blocked";
 	else if (
 		next.functionalEvaluation === "passed" &&
 		next.packageBuild === "passed" &&
@@ -87,7 +118,8 @@ export function updateReleaseConvergenceState(
 		next.binarySmoke === "passed" &&
 		next.assetUpload === "complete" &&
 		next.assetVerification === "passed" &&
-		next.githubRelease === "published"
+		next.githubRelease === "published" &&
+		runtimeRequired.every((value) => value === "pass")
 	)
 		next.finalVerdict = "pass";
 	else next.finalVerdict = "incomplete";

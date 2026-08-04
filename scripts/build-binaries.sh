@@ -205,7 +205,22 @@ for platform in "${PLATFORMS[@]}"; do
     (cd "$platform" && "./$(basename "$executable")" --help >/dev/null)
     (cd "$platform" && "./$(basename "$executable")" eval packs --json >/dev/null)
     (cd "$platform" && "./$(basename "$executable")" eval validate --json >/dev/null)
-    (cd "$platform" && "./$(basename "$executable")" eval run core-runtime --mode fixture --json >/dev/null)
+    # REAL SANDBOX CANDIDATE EVALUATION — not just a --version smoke. The
+    # trusted launcher must be able to spawn a sandboxed candidate and the
+    # artifact verdict must be pass with process exit 0. Failure here aborts
+    # the build BEFORE any asset is packaged or uploaded.
+    sandbox_json="$platform/sandbox.json"
+    sandbox_rc=0
+    if ! (cd "$platform" && "./$(basename "$executable")" eval run release-acceptance --mode sandbox --json > sandbox.json 2>&1); then
+        sandbox_rc=$?
+    fi
+    verdict="$(node -e 'const fs=require("node:fs");try{const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const ok=d.artifacts&&d.artifacts.length>0&&d.artifacts.every((a)=>a.verdict==="pass");process.stdout.write(ok?"pass":"not-pass");}catch{process.stdout.write("parse-error")}' "$sandbox_json" 2>/dev/null || echo parse-error)"
+    if [[ "$sandbox_rc" != "0" || "$verdict" != "pass" ]]; then
+        echo "SANDBOX ACCEPTANCE FAILED for $executable (exit=$sandbox_rc verdict=$verdict) — refusing to package/upload" >&2
+        cat "$sandbox_json" >&2 || true
+        exit 1
+    fi
+    rm -f "$sandbox_json"
     (cd "$platform" && "./$(basename "$executable")" doctor eval --json >/dev/null)
 done
 

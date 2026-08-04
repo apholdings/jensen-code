@@ -679,7 +679,14 @@ export async function main(args: string[]) {
 		return;
 	}
 
-	if (await handleEvaluationCommand(args)) {
+	try {
+		if (await handleEvaluationCommand(args)) {
+			return;
+		}
+	} catch (error: unknown) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (process.env.JENSEN_EVAL_JSON !== "1") console.error(chalk.red(`eval error: ${message}`));
+		process.exitCode = 4;
 		return;
 	}
 

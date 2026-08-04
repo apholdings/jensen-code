@@ -5,6 +5,12 @@ import { basename, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { cleanupFixture, type MaterializedFixture, materializeFixture } from "./fixtures.js";
 import { sha256 } from "./identity.js";
+import {
+	type AuthorizedExecutable,
+	type EvaluationCandidateLauncher,
+	resolveExecutable,
+	samePath,
+} from "./launcher.js";
 import type {
 	EvaluationCandidatePolicy,
 	EvaluationEvent,
@@ -26,6 +32,15 @@ export interface EvaluationSandboxPolicy {
 	maximumOutputBytes: number;
 	maximumDiskBytes: number;
 	maximumCostUsd?: number;
+	/**
+	 * The trusted candidate launcher, authorized by executable identity rather
+	 * than basename. This authority is separate from `allowedTools`: it starts
+	 * the Jensen candidate runtime and does not grant the candidate permission
+	 * to invoke arbitrary executables sharing a name.
+	 */
+	authorizedLauncher?: EvaluationCandidateLauncher;
+	/** Logical capability -> resolved executable identity map. */
+	authorizedExecutables?: AuthorizedExecutable[];
 }
 
 export interface SandboxProcessResult {
@@ -55,6 +70,8 @@ export interface EvaluationSandbox {
 export function policyFromCandidate(
 	candidate: EvaluationCandidatePolicy,
 	workspaceBoundary = "",
+	launcher?: EvaluationCandidateLauncher,
+	authorizedExecutables?: AuthorizedExecutable[],
 ): EvaluationSandboxPolicy {
 	const budget = candidate.budget;
 	const policy: EvaluationSandboxPolicy = {
@@ -68,6 +85,8 @@ export function policyFromCandidate(
 		maximumOutputBytes: candidate.maximumOutputBytes ?? budget?.maximumOutputBytes ?? 1_000_000,
 		maximumDiskBytes: candidate.maximumDiskBytes ?? budget?.maximumDiskBytes ?? 10_000_000,
 		maximumCostUsd: candidate.maximumCostUsd ?? budget?.maximumCostUsd,
+		authorizedLauncher: launcher,
+		authorizedExecutables,
 	};
 	if (policy.maximumProcesses < 1) throw new Error("maximumProcesses must be positive");
 	if (policy.maximumToolCalls < 0) throw new Error("maximumToolCalls must not be negative");
@@ -167,8 +186,24 @@ async function runProcess(
 	options: { signal?: AbortSignal; env?: Record<string, string> } = {},
 ): Promise<SandboxProcessResult> {
 	const toolName = basename(command).replace(/\.exe$/i, "");
-	if (policy.allowedTools.length > 0 && !policy.allowedTools.includes(toolName))
+	const launcher = policy.authorizedLauncher;
+	const launcherIdentity = launcher ? await resolveExecutable(command, root) : undefined;
+	const isTrustedLauncher =
+		Boolean(launcher) &&
+		Boolean(launcherIdentity) &&
+		launcherIdentity?.exists === true &&
+		samePath(launcherIdentity.realPath ?? launcherIdentity.resolvedPath, launcher!.executablePath);
+	if (isTrustedLauncher) {
+		events.push(
+			event("EVAL_LAUNCHER_AUTHORIZED", {
+				launcher: launcher!.executableIdentity,
+				executablePath: launcher!.executablePath,
+			}),
+		);
+	} else if (policy.allowedTools.length > 0 && !policy.allowedTools.includes(toolName)) {
+		events.push(event("EVAL_LAUNCHER_REJECTED", { toolName }));
 		throw new Error(`sandbox tool is not allowed: ${toolName}`);
+	}
 	for (const argument of args) {
 		if (/\.jensen[\\/]evaluations|baseline|evaluator|result\.json|\.env|npmrc/i.test(argument))
 			throw new Error("sandbox policy denied evaluator, baseline, result, or credential path");
@@ -252,6 +287,8 @@ export async function createEvaluationSandbox(input: {
 	policy: EvaluationCandidatePolicy;
 	retainOnFailure?: boolean;
 	signal?: AbortSignal;
+	launcher?: EvaluationCandidateLauncher;
+	authorizedExecutables?: AuthorizedExecutable[];
 }): Promise<EvaluationSandbox> {
 	const events: EvaluationEvent[] = [];
 	let fixture: MaterializedFixture | undefined;
@@ -259,7 +296,9 @@ export async function createEvaluationSandbox(input: {
 	try {
 		fixture = await materializeFixture(input.fixture, { retainOnFailure: false });
 		const root = resolve(fixture.root);
-		const policy = Object.freeze(policyFromCandidate(input.policy, root));
+		const policy = Object.freeze(
+			policyFromCandidate(input.policy, root, input.launcher, input.authorizedExecutables),
+		);
 		const identity: EvaluationSandboxIdentity = {
 			sandboxId: randomUUID(),
 			evaluationRunId: input.evaluationRunId,
@@ -271,6 +310,14 @@ export async function createEvaluationSandbox(input: {
 		};
 		events.push(event("EVAL_SANDBOX_ALLOCATED", { sandboxId: identity.sandboxId }));
 		events.push(event("EVAL_SANDBOX_MATERIALIZED", { fixtureHash: fixture.fixtureHash }));
+		if (policy.authorizedLauncher)
+			events.push(
+				event("EVAL_LAUNCHER_IDENTITY", {
+					launcher: policy.authorizedLauncher.executableIdentity,
+					executablePath: policy.authorizedLauncher.executablePath,
+					launcherId: policy.authorizedLauncher.launcherId,
+				}),
+			);
 		const diskBytes = await directorySize(root);
 		if (diskBytes > policy.maximumDiskBytes) throw new Error("fixture exceeds sandbox disk limit");
 		const verifiedHash = sha256(JSON.stringify({ fixtureHash: fixture.fixtureHash, diskBytes }));

@@ -38,7 +38,35 @@ Npm publication, source release, and binary distribution are distinct gates. A J
 
 `--mode sandbox` materializes an immutable fixture into a dedicated sandbox identity. Candidate processes run with an allowlisted environment, workspace-bound paths, bounded wall time, output, disk, process, tool, and cost budgets, and owned descendant cleanup. Fixture-provider execution is not sandboxed candidate execution. Symlinks and Windows junction escapes are rejected; a failed sandbox is retained only when explicitly requested and retained evidence is read-only to evaluators.
 
-The sandbox emits durable lifecycle events (`EVAL_SANDBOX_ALLOCATED`, `EVAL_SANDBOX_MATERIALIZED`, `EVAL_SANDBOX_VERIFIED`, candidate terminal events, and cleanup/retention events). Candidate policy is immutable after start and cannot grant child agents broader effects.
+The sandbox emits durable lifecycle events (`EVAL_SANDBOX_ALLOCATED`, `EVAL_SANDBOX_MATERIALIZED`, `EVAL_SANDBOX_VERIFIED`, candidate terminal events, launcher identity/authorization/rejection events, and cleanup/retention events). Candidate policy is immutable after start and cannot grant child agents broader effects.
+
+## Candidate launcher identity
+
+The executable that starts the Jensen evaluation candidate is the *candidate launcher*. It is authorized by **identity — a validated absolute path to the verified runtime executable — not by its basename**. This is a hard security boundary:
+
+- Renaming the binary (`pi`, `pi-renamed`, `jensen`, `jensen-test`) must not change its identity, and must not break sandbox execution.
+- An unrelated executable that merely shares the basename is **not** trusted.
+- A PATH-precedence or symlink attack cannot substitute another executable for the launcher.
+- Scenario content cannot override or expand the launcher identity; the launcher is injected by the evaluation runtime separately from candidate policy.
+- The launcher starts the Jensen candidate runtime and does **not** grant the candidate permission to invoke arbitrary executables sharing a name.
+
+The launcher identity is resolved from the current runtime: a Node source runtime launches `node -e <inline-probe>`, while a Bun-compiled runtime launches `eval self-probe` on the same verified executable. This keeps source, packed npm, and compiled binary sandbox behavior equivalent. Launcher authorization is immutable after the sandbox starts, the launcher path is validated before spawn, and argv is passed as structured arguments (no shell interpolation). Process trees and descendants remain owned by the evaluation runtime, with authoritative timeout, cancellation, and cleanup.
+
+## Exit and verdict semantics
+
+`jensen eval run` maps the artifact verdict to a stable process exit code so CI can rely on the process exit, and JSON and human output use the same result object:
+
+- `0`: evaluation completed with verdict `pass`;
+- `1`: evaluation completed with verdict `fail`;
+- `2`: evaluation completed with verdict `invalid`;
+- `3`: evaluation cancelled or timed out;
+- `4`: invocation, runtime, or internal error.
+
+Reporting/inspection commands (`eval stability`, `eval replay`, `eval rescore`, `eval compare`) remain exit `0` when merely displaying an existing result. A completed evaluation run whose verdict is `fail`, `invalid`, or `cancelled` always exits nonzero — a process exit of `0` cannot falsely signal successful acceptance.
+
+## Binary sandbox acceptance
+
+Binary smoke is no longer limited to read-only commands. `build-binaries.sh` runs a **real sandboxed candidate evaluation** on every host-executable target and aborts the build before any asset is packaged or uploaded if the artifact verdict is not `pass` with process exit `0`. Windows smoke runs the equivalent sandbox scenario with `pi.exe`. The release-convergence gate requires per-artifact sandbox runtime acceptance (`source`, `packedNpm`, `registryNpm`, `builtBinary`, `downloadedBinary`); a basic `--version` smoke alone cannot produce a final PASS.
 
 ## Live providers and reviewers
 

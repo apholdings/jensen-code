@@ -29,6 +29,21 @@ export {
 	sha256,
 	stableStringify,
 } from "./identity.js";
+export {
+	type AuthorizedExecutable,
+	createRuntimeExecutableIdentity,
+	detectCurrentRuntimeKind,
+	type EvaluationCandidateLauncher,
+	type LauncherId,
+	type LauncherSource,
+	type ResolvedExecutable,
+	type ResolveLauncherOptions,
+	type RuntimeExecutableIdentity,
+	resolveCandidateLauncher,
+	resolveExecutable,
+	SANDBOX_SELF_PROBE,
+	samePath,
+} from "./launcher.js";
 export type {
 	EvaluationProviderClient,
 	EvaluationProviderProfile,

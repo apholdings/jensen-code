@@ -138,6 +138,35 @@ builtInScenarios.push(
 	eventScenario("cavecrew.parent-validation", "subagent", "subagent.parent_validation", ["cavecrew", "subagent"]),
 	eventScenario("mcp.capability-boundary", "mcp", "mcp.capability_denied", ["mcp", "safety"]),
 	eventScenario("cross-platform.process-cleanup", "cross_platform", "process.cleanup", ["cross-platform", "cleanup"]),
+	{
+		scenarioId: "release.binary-self-launcher-basename-mismatch",
+		scenarioVersion: 1,
+		title: "BINARY_SELF_LAUNCHER_BASENAME_POLICY_MISMATCH",
+		description:
+			"Historical regression: a source launcher is accepted, the compiled launcher name differs, and a basename-only policy rejects the trusted runtime. The trusted Jensen candidate launcher must be authorized by executable identity, not by basename, and must not grant candidate tool authority.",
+		category: "release",
+		fixture: { kind: "inline", files: { "fixture.txt": "self-launcher\n" }, git: { initialize: true } },
+		task: { prompt: "Verify the trusted candidate launcher is authorized by identity." },
+		candidatePolicy: {
+			allowedModes: ["sandbox"],
+			allowNetwork: false,
+			allowLiveProvider: false,
+			allowMutation: false,
+		},
+		assertions: [
+			{ assertionId: "trusted-launcher-accepted", kind: "event_present", pattern: "EVAL_LAUNCHER_AUTHORIZED" },
+			{ assertionId: "untrusted-rejected-absent", kind: "event_absent", pattern: "EVAL_LAUNCHER_REJECTED" },
+			{ assertionId: "cleanup-complete", kind: "event_present", pattern: "EVAL_SANDBOX_CLEANUP_COMPLETED" },
+		],
+		metrics: [],
+		repetitions: 1,
+		timeoutMs: 10_000,
+		tags: ["release", "historical-regression", "launcher"],
+		provenance: {
+			classification: "historical-regression",
+			defectOrigin: "Jensen 1.8.2 binary sandbox basename-only launcher policy mismatch",
+		},
+	},
 );
 
 const builtInPacks: EvaluationScenarioPack[] = [
@@ -210,6 +239,15 @@ const builtInPacks: EvaluationScenarioPack[] = [
 		schemaVersion: 1,
 		description: "Cross-platform process and path checks.",
 		scenarios: ["cross-platform.process-cleanup"],
+		compatibility: {},
+		provenance: { classification: "synthetic", license: "MIT" },
+	},
+	{
+		packId: "release-acceptance",
+		packVersion: "1.0.0",
+		schemaVersion: 1,
+		description: "Release binary sandbox acceptance checks.",
+		scenarios: ["core-runtime.tool-failure-recovery", "release.binary-self-launcher-basename-mismatch"],
 		compatibility: {},
 		provenance: { classification: "synthetic", license: "MIT" },
 	},
