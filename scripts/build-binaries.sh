@@ -107,9 +107,9 @@ for platform in "${PLATFORMS[@]}"; do
     # call site has a try/catch fallback. For Windows builds, we copy the
     # appropriate .node file alongside the binary below.
     if [[ "$platform" == "windows-x64" ]]; then
-        bun build --compile --external koffi --target=bun-$platform ./dist/cli.js --outfile binaries/$platform/pi.exe
+        bun build --compile --external koffi --external playwright-core --external chromium-bidi --target=bun-$platform ./dist/cli.js --outfile binaries/$platform/pi.exe
     else
-        bun build --compile --external koffi --target=bun-$platform ./dist/cli.js --outfile binaries/$platform/pi
+        bun build --compile --external koffi --external playwright-core --external chromium-bidi --target=bun-$platform ./dist/cli.js --outfile binaries/$platform/pi
     fi
 done
 
@@ -126,6 +126,12 @@ for platform in "${PLATFORMS[@]}"; do
     cp -r dist/core/export-html binaries/$platform/
     cp -r docs binaries/$platform/
     cp -r examples binaries/$platform/
+
+    # Playwright's package-root lookup needs its package metadata at runtime;
+    # keep browser machinery external and ship the exact locked packages.
+    mkdir -p binaries/$platform/node_modules
+    cp -r ../../node_modules/playwright-core binaries/$platform/node_modules/
+    cp -r ../../node_modules/chromium-bidi binaries/$platform/node_modules/
 
     # Copy koffi native module for Windows (needed for VT input support)
     if [[ "$platform" == "windows-x64" ]]; then
