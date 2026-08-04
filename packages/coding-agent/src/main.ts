@@ -17,6 +17,7 @@ import { APP_NAME, getAgentDir, getModelsPath, VERSION } from "./config.js";
 import { AuthStorage } from "./core/auth-storage.js";
 import { handleBenchmarkCommand } from "./core/benchmark/index.js";
 import { checkTodoHealth } from "./core/doctor.js";
+import { handleEvaluationCommand } from "./core/evaluation/cli.js";
 import { exportFromFile } from "./core/export-html/index.js";
 import type { LoadExtensionsResult } from "./core/extensions/index.js";
 import { KeybindingsManager } from "./core/keybindings.js";
@@ -675,6 +676,10 @@ export async function main(args: string[]) {
 	}
 
 	if (await handleBenchmarkCommand(args)) {
+		return;
+	}
+
+	if (await handleEvaluationCommand(args)) {
 		return;
 	}
 

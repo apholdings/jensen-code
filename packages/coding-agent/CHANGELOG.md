@@ -104,6 +104,7 @@
 ### Added
 
 - Wire canonical subagent resolution, isolated context packets, parent-side structured-output validation, and deterministic transactional Cavecrew orchestration into runtime dispatch.
+- Add versioned evaluation scenario packs, isolated fixture modes, deterministic assertions, content-addressed artifacts, baseline comparison, metrics, statistics, and release gates through `jensen eval`.
 
 ### Fixed
 
