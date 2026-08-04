@@ -112,14 +112,27 @@ export function saveActivePolicyPointer(pointer: ActivePolicyPointer): void {
 // Policies
 // =============================================================================
 
+/** Sanitize a policy id: only allow safe, path-bounded identifiers (no separators, no traversal). */
+function safePolicyId(policyId: string): string | undefined {
+	if (!policyId) return undefined;
+	// Allow UUIDs and simple dotted/slug identifiers only.
+	if (!/^[a-zA-Z0-9._-]+$/.test(policyId)) return undefined;
+	if (policyId.includes("..")) return undefined;
+	return policyId;
+}
+
 export function writePolicy(policy: RoutingPolicyCandidate): string {
-	const file = path.join(policiesDir(), `${policy.policyId}.json`);
+	const id = safePolicyId(policy.policyId);
+	if (!id) throw new Error("INVALID_POLICY_ID: policy id must be safe and bounded");
+	const file = path.join(policiesDir(), `${id}.json`);
 	atomicWriteJson(file, policy);
 	return file;
 }
 
 export function readPolicy(policyId: string): RoutingPolicyCandidate | undefined {
-	return readJson<RoutingPolicyCandidate>(path.join(policiesDir(), `${policyId}.json`));
+	const id = safePolicyId(policyId);
+	if (!id) return undefined;
+	return readJson<RoutingPolicyCandidate>(path.join(policiesDir(), `${id}.json`));
 }
 
 export function listPolicies(): RoutingPolicyCandidate[] {

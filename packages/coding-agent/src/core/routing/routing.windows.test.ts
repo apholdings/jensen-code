@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { generateRoutingPolicy } from "./optimizer.js";
 import { promotePolicy, rollbackPolicy } from "./promotion.js";
-import { loadActivePolicyPointer, readPolicy } from "./store.js";
+import { loadActivePolicyPointer, readPolicy, writePolicy } from "./store.js";
 import type { CandidateEvidence } from "./types.js";
 
 let root: string;
@@ -61,7 +61,29 @@ describe("cross-platform atomic policy pointer", () => {
 		const pointer = loadActivePolicyPointer();
 		expect(pointer?.policyId).toBe(r.policy.policyId);
 		expect(readPolicy(r.policy.policyId)).toBeDefined();
-		expect(readPolicy(r.policy.policyId.toUpperCase())).toBeUndefined(); // unknown id -> undefined, never crash
+		// A safe, non-existent id never crashes and returns undefined.
+		expect(readPolicy("not-a-real-policy-0000")).toBeUndefined();
+		// Path traversal / separator ids are rejected outright (never escape policy dir).
+		expect(readPolicy("../../etc/passwd")).toBeUndefined();
+		expect(readPolicy("..")).toBeUndefined();
+		expect(() => {
+			// writePolicy must refuse a traversal id rather than write outside.
+			writePolicy({
+				policyId: "../../../tmp/evil",
+				policyVersion: 1,
+				sourceDatasetHash: "x",
+				evaluatorVersion: "y",
+				generatedAt: "2026-01-01T00:00:00.000Z",
+				status: "draft",
+				preferences: null,
+				suggestedRules: [],
+				dominatedCandidateIds: [],
+				evidenceGaps: [],
+				hash: "h",
+				content: "c",
+				rollbackPolicyId: undefined,
+			});
+		}).toThrow("INVALID_POLICY_ID");
 	});
 
 	it("active-policy file content parses as valid JSON (never partial)", () => {
