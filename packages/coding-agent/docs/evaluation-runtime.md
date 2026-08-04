@@ -33,3 +33,25 @@ Use `jensen eval run <pack> --mode fixture` for deterministic execution. Repetit
 The coding-agent package declares `chromium-bidi` explicitly and the private repository package keeps the resolver hoisted for Bun compilation. The binary script installs from the lockfile, builds from a clean checkout, runs startup/evaluation/doctor smoke tests on extracted targets, and writes `binary-manifest.json` plus `SHA256SUMS`. Release assets are built from the canonical release commit; an existing asset is never silently overwritten.
 
 Npm publication, source release, and binary distribution are distinct gates. A Jensen release is complete only after package publication, evaluation/doctor smoke, binary build and smoke, asset upload, and independent checksum verification converge.
+
+## Sandboxed candidates
+
+`--mode sandbox` materializes an immutable fixture into a dedicated sandbox identity. Candidate processes run with an allowlisted environment, workspace-bound paths, bounded wall time, output, disk, process, tool, and cost budgets, and owned descendant cleanup. Fixture-provider execution is not sandboxed candidate execution. Symlinks and Windows junction escapes are rejected; a failed sandbox is retained only when explicitly requested and retained evidence is read-only to evaluators.
+
+The sandbox emits durable lifecycle events (`EVAL_SANDBOX_ALLOCATED`, `EVAL_SANDBOX_MATERIALIZED`, `EVAL_SANDBOX_VERIFIED`, candidate terminal events, and cleanup/retention events). Candidate policy is immutable after start and cannot grant child agents broader effects.
+
+## Live providers and reviewers
+
+Live evaluation requires `--mode live`, `--confirm-live`, an explicit provider profile, resolved model identity, positive maximum cost, model-call, and wall-time budgets, and credentials available for that profile. Credentials alone never enable live mode. OpenRouter and OpenAI-compatible profiles are supported; ordinary CI uses deterministic fake providers and makes no paid calls. Candidate and reviewer budgets are tracked separately, and typed provider failures or budget termination cannot pass a release gate.
+
+Reviewers receive a bounded, content-addressed evidence packet rather than hidden reasoning or mutable candidate state. Reviewer identity differs from the candidate, reviewer output is schema-validated and prompt-injection checked, and deterministic safety/correctness failures remain authoritative.
+
+`jensen eval compare-agents <scenario> --single-agent <agent> --orchestration cavecrew` runs paired candidates under equal scenario, fixture, policy, environment, and budget conditions. Cavecrew benefit is measured through correctness, safety, cost, latency, calls, retrieval, and rollback deltas; delegation alone is never a win.
+
+## RPC, dashboard, retention, and release convergence
+
+The versioned evaluation RPC service implements packs, scenarios, inspection, validation, execution, cancellation, status, reports, comparisons, replay/rescore, stability, baselines, gates, failures, pruning, and doctor operations. UI consumers remain projection-only and receive bounded, paginated views for active runs, failures, comparisons, semantic results, costs, flakiness, retention, and release convergence.
+
+Retention policy version `1` protects release baselines, release-gate evidence, active comparisons, and referenced failure evidence. `jensen eval prune --preview` performs no writes and returns a deterministic manifest; `--execute` requires that manifest, an exclusive writer lease, and a content precondition. Source fixtures, active runs, baselines, and protected evidence are never deleted.
+
+Functional evaluation is a hard release gate. Package build, npm publication, source tag, binary build/smoke, asset upload/download verification, and GitHub Release must converge on one exact release commit. The Changesets Version Packages PR is separate from the implementation PR; a release remains incomplete while any required state is pending, partial, or failed.

@@ -64,6 +64,16 @@ export interface EvaluationCandidatePolicy {
 	allowNetwork: boolean;
 	allowLiveProvider: boolean;
 	allowMutation: boolean;
+	allowedTools?: string[];
+	deniedEffects?: string[];
+	workspaceBoundary?: string;
+	networkPolicy?: "none" | "loopback_only" | "provider_only" | "explicit_allowlist";
+	maximumProcesses?: number;
+	maximumToolCalls?: number;
+	maximumWallTimeMs?: number;
+	maximumOutputBytes?: number;
+	maximumDiskBytes?: number;
+	maximumCostUsd?: number;
 	budget?: EvaluationBudget;
 }
 
@@ -183,6 +193,99 @@ export interface EvaluationBudget {
 	maximumModelCalls?: number;
 	maximumToolCalls?: number;
 	maximumWallTimeMs?: number;
+	maximumOutputBytes?: number;
+	maximumDiskBytes?: number;
+}
+
+export interface EvaluationSandboxIdentity {
+	sandboxId: string;
+	evaluationRunId: string;
+	canonicalRoot: string;
+	fixtureHash: string;
+	platform: string;
+	createdAt: string;
+	retained: boolean;
+}
+
+export type EvaluationSandboxEventType =
+	| "EVAL_SANDBOX_ALLOCATED"
+	| "EVAL_SANDBOX_MATERIALIZED"
+	| "EVAL_SANDBOX_VERIFIED"
+	| "EVAL_CANDIDATE_STARTED"
+	| "EVAL_CANDIDATE_COMPLETED"
+	| "EVAL_CANDIDATE_FAILED"
+	| "EVAL_SANDBOX_CLEANUP_STARTED"
+	| "EVAL_SANDBOX_CLEANUP_COMPLETED"
+	| "EVAL_SANDBOX_RETAINED";
+
+export interface EvaluationReviewerAssignment {
+	reviewerRunId: string;
+	candidateEvaluationRunId: string;
+	reviewerDefinition: string;
+	rubricId: string;
+	rubricVersion: number;
+	evidencePacketId: string;
+}
+
+export interface CavecrewComparisonResult {
+	comparisonId: string;
+	scenarioId: string;
+	singleAgentRunId: string;
+	cavecrewRunId: string;
+	correctnessDelta: number;
+	safetyDelta: number;
+	wallTimeDeltaMs: number;
+	modelCallDelta: number;
+	tokenDelta: number;
+	costDeltaUsd?: number;
+	toolCallDelta: number;
+	retrievalDelta: number;
+	rollbackDelta: number;
+	deterministicWinner: "single_agent" | "cavecrew" | "tie" | "invalid";
+	semanticPreference?: "single_agent" | "cavecrew" | "tie" | "invalid";
+}
+
+export interface EvaluationRetentionPolicy {
+	policyVersion: number;
+	rules: Array<{
+		class: string;
+		minimumRetentionDays?: number;
+		maximumRetentionDays?: number;
+		preserveWhenReferenced: boolean;
+		preserveForRelease: boolean;
+	}>;
+}
+
+export interface EvaluationPruneManifest {
+	manifestId: string;
+	policyVersion: number;
+	createdAt: string;
+	entries: Array<{
+		artifactId: string;
+		retentionClass: string;
+		reasonCode: string;
+		estimatedBytes: number;
+	}>;
+	protectedEntries: Array<{
+		artifactId: string;
+		reasonCode: string;
+	}>;
+}
+
+export interface ReleaseConvergenceState {
+	releaseId: string;
+	version: string;
+	releaseCommit: string;
+	functionalEvaluation: "pending" | "passed" | "failed";
+	packageBuild: "pending" | "passed" | "failed";
+	npmPublication: "pending" | "partial" | "complete" | "failed";
+	sourceTag: "pending" | "created" | "failed";
+	binaryBuild: "pending" | "passed" | "failed";
+	binarySmoke: "pending" | "passed" | "failed";
+	assetUpload: "pending" | "partial" | "complete" | "failed";
+	assetVerification: "pending" | "passed" | "failed";
+	githubRelease: "pending" | "published" | "failed";
+	finalVerdict: "incomplete" | "blocked" | "pass";
 }
 
 export interface EvaluationRun {
@@ -198,6 +301,8 @@ export interface EvaluationRun {
 	completedAt?: string;
 	status: EvaluationStatus;
 	resultArtifactId?: string;
+	sandboxIdentity?: EvaluationSandboxIdentity;
+	eventCount?: number;
 }
 
 export interface EvaluationEvent {
@@ -282,6 +387,8 @@ export interface EvaluationArtifact {
 	assertions: EvaluationAssertionResult[];
 	metrics: EvaluationMetricResult[];
 	semanticResults: SemanticEvaluationResult[];
+	events?: EvaluationEvent[];
+	usage?: EvaluationBudget & { estimatedCostUsd?: number; providerReportedCostUsd?: number };
 	stability?: EvaluationStabilityResult;
 	verdict: EvaluationVerdict;
 	evidenceIds: string[];

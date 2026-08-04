@@ -8,6 +8,8 @@ export { AgentInterface } from "./components/AgentInterface.js";
 export { AttachmentTile } from "./components/AttachmentTile.js";
 export { ConsoleBlock } from "./components/ConsoleBlock.js";
 export { CustomProviderCard } from "./components/CustomProviderCard.js";
+export type { EvaluationDashboardData, EvaluationDashboardRun } from "./components/EvaluationDashboard.js";
+export { EvaluationDashboard } from "./components/EvaluationDashboard.js";
 export { ExpandableSection } from "./components/ExpandableSection.js";
 export { Input } from "./components/Input.js";
 export { MessageEditor } from "./components/MessageEditor.js";

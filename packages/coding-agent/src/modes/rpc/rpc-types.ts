@@ -10,6 +10,7 @@ import type { ImageContent, Model } from "@apholdings/jensen-ai";
 import type { SessionStats } from "../../core/agent-session.js";
 import type { BashResult } from "../../core/bash-executor.js";
 import type { CompactionResult } from "../../core/compaction/index.js";
+import type { EvaluationRpcRequest, EvaluationRpcResponse } from "../../core/evaluation/rpc.js";
 import type {
 	StructuredMemoryCompareData,
 	StructuredMemoryCompareEmptyHistoryData,
@@ -112,7 +113,10 @@ export type RpcCommand =
 	| { id?: string; type: "compare_memory_snapshots"; baseline?: string; target?: string }
 
 	// Working Context
-	| { id?: string; type: "get_working_context" };
+	| { id?: string; type: "get_working_context" }
+
+	// Evaluation runtime
+	| { id?: string; type: "evaluation"; request: EvaluationRpcRequest };
 
 // ============================================================================
 // RPC Slash Command (for get_commands response)
@@ -255,6 +259,9 @@ export type RpcResponse =
 
 	// Working Context
 	| { id?: string; type: "response"; command: "get_working_context"; success: true; data: RpcWorkingContext }
+
+	// Evaluation runtime
+	| { id?: string; type: "response"; command: "evaluation"; success: true; data: { response: EvaluationRpcResponse } }
 
 	// Error response (any command can fail)
 	| { id?: string; type: "response"; command: string; success: false; error: string };

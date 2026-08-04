@@ -66,3 +66,9 @@ jobs:
           test/operability-mcp.test.ts
           src/core/process-runner.test.ts
           src/core/tools/process-manager.windows.test.ts
+
+      - name: Run Windows evaluation runtime validation
+        working-directory: packages/coding-agent
+        run: >-
+          npx tsx ../../node_modules/vitest/dist/cli.js --run
+          test/evaluation/production-runtime.test.ts
