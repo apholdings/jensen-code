@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.8.0
+
+### Minor Changes
+
+- 7447be7: Add a versioned evaluation runtime with deterministic scenario packs, isolated fixtures, replay-safe artifacts, baseline comparison, safety release gates, metrics, and the `jensen eval` CLI.
+
+### Patch Changes
+
+- Updated dependencies [7447be7]
+  - @apholdings/jensen-ai@1.8.0
+  - @apholdings/jensen-tui@1.8.0
+
 ## 1.7.1
 
 ### Patch Changes
