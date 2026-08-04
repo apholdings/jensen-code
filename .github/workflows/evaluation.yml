@@ -54,8 +54,8 @@ jobs:
         run: npm run build
       - name: Validate and run cross-platform pack
         run: |
-          node packages/coding-agent/dist/cli.js eval validate --json
-          node packages/coding-agent/dist/cli.js eval run cross-platform --mode fixture --json
+          node dist/cli.js eval validate --json
+          node dist/cli.js eval run cross-platform --mode fixture --json
           npx tsx ../../node_modules/vitest/dist/cli.js --run test/evaluation/production-runtime.test.ts
-          node packages/coding-agent/dist/cli.js doctor eval --json
+          node dist/cli.js doctor eval --json
         working-directory: packages/coding-agent

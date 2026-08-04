@@ -166,8 +166,9 @@ async function runProcess(
 	args: string[],
 	options: { signal?: AbortSignal; env?: Record<string, string> } = {},
 ): Promise<SandboxProcessResult> {
-	if (policy.allowedTools.length > 0 && !policy.allowedTools.includes(basename(command)))
-		throw new Error(`sandbox tool is not allowed: ${basename(command)}`);
+	const toolName = basename(command).replace(/\.exe$/i, "");
+	if (policy.allowedTools.length > 0 && !policy.allowedTools.includes(toolName))
+		throw new Error(`sandbox tool is not allowed: ${toolName}`);
 	for (const argument of args) {
 		if (/\.jensen[\\/]evaluations|baseline|evaluator|result\.json|\.env|npmrc/i.test(argument))
 			throw new Error("sandbox policy denied evaluator, baseline, result, or credential path");
