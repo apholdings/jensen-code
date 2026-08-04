@@ -1,5 +1,0 @@
----
-"@apholdings/jensen-code": patch
----
-
-Separate the evaluation candidate launcher authority from candidate tool authority. The trusted Jensen launcher is now authorized by resolved executable identity rather than basename, so the compiled, renamed, and Windows binaries run the sandbox candidate (`eval run --mode sandbox`) with a pass verdict and exit 0, untrusted same-basename executables remain rejected, and source, packed npm, and compiled binary sandbox behavior converge. `jensen eval run` now maps the artifact verdict to a stable process exit code (pass 0, fail 1, invalid 2, cancelled 3, internal 4) while reporting commands stay exit 0. Adds a canonical runtime-executable resolver, a `BINARY_SELF_LAUNCHER_BASENAME_POLICY_MISMATCH` historical regression scenario in the `release-acceptance` pack, adversarial launcher/policy/exit security tests, per-artifact sandbox runtime acceptance in the release-convergence gate, and real sandbox candidate evaluation in the binary build smoke so a release cannot pass on a `--version` smoke alone.

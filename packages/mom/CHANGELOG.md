@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.8.3
+
+### Patch Changes
+
+- Updated dependencies [b0fb9ee]
+  - @apholdings/jensen-code@1.8.3
+  - @apholdings/jensen-agent-core@1.8.3
+  - @apholdings/jensen-ai@1.8.3
+
 ## 1.8.2
 
 ### Patch Changes
