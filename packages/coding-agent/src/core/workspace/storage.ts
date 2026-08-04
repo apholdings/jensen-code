@@ -9,12 +9,38 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { INDEX_SCHEMA_VERSION } from "./identity.js";
 import type { IndexedFileRecord, WorkspaceIndexGeneration } from "./types.js";
 
-export type PreparedQuery = ReturnType<DatabaseSync["prepare"]>;
+interface PreparedQuery {
+	get(...parameters: unknown[]): unknown;
+	all(...parameters: unknown[]): unknown[];
+	run(...parameters: unknown[]): unknown;
+}
+
+interface DatabaseSyncLike {
+	prepare(query: string): PreparedQuery;
+	exec(query: string): void;
+	close(): void;
+}
+
+type DatabaseSyncConstructor = new (path: string) => DatabaseSyncLike;
+
+const require = createRequire(import.meta.url);
+
+function loadDatabaseSync(): DatabaseSyncConstructor {
+	try {
+		const sqlite = require("node:sqlite") as { DatabaseSync?: unknown };
+		if (typeof sqlite.DatabaseSync !== "function") throw new Error("DatabaseSync export is unavailable");
+		return sqlite.DatabaseSync as DatabaseSyncConstructor;
+	} catch (error) {
+		throw new Error(
+			`workspace indexing requires Node.js node:sqlite: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+}
 
 export interface LexicalRow {
 	rowid: number;
@@ -22,7 +48,7 @@ export interface LexicalRow {
 }
 
 /** Detects FTS5 availability in the current Node SQLite build. */
-export function detectFts5(db: DatabaseSync): boolean {
+export function detectFts5(db: DatabaseSyncLike): boolean {
 	try {
 		db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS __fts_probe USING fts5(c)");
 		db.exec("DROP TABLE __fts_probe");
@@ -36,13 +62,13 @@ export function detectFts5(db: DatabaseSync): boolean {
  * A workspace index database handle.
  */
 export class WorkspaceDb {
-	readonly db: DatabaseSync;
+	readonly db: DatabaseSyncLike;
 	readonly workspaceId: string;
 	readonly directory: string;
 	readonly fts5: boolean;
 	private generationCache = new Map<string, WorkspaceIndexGeneration>();
 
-	constructor(directory: string, workspaceId: string, db: DatabaseSync, fts5: boolean) {
+	constructor(directory: string, workspaceId: string, db: DatabaseSyncLike, fts5: boolean) {
 		this.directory = directory;
 		this.workspaceId = workspaceId;
 		this.db = db;
@@ -54,6 +80,7 @@ export class WorkspaceDb {
 	static open(directory: string, workspaceId: string): WorkspaceDb {
 		mkdirSync(directory, { recursive: true });
 		const dbPath = path.join(directory, "index.sqlite");
+		const DatabaseSync = loadDatabaseSync();
 		const db = new DatabaseSync(dbPath);
 		const fts5 = detectFts5(db);
 		db.exec("PRAGMA journal_mode = WAL");

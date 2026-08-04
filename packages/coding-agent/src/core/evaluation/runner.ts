@@ -13,6 +13,7 @@ import { calculateMetrics } from "./metrics.js";
 import {
 	EVALUATOR_VERSION,
 	type EvaluationArtifact,
+	type EvaluationBudget,
 	type EvaluationEvent,
 	type EvaluationMode,
 	type EvaluationRun,
@@ -41,7 +42,7 @@ export interface EvaluationRunOptions {
 	executor?: EvaluationExecutor;
 	retainFailedWorkspace?: boolean;
 	live?: boolean;
-	budget?: { maximumCostUsd?: number };
+	budget?: EvaluationBudget;
 }
 
 export async function runEvaluation(

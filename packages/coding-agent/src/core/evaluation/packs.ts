@@ -1,5 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { RESERVED_EVALUATION_DIRECTORIES } from "./artifacts.js";
 import type { EvaluationScenario, EvaluationScenarioPack } from "./types.js";
 import { validatePack, validateScenario } from "./validation.js";
 
@@ -235,7 +236,7 @@ export async function discoverEvaluationPacks(
 	const packRoot = resolve(root);
 	const entries = await readdir(packRoot, { withFileTypes: true }).catch(() => []);
 	for (const entry of entries
-		.filter((item) => item.isDirectory())
+		.filter((item) => item.isDirectory() && !RESERVED_EVALUATION_DIRECTORIES.has(item.name))
 		.sort((left, right) => left.name.localeCompare(right.name))) {
 		const manifestPath = join(packRoot, entry.name, "manifest.json");
 		try {

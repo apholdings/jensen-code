@@ -143,7 +143,7 @@ for platform in "${PLATFORMS[@]}"; do
     if [[ "$platform" == "windows-x64" ]]; then
         # Windows (zip)
         echo "Creating pi-$platform.zip..."
-        (cd $platform && zip -r ../pi-$platform.zip .)
+        node ../../../scripts/create-zip.mjs --source "$platform" --output "pi-$platform.zip"
     else
         # Unix platforms (tar.gz) - use wrapper directory for mise compatibility
         echo "Creating pi-$platform.tar.gz..."
@@ -156,11 +156,45 @@ echo "==> Extracting archives for testing..."
 for platform in "${PLATFORMS[@]}"; do
     rm -rf $platform
     if [[ "$platform" == "windows-x64" ]]; then
-        mkdir -p $platform && (cd $platform && unzip -q ../pi-$platform.zip)
+        mkdir -p "$platform" && node ../../../scripts/extract-zip.mjs --archive "pi-$platform.zip" --destination "$platform"
     else
         tar -xzf pi-$platform.tar.gz && mv pi $platform
     fi
 done
+
+# Validate every extracted executable before packaging release metadata.
+echo "==> Running binary smoke tests..."
+for platform in "${PLATFORMS[@]}"; do
+    if [[ "$platform" == "windows-x64" && "$(uname -s)" != MINGW* && "$(uname -s)" != MSYS* && "$(uname -s)" != CYGWIN* ]]; then
+        test -f "$platform/pi.exe"
+        echo "Skipping Windows PE execution on $(uname -s); Windows CI performs smoke tests."
+        continue
+    fi
+    if [[ "$platform" == "windows-x64" ]]; then
+        executable="$platform/pi.exe"
+    else
+        executable="$platform/pi"
+    fi
+    (cd "$platform" && "./$(basename "$executable")" --version)
+    (cd "$platform" && "./$(basename "$executable")" --help >/dev/null)
+    (cd "$platform" && "./$(basename "$executable")" eval packs --json >/dev/null)
+    (cd "$platform" && "./$(basename "$executable")" eval validate --json >/dev/null)
+    (cd "$platform" && "./$(basename "$executable")" eval run core-runtime --mode fixture --json >/dev/null)
+    (cd "$platform" && "./$(basename "$executable")" doctor eval --json >/dev/null)
+done
+
+node ../../../scripts/create-binary-manifest.mjs \
+    --directory . \
+    --output binary-manifest.json \
+    --version "$(node -p 'require("../package.json").version')" \
+    --commit "$(git rev-parse HEAD)"
+CHECKSUM_FILES=()
+for archive in *.tar.gz *.zip; do
+    if [[ -f "$archive" ]]; then
+        CHECKSUM_FILES+=("$archive")
+    fi
+done
+sha256sum "${CHECKSUM_FILES[@]}" > SHA256SUMS
 
 echo ""
 echo "==> Build complete!"

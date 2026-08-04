@@ -2,11 +2,20 @@ import { join } from "node:path";
 import chalk from "chalk";
 import { checkReleaseGate } from "./gates.js";
 import {
+	aggregateStability,
+	clusterFailure,
 	compareArtifacts,
+	createArtifact,
 	createBaseline,
 	discoverEvaluationPacks,
+	inspectArtifactStore,
+	listArtifacts,
 	listBaselines,
+	mergeFailureClusters,
+	pruneEvaluationStore,
 	readArtifact,
+	replayArtifact,
+	rescoreArtifact,
 	runEvaluation,
 	verifyArtifact,
 	verifyBaseline,
@@ -15,7 +24,6 @@ import {
 import type { EvaluationArtifact, EvaluationReleaseGate } from "./types.js";
 
 const evaluationRoot = () => join(process.cwd(), ".jensen", "evaluations");
-const artifactRoot = () => join(evaluationRoot(), "artifacts");
 const baselineRoot = () => join(evaluationRoot(), "baselines");
 
 function jsonOutput(args: string[]): boolean {
@@ -40,20 +48,28 @@ export async function handleEvaluationCommand(args: string[]): Promise<boolean> 
 	const json = jsonOutput(args);
 	if (command === "help") {
 		console.log(
-			`${chalk.bold("Usage:")} jensen eval <packs|scenarios|validate|run|compare|replay|rescore|baseline|gate|doctor>`,
+			`${chalk.bold("Usage:")} jensen eval <packs|scenarios|validate|run|compare|replay|rescore|stability|failures|prune|baseline|gate|doctor>`,
 		);
 		return true;
 	}
 	if (command === "doctor") {
 		const discovered = await discoverEvaluationPacks();
+		const store = await inspectArtifactStore(evaluationRoot());
+		const errors = [...discovered.errors, ...store.errors];
+		const warnings = [...store.warnings];
+		const status = errors.length ? "fail" : warnings.length ? "warn" : "pass";
 		const result = {
 			name: "evaluation",
-			status: discovered.errors.length ? "fail" : "pass",
+			status,
 			packs: discovered.packs.length,
 			scenarios: discovered.scenarios.length,
-			errors: discovered.errors,
+			store,
+			errors,
+			warnings,
+			exitCode: errors.length ? 2 : warnings.length ? 1 : 0,
 		};
 		print(result, json);
+		process.exitCode = result.exitCode;
 		return true;
 	}
 	const discovered = await discoverEvaluationPacks();
@@ -70,6 +86,28 @@ export async function handleEvaluationCommand(args: string[]): Promise<boolean> 
 		if (discovered.errors.length) process.exitCode = 1;
 		return true;
 	}
+	if (command === "stability") {
+		const artifact = await readArtifact(evaluationRoot(), args[2] ?? "");
+		print(artifact.stability ?? aggregateStability([artifact]), json);
+		return true;
+	}
+	if (command === "failures") {
+		const clusters = mergeFailureClusters(
+			(await listArtifacts(evaluationRoot())).flatMap((artifact) => {
+				const cluster = clusterFailure(artifact);
+				return cluster ? [cluster] : [];
+			}),
+		);
+		print(clusters, json);
+		if (clusters.length > 0) process.exitCode = 1;
+		return true;
+	}
+	if (command === "prune") {
+		const execute = args.includes("--execute");
+		if (!execute && !args.includes("--preview")) throw new Error("eval prune requires --preview or --execute");
+		print(await pruneEvaluationStore(evaluationRoot(), execute), json);
+		return true;
+	}
 	if (command === "run") {
 		const target = args[2];
 		const mode = (option(args, "--mode") ?? "fixture") as "offline" | "fixture" | "sandbox" | "live";
@@ -82,17 +120,53 @@ export async function handleEvaluationCommand(args: string[]): Promise<boolean> 
 					? discovered.scenarios.filter((scenario) => scenario.scenarioId === target)
 					: [];
 		if (!scenarios.length) throw new Error(`unknown evaluation scenario or pack: ${target ?? ""}`);
+		if (mode === "live" && !args.includes("--confirm-live"))
+			throw new Error("live evaluation requires --confirm-live");
+		const requestedRepeat = option(args, "--repeat");
+		const repeat = requestedRepeat === undefined ? 1 : Number(requestedRepeat);
+		if (!Number.isInteger(repeat) || repeat < 1) throw new Error("--repeat must be a positive integer");
 		const artifacts: EvaluationArtifact[] = [];
 		for (const scenario of scenarios) {
-			const artifact = await runEvaluation(scenario, {
-				mode,
-				live: args.includes("--live"),
-				budget: {
-					maximumCostUsd: option(args, "--max-cost-usd") ? Number(option(args, "--max-cost-usd")) : undefined,
-				},
-			});
-			await writeArtifact(artifactRoot(), artifact);
-			artifacts.push(artifact);
+			const repetitions: EvaluationArtifact[] = [];
+			for (let repetition = 0; repetition < repeat; repetition += 1) {
+				const artifact = await runEvaluation(scenario, {
+					mode,
+					candidate: {
+						providerProfile: option(args, "--provider-profile") ?? "fixture",
+						provider: option(args, "--provider") ?? "fixture",
+						configuredModel: option(args, "--model") ?? "deterministic-fixture",
+						seed: repetition,
+					},
+					live: args.includes("--live"),
+					budget: {
+						maximumCostUsd: option(args, "--max-cost-usd") ? Number(option(args, "--max-cost-usd")) : undefined,
+						maximumModelCalls: option(args, "--max-model-calls")
+							? Number(option(args, "--max-model-calls"))
+							: undefined,
+						maximumWallTimeMs: option(args, "--max-wall-time-ms")
+							? Number(option(args, "--max-wall-time-ms"))
+							: undefined,
+					},
+				});
+				await writeArtifact(evaluationRoot(), artifact);
+				repetitions.push(artifact);
+				artifacts.push(artifact);
+			}
+			if (repeat > 1) {
+				const first = repetitions[0]!;
+				const stability = aggregateStability(repetitions);
+				const { artifactHash: _artifactHash, ...unsigned } = first;
+				const grouped = createArtifact({
+					...unsigned,
+					stability,
+					provenance: {
+						...first.provenance,
+						sourceRunIds: repetitions.map((artifact) => artifact.run.evaluationRunId),
+					},
+				});
+				await writeArtifact(evaluationRoot(), grouped);
+				artifacts.push(grouped);
+			}
 		}
 		print(
 			{
@@ -107,17 +181,16 @@ export async function handleEvaluationCommand(args: string[]): Promise<boolean> 
 		return true;
 	}
 	if (command === "compare") {
-		const baseline = await readArtifact(artifactRoot(), args[2] ?? "");
-		const candidate = await readArtifact(artifactRoot(), args[3] ?? "");
+		const baseline = await readArtifact(evaluationRoot(), args[2] ?? "");
+		const candidate = await readArtifact(evaluationRoot(), args[3] ?? "");
 		print(compareArtifacts(baseline, candidate), json);
 		return true;
 	}
 	if (command === "replay" || command === "rescore") {
-		const artifact = await readArtifact(artifactRoot(), args[2] ?? "");
-		print(
-			{ ...artifact, replay: true, rescore: command === "rescore", originalArtifactId: artifact.artifactHash },
-			json,
-		);
+		const artifact = await readArtifact(evaluationRoot(), args[2] ?? "");
+		const replayed = command === "replay" ? replayArtifact(artifact) : rescoreArtifact(artifact);
+		await writeArtifact(evaluationRoot(), replayed);
+		print({ artifactId: replayed.artifactHash, originalArtifactId: artifact.artifactHash, artifact: replayed }, json);
 		return true;
 	}
 	if (command === "baseline") return handleBaselineCommand(args.slice(2), json);
@@ -138,7 +211,7 @@ async function handleBaselineCommand(args: string[], json: boolean): Promise<boo
 	}
 	if (subcommand === "create") {
 		const artifactIds = args.slice(1).filter((arg) => !arg.startsWith("--"));
-		const artifacts = await Promise.all(artifactIds.map((id) => readArtifact(artifactRoot(), id)));
+		const artifacts = await Promise.all(artifactIds.map((id) => readArtifact(evaluationRoot(), id)));
 		const first = artifacts[0];
 		if (!first) throw new Error("baseline create requires artifact ids");
 		const baseline = await createBaseline(
@@ -161,7 +234,7 @@ async function handleBaselineCommand(args: string[], json: boolean): Promise<boo
 async function handleGateCommand(args: string[], json: boolean): Promise<boolean> {
 	if (args[0] !== "check") throw new Error(`unknown gate command: ${args[0] ?? ""}`);
 	const artifactIds = args.slice(1).filter((arg) => !arg.startsWith("--"));
-	const artifacts = await Promise.all(artifactIds.map((id) => readArtifact(artifactRoot(), id)));
+	const artifacts = await Promise.all(artifactIds.map((id) => readArtifact(evaluationRoot(), id)));
 	if (artifacts.some((artifact) => !verifyArtifact(artifact))) throw new Error("invalid evaluation artifact");
 	const gate: EvaluationReleaseGate = {
 		gateId: "default",
