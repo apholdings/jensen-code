@@ -1,6 +1,6 @@
 import type { AgentTool } from "@apholdings/jensen-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
-import type { TodoItem } from "./todo-write.js";
+import { TodoEngine, type TodoItem } from "../todo/index.js";
 
 const todoReadSchema = Type.Object({}, { description: "Read current todo list without modifying state" });
 
@@ -21,11 +21,13 @@ export interface TodoReadOptions {
  * @param getSessionTodos - Callback to get the current todos from session
  * @param getRevision - Callback to get the current revision number
  * @param options - Optional callbacks for snapshot tracking
+ * @param engine - Optional shared TodoEngine (records read snapshots + progress)
  */
 export function createTodoReadTool(
 	getSessionTodos: () => TodoItem[],
 	getRevision?: () => number,
 	options?: TodoReadOptions,
+	engine: TodoEngine = new TodoEngine("session"),
 ): AgentTool<typeof todoReadSchema> {
 	return {
 		name: "todo_read",
@@ -38,6 +40,12 @@ export function createTodoReadTool(
 		execute: async (_toolCallId: string, _input: TodoReadInput, _signal?: AbortSignal) => {
 			const current = getSessionTodos();
 			const revision = getRevision?.();
+			engine.emit({ type: "TODO_STATE_READ", currentRevision: revision });
+			// Record the read snapshot for internal rebase + progress-aware loop reset.
+			if (revision !== undefined) {
+				engine.recordReadSnapshot(revision, current);
+				engine.recordTodoRead(revision);
+			}
 			// Record the read snapshot for host-side enforcement
 			options?.onRead?.();
 			if (current.length === 0) {

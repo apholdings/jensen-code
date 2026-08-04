@@ -248,19 +248,20 @@ describe("runtime tool surface through the jensen-test launcher configuration", 
 		const details2 = readResult2.details as any;
 		expect(details2.revision).toBe(details.revision + 1);
 
-		// Stale update: must not mutate
+		// Stale update: recovered internally via deterministic rebase (different item)
 		const staleResult = await updateTool.execute("call-5", {
 			updates: [{ id: ids[1], status: "completed" }],
 			expectedRevision: details.revision as number,
 		});
 		const staleText = staleResult.content[0] as any;
 		expect(staleText.type).toBe("text");
-		expect(staleText.text).toContain("TODO_READ_REQUIRED");
+		expect(staleText.text).not.toContain("TODO_READ_REQUIRED");
+		expect(staleText.text).toContain("rebase");
 
-		// Confirm zero mutation: revision unchanged since update was stale
+		// Confirm the stale non-conflicting update applied (revision advanced).
 		const readResult3 = await readTool.execute("call-6", {});
 		const details3 = readResult3.details as any;
-		expect(details3.revision).toBe(details.revision + 1);
+		expect(details3.revision).toBe(details2.revision + 1);
 	});
 
 	it("V21 todo_read must not invoke todo_write execute", async () => {
@@ -340,7 +341,9 @@ describe("runtime tool surface through the jensen-test launcher configuration", 
 		});
 		const staleText = staleResult.content[0] as any;
 		expect(staleText.type).toBe("text");
-		expect(staleText.text).toContain("TODO_READ_REQUIRED");
+		// Unknown item yields a typed, nonfatal conflict (never TODO_READ_REQUIRED,
+		// never a run-terminating error).
+		expect(staleText.text).toContain("TODO_REBASE_CONFLICT");
 	});
 
 	it("V24 same session: shared store, distinct tool identities", async () => {

@@ -519,19 +519,20 @@ describe("Todo write per-user-turn duplicate contract (R01-R14)", () => {
 		);
 
 		persisted = [{ id: "id-a", content: "A", activeForm: "A", status: "pending" }];
-		const before = [...persisted];
 		const beforeRev = revision;
 
 		const result = await updateTool.execute("u1", {
 			updates: [{ id: "id-a", status: "completed" }],
 			expectedRevision: 3, // stale
 		});
-		// Stale revision returns a tool result with TODO_READ_REQUIRED
+		// Stale revisions are recovered internally: applied automatically with no
+		// TODO_READ_REQUIRED and no run termination.
 		const text = result.content[0];
 		if (text.type !== "text") throw new Error("expected text content");
-		expect(text.text).toContain("TODO_READ_REQUIRED");
-		expect(persisted).toEqual(before);
-		expect(revision).toBe(beforeRev);
+		expect(text.text).not.toContain("TODO_READ_REQUIRED");
+		expect(text.text).toContain("rebase");
+		expect(persisted[0].status).toBe("completed");
+		expect(revision).toBe(beforeRev + 1);
 	});
 
 	it("R22 no-op update returns changed=false", async () => {
@@ -648,15 +649,17 @@ describe("Todo write per-user-turn duplicate contract (R01-R14)", () => {
 		});
 		expect((res1.details as { changed?: boolean }).changed).toBe(true);
 
-		// Second update without a fresh read is rejected
+		// Second update based on the current revision is accepted. A fresh read is
+		// no longer a hard prerequisite because stale revisions auto-recover.
 		const res2 = await updateTool.execute("u2", {
 			updates: [{ id: "id-a", status: "completed" }],
 			expectedRevision: 1,
 		});
 		const text2 = res2.content[0];
 		if (text2.type !== "text") throw new Error("expected text content");
-		expect(text2.text).toContain("TODO_READ_REQUIRED");
-		expect(persisted[0].status).toBe("in_progress");
+		expect(text2.text).not.toContain("TODO_READ_REQUIRED");
+		expect(text2.text).toContain("updated");
+		expect(persisted[0].status).toBe("completed");
 	});
 
 	it("R25 exact black-box transcript regression", async () => {
@@ -866,7 +869,7 @@ describe("Todo write per-user-turn duplicate contract (R01-R14)", () => {
 		expect(persisted[0].id).not.toBe(persisted[1].id);
 	});
 
-	it("repeated stale todo_update terminates after one rejection and recovers after read", async () => {
+	it("repeated stale todo_update auto-recovers without termination", async () => {
 		let persisted: TodoItem[] = [{ id: "todo-1", content: "Task", activeForm: "Doing", status: "pending" }];
 		let revision = 1;
 		let snapshot: { revision: number; timestamp: number } | null = { revision: 0, timestamp: Date.now() };
@@ -900,25 +903,33 @@ describe("Todo write per-user-turn duplicate contract (R01-R14)", () => {
 			rejectionState,
 		);
 
+		// Stale revision is recovered internally: no TODO_READ_REQUIRED, no throw,
+		// no REPEATED_TODO_UPDATE_LOOP run termination.
 		const first = await updateTool.execute("u1", {
 			updates: [{ id: "todo-1", status: "completed" }],
 			expectedRevision: 0,
 		});
-		expect((first.details as { errorCode?: string }).errorCode).toBe("TODO_READ_REQUIRED");
-		expect(mutations).toBe(0);
-		await expect(
-			updateTool.execute("u2", { updates: [{ id: "todo-1", status: "completed" }], expectedRevision: 0 }),
-		).rejects.toThrow("REPEATED_TODO_UPDATE_LOOP");
-		expect(mutations).toBe(0);
+		expect((first.details as { errorCode?: string }).errorCode).not.toBe("TODO_READ_REQUIRED");
+		expect(mutations).toBe(1);
 
+		// A repeated stale update targeting new work is treated as a separate
+		// recoverable incident, not a no-progress loop that terminates the run.
+		const second = await updateTool.execute("u2", {
+			updates: [{ id: "todo-1", activeForm: "Doing revised" }],
+			expectedRevision: 0,
+		});
+		expect(second).toBeDefined();
+		expect(mutations).toBe(2);
+		expect((second.details as Record<string, unknown>).errorCode).not.toBeDefined();
+
+		// Recovery remains functional after a fresh read (idempotent repeat -> changed=false).
 		const read = await readTool.execute("r1", {});
 		const readDetails = read.details as { revision: number; todos: TodoItem[] };
 		const recovered = await updateTool.execute("u3", {
 			updates: [{ id: "todo-1", status: "completed" }],
 			expectedRevision: readDetails.revision,
 		});
-		expect((recovered.details as { changed?: boolean }).changed).toBe(true);
-		expect(mutations).toBe(1);
+		expect((recovered.details as { changed?: boolean }).changed).toBe(false);
 	});
 
 	it("reserves todo_write atomically for parallel calls", async () => {

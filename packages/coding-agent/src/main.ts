@@ -16,6 +16,7 @@ import { selectSession } from "./cli/session-picker.js";
 import { APP_NAME, getAgentDir, getModelsPath, VERSION } from "./config.js";
 import { AuthStorage } from "./core/auth-storage.js";
 import { handleBenchmarkCommand } from "./core/benchmark/index.js";
+import { checkTodoHealth } from "./core/doctor.js";
 import { exportFromFile } from "./core/export-html/index.js";
 import type { LoadExtensionsResult } from "./core/extensions/index.js";
 import { KeybindingsManager } from "./core/keybindings.js";
@@ -31,6 +32,7 @@ import { SessionManager } from "./core/session-manager.js";
 import { SettingsManager } from "./core/settings-manager.js";
 import { handleSubagentCommand } from "./core/subagent-cli.js";
 import { printTimings, time } from "./core/timings.js";
+import { buildTodoStatusReport, formatTodoStatus, type TodoDiagnosticInput } from "./core/todo/todo-cli.js";
 import { allTools } from "./core/tools/index.js";
 import { handleWorkspaceRetrievalCommand } from "./core/workspace-cli.js";
 import { runMigrations, showDeprecationWarnings } from "./migrations.js";
@@ -582,6 +584,81 @@ async function handleConfigCommand(args: string[]): Promise<boolean> {
 	process.exit(0);
 }
 
+function printJson(payload: unknown): void {
+	console.log(JSON.stringify(payload, null, 2));
+}
+
+/**
+ * `jensen todo ...` — read-only TODO operability diagnostics.
+ * Supports: status | inspect | verify. `--json` for machine output.
+ * A live engine diagnostic may be injected for session-scoped detail; outside a
+ * session it reports the canonical model status.
+ */
+async function handleTodoCommand(args: string[]): Promise<boolean> {
+	if (args[0] !== "todo") {
+		return false;
+	}
+	const sub = args[1] ?? "status";
+	const json = args.includes("--json");
+	const diagnosticArg = parseTodoDiagnosticFlag(args);
+
+	if (sub === "status" || sub === "inspect") {
+		const report = buildTodoStatusReport(diagnosticArg);
+		if (json) {
+			printJson(report);
+		} else {
+			console.log(formatTodoStatus(report));
+		}
+		process.exit(0);
+	}
+
+	if (sub === "verify") {
+		const check = checkTodoHealth(diagnosticArg);
+		if (json) {
+			printJson(check);
+		} else {
+			const icon = check.status === "ok" ? "✓" : check.status === "warn" ? "⚠" : "✗";
+			console.log(`${icon} todo: ${check.message}`);
+		}
+		process.exit(0);
+	}
+
+	console.error(chalk.red(`Unknown todo subcommand "${sub}". Supported: status, inspect, verify.`));
+	process.exit(1);
+}
+
+/**
+ * `jensen doctor todo` — read-only TODO subsystem health check.
+ */
+async function handleDoctorTodoCommand(args: string[]): Promise<boolean> {
+	if (args[0] !== "doctor" || args[1] !== "todo") {
+		return false;
+	}
+	const json = args.includes("--json");
+	const diagnosticArg = parseTodoDiagnosticFlag(args);
+	const check = checkTodoHealth(diagnosticArg);
+	if (json) {
+		printJson(check);
+	} else {
+		const icon = check.status === "ok" ? "✓" : check.status === "warn" ? "⚠" : "✗";
+		console.log(`${icon} ${check.name}: ${check.message}`);
+	}
+	process.exit(0);
+}
+
+/** Parse an optional `--scope <id>` into a baseline diagnostic for inspection. */
+function parseTodoDiagnosticFlag(args: string[]): TodoDiagnosticInput | undefined {
+	const idx = args.indexOf("--scope");
+	if (idx === -1) {
+		return undefined;
+	}
+	const scopeId = args[idx + 1];
+	if (!scopeId) {
+		return undefined;
+	}
+	return { scopeId };
+}
+
 export async function main(args: string[]) {
 	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(process.env.PI_OFFLINE);
 	if (offlineMode) {
@@ -602,6 +679,14 @@ export async function main(args: string[]) {
 	}
 
 	if (await handleWorkspaceCommand(args)) {
+		return;
+	}
+
+	if (await handleTodoCommand(args)) {
+		return;
+	}
+
+	if (await handleDoctorTodoCommand(args)) {
 		return;
 	}
 

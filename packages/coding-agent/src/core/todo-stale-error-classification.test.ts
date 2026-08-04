@@ -1,12 +1,14 @@
 /**
- * Tests: stale todo_update revision rejections are classified as tool errors.
+ * Tests: stale todo_update revision handling after durable recovery.
  *
- * This file exercises the real production path:
- *   real Todo ledger → real createTodoUpdateTool → real agentLoop
- *   → real executePreparedToolCall catch → isError=true
+ * A stale todo_update revision is now recovered INTERNALLY and
+ * DETERMINISTICALLY: the engine reads the current state, rebases the
+ * non-conflicting intent exactly once, and applies it. A stale revision is
+ * NEVER a run-terminal condition and NEVER requires the model to manually
+ * issue todo_read merely to satisfy an internal concurrency protocol.
  *
- * It does NOT test or claim to fix any TUI render stall, input restoration,
- * or blank-frame issue.
+ * The prior false-positive behavior (REQUIRE_READ + REPEATED_TODO_UPDATE_LOOP
+ * run termination) is gone; this file documents the corrected behavior.
  */
 
 import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool } from "@apholdings/jensen-agent-core";
@@ -18,16 +20,12 @@ import {
 	type Model,
 	type UserMessage,
 } from "@apholdings/jensen-ai";
-import stripAnsi from "strip-ansi";
 import { describe, expect, it } from "vitest";
-import { ToolExecutionComponent } from "../modes/interactive/components/tool-execution.js";
-import { initTheme } from "../modes/interactive/theme/theme.js";
+import { TodoEngine } from "./todo/index.js";
 import { TodoLoopGuard } from "./tools/todo-loop-guard.js";
 import { createTodoReadTool } from "./tools/todo-read.js";
 import { createTodoUpdateTool } from "./tools/todo-update.js";
 import { createTodoWriteTool, type TodoItem } from "./tools/todo-write.js";
-
-initTheme("dark");
 
 // ---------------------------------------------------------------------------
 // Agent-loop helpers (same pattern as packages/agent/test/agent-loop.test.ts)
@@ -99,21 +97,20 @@ function identityConverter(messages: AgentMessage[]): import("@apholdings/jensen
 }
 
 // ---------------------------------------------------------------------------
-// Shared test setup
+// Shared test setup — one engine shared across read/update tools
 // ---------------------------------------------------------------------------
 
 function createTodoTools() {
 	let persisted: TodoItem[] = [];
 	let revision = 0;
 	const guard = new TodoLoopGuard();
-	let snapshot: { revision: number; timestamp: number } | null = null;
+	const engine = new TodoEngine("test-session");
 
 	const writeTool = createTodoWriteTool(
 		() => persisted,
 		(next) => {
 			persisted = next;
 			revision++;
-			snapshot = null;
 		},
 		guard,
 		() => revision,
@@ -122,11 +119,8 @@ function createTodoTools() {
 	const readTool = createTodoReadTool(
 		() => persisted,
 		() => revision,
-		{
-			onRead: () => {
-				snapshot = { revision, timestamp: Date.now() };
-			},
-		},
+		undefined,
+		engine,
 	);
 
 	const updateTool = createTodoUpdateTool(
@@ -134,75 +128,65 @@ function createTodoTools() {
 		(next) => {
 			persisted = next;
 			revision++;
-			snapshot = null;
 		},
 		() => revision,
 		guard,
-		{
-			getSnapshot: () => snapshot,
-			invalidateSnapshot: () => {
-				snapshot = null;
-			},
-		},
+		undefined,
+		undefined,
+		engine,
 	);
 
 	return {
 		writeTool,
 		readTool,
 		updateTool,
+		engine,
 		getPersisted: () => persisted,
 		getRevision: () => revision,
 	};
 }
 
 // ---------------------------------------------------------------------------
-// C01: Real stale classification through the agent loop
+// C01–C08: corrected stale-recovery behavior through the real agent loop
 // ---------------------------------------------------------------------------
 
-describe("stale todo_update error classification (real agent loop)", () => {
-	it("C01: stale revision → tool_execution_end emits TODO_READ_REQUIRED", async () => {
+describe("stale todo_update auto-recovery (real agent loop)", () => {
+	it("C01: stale non-conflicting revision auto-rebases and updates with isError=false", async () => {
 		const { writeTool, readTool, updateTool, getPersisted } = createTodoTools();
-
-		// Pre-populate: write todos to advance the revision
-		await writeTool.execute("w1", {
-			todos: [{ content: "Task A", activeForm: "Working on A", status: "pending" }],
-		});
+		await makeTodos(writeTool, "Task A");
 		const firstTodoId = getPersisted()[0].id!;
-		// Fresh read: snapshot at current revision 1
-		await readTool.execute("r1", {});
+		await readTool.execute("r1", {}); // snapshot revision 2
 
-		// Stale call: revision is already 1, ask with 0
 		const context: AgentContext = {
 			systemPrompt: "You are helpful.",
 			messages: [],
 			tools: [updateTool as unknown as AgentTool],
 		};
-
-		const config: AgentLoopConfig = {
-			model: createModel(),
-			convertToLlm: identityConverter,
-		};
+		const config: AgentLoopConfig = { model: createModel(), convertToLlm: identityConverter };
 
 		let callIndex = 0;
 		const streamFn = () => {
 			const s = new MockAssistantStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
-					const msg = createAssistantMessage(
-						[
-							{
-								type: "toolCall",
-								id: "stale-1",
-								name: "todo_update",
-								arguments: {
-									updates: [{ id: firstTodoId, status: "completed" }],
-									expectedRevision: 0,
+					s.push({
+						type: "done",
+						reason: "toolUse",
+						message: createAssistantMessage(
+							[
+								{
+									type: "toolCall",
+									id: "stale-1",
+									name: "todo_update",
+									arguments: {
+										updates: [{ id: firstTodoId, status: "completed" }],
+										expectedRevision: 0, // far-stale
+									},
 								},
-							},
-						],
-						"toolUse",
-					);
-					s.push({ type: "done", reason: "toolUse", message: msg });
+							],
+							"toolUse",
+						),
+					});
 				} else {
 					s.push({
 						type: "done",
@@ -217,75 +201,56 @@ describe("stale todo_update error classification (real agent loop)", () => {
 
 		const events: AgentEvent[] = [];
 		const stream = agentLoop([createUserMessage("go")], context, config, undefined, streamFn);
-
 		for await (const event of stream) {
 			events.push(event);
 		}
 
-		// C01: tool_execution_end emitted (stale revision returns a normal result, not isError)
 		const toolEnd = events.find(
 			(e): e is Extract<AgentEvent, { type: "tool_execution_end" }> => e.type === "tool_execution_end",
 		);
 		expect(toolEnd).toBeDefined();
+		expect(toolEnd!.isError).toBe(false);
 
-		// C01: text contains TODO_READ_REQUIRED and revision information
-		const textBlocks = toolEnd!.result.content.filter(
-			(c: { type: string; text?: string }): c is { type: "text"; text: string } => c.type === "text",
-		);
-		expect(textBlocks.length).toBe(1);
-		expect(textBlocks[0].text).toContain("TODO_READ_REQUIRED");
-		expect(textBlocks[0].text).toContain("revision 0");
-		expect(textBlocks[0].text).toContain("current is 1");
+		const text = (toolEnd!.result.content as Array<{ type: string; text?: string }>)
+			.filter((c) => c.type === "text")
+			.map((c) => c.text ?? "")
+			.join("\n");
+		expect(text).not.toContain("TODO_READ_REQUIRED");
+		expect(text).toContain("rebase");
+
+		// C01: item was actually completed
+		expect(getPersisted()[0].status).toBe("completed");
 	});
 
-	// -----------------------------------------------------------------------
-	// C02: Ledger immutability
-	// -----------------------------------------------------------------------
-
-	it("C02: stale rejection leaves ledger and revision unchanged", async () => {
-		const { writeTool, readTool, updateTool, getPersisted, getRevision } = createTodoTools();
-
-		await writeTool.execute("w1", {
-			todos: [{ content: "Task A", activeForm: "Working on A", status: "pending" }],
-		});
-
+	it("C02: a conflicting stale update is typed and nonfatal; run continues", async () => {
+		const { writeTool, readTool, updateTool, getPersisted } = createTodoTools();
+		await makeTodos(writeTool, "Task B");
 		const firstTodoId = getPersisted()[0].id!;
-		const beforeStatus = getPersisted()[0].status;
-		const beforeRev = getRevision();
-		const beforeIds = getPersisted().map((t) => t.id);
-		await readTool.execute("r1", {});
+		await readTool.execute("r1", {}); // base snapshot at revision 2 (content "Task B")
 
-		// Direct execute: stale revision returns TODO_READ_REQUIRED result
-		const staleResult = await updateTool.execute("stale-dir", {
-			updates: [{ id: firstTodoId, status: "completed" }],
-			expectedRevision: beforeRev - 1,
+		// The model legitimately changes content, advancing the store to revision 3.
+		const first = await updateTool.execute("v2", {
+			updates: [{ id: firstTodoId, content: "Version 2" }],
+			expectedRevision: 2,
 		});
-		const staleText = staleResult.content[0];
-		if (staleText.type !== "text") throw new Error("expected text content");
-		expect(staleText.text).toContain("TODO_READ_REQUIRED");
+		if (first.content[0].type !== "text") throw new Error("text expected");
 
-		// C02: zero mutation
-		expect(getPersisted()[0].status).toBe(beforeStatus);
-		expect(getRevision()).toBe(beforeRev);
-		expect(getPersisted().map((t) => t.id)).toEqual(beforeIds);
-
-		// C02: ledger remains readable
-		const readResult = await readTool.execute("r2", {});
-		expect(readResult.details).toBeDefined();
-		expect((readResult.details as { todos: TodoItem[] }).todos.length).toBe(1);
+		// A later stale update based on the OLD snapshot (rev 2) targets content that
+		// was concurrently changed (now "Version 2"). This must be a typed, nonfatal
+		// conflict — never a throw, never run termination.
+		const result = await updateTool.execute("conflict-1", {
+			updates: [{ id: firstTodoId, content: "Model X" }],
+			expectedRevision: 2,
+		});
+		const text = result.content[0];
+		if (text.type !== "text") throw new Error("expected text");
+		const details = result.details as Record<string, unknown> | undefined;
+		expect(text.text.includes("TODO_REBASE_CONFLICT") || details?.errorCode === "TODO_REBASE_CONFLICT").toBe(true);
 	});
 
-	// -----------------------------------------------------------------------
-	// C03: Normal update still succeeds
-	// -----------------------------------------------------------------------
-
-	it("C03: valid expectedRevision updates successfully with isError=false", async () => {
+	it("C03: valid current-revision update succeeds with isError=false", async () => {
 		const { writeTool, readTool, updateTool, getPersisted, getRevision } = createTodoTools();
-
-		await writeTool.execute("w1", {
-			todos: [{ content: "Task B", activeForm: "Working on B", status: "pending" }],
-		});
-
+		await makeTodos(writeTool, "Task C");
 		const firstTodoId = getPersisted()[0].id!;
 		const currentRev = getRevision();
 		await readTool.execute("r1", {});
@@ -295,11 +260,7 @@ describe("stale todo_update error classification (real agent loop)", () => {
 			messages: [],
 			tools: [updateTool as unknown as AgentTool],
 		};
-
-		const config: AgentLoopConfig = {
-			model: createModel(),
-			convertToLlm: identityConverter,
-		};
+		const config: AgentLoopConfig = { model: createModel(), convertToLlm: identityConverter };
 
 		let callIndex = 0;
 		const streamFn = () => {
@@ -338,7 +299,6 @@ describe("stale todo_update error classification (real agent loop)", () => {
 
 		const events: AgentEvent[] = [];
 		const stream = agentLoop([createUserMessage("go")], context, config, undefined, streamFn);
-
 		for await (const event of stream) {
 			events.push(event);
 		}
@@ -348,21 +308,12 @@ describe("stale todo_update error classification (real agent loop)", () => {
 		);
 		expect(toolEnd).toBeDefined();
 		expect(toolEnd!.isError).toBe(false);
-
-		// C03: ledger mutated exactly once
 		expect(getPersisted()[0].status).toBe("completed");
 	});
 
-	// -----------------------------------------------------------------------
-	// C04: Model-facing error result
-	// -----------------------------------------------------------------------
-
-	it("C04: stale revision produces model-facing error toolResult", async () => {
+	it("C04: stale recovery produces a non-error model-facing toolResult", async () => {
 		const { writeTool, readTool, updateTool, getPersisted } = createTodoTools();
-
-		await writeTool.execute("w1", {
-			todos: [{ content: "Task C", activeForm: "Working on C", status: "pending" }],
-		});
+		await makeTodos(writeTool, "Task D");
 		const firstTodoId = getPersisted()[0].id!;
 		await readTool.execute("r1", {});
 
@@ -371,11 +322,7 @@ describe("stale todo_update error classification (real agent loop)", () => {
 			messages: [],
 			tools: [updateTool as unknown as AgentTool],
 		};
-
-		const config: AgentLoopConfig = {
-			model: createModel(),
-			convertToLlm: identityConverter,
-		};
+		const config: AgentLoopConfig = { model: createModel(), convertToLlm: identityConverter };
 
 		let callIndex = 0;
 		const streamFn = () => {
@@ -412,39 +359,19 @@ describe("stale todo_update error classification (real agent loop)", () => {
 			return s;
 		};
 
-		const events: AgentEvent[] = [];
 		const stream = agentLoop([createUserMessage("go")], context, config, undefined, streamFn);
-
-		for await (const event of stream) {
-			events.push(event);
-		}
-
 		const messages = await stream.result();
 		const toolResults = messages.filter((m) => m.role === "toolResult");
 		expect(toolResults.length).toBe(1);
-
-		// C04: model-facing result is a normal tool result (TODO_READ_REQUIRED)
-		const tr = toolResults[0];
-
-		// C04: meaningful non-empty text with TODO_READ_REQUIRED
-		const texts = tr.content.filter(
-			(c: { type: string; text?: string }): c is { type: "text"; text: string } => c.type === "text",
-		);
-		expect(texts.length).toBe(1);
+		const texts = toolResults[0].content.filter((c): c is { type: "text"; text: string } => c.type === "text");
 		expect(texts[0].text.length).toBeGreaterThan(20);
-		expect(texts[0].text).toContain("TODO_READ_REQUIRED");
+		expect(texts[0].text).not.toContain("TODO_READ_REQUIRED");
+		expect(texts[0].text).not.toContain("REPEATED_TODO_UPDATE_LOOP");
 	});
 
-	// -----------------------------------------------------------------------
-	// C05: Renderer classification (real component with real outcome)
-	// -----------------------------------------------------------------------
-
-	it("C05: isError=true outcome is rendered with error styling and visible text", async () => {
+	it("C05: agent-loop completes normally across stale recovery", async () => {
 		const { writeTool, readTool, updateTool, getPersisted } = createTodoTools();
-
-		await writeTool.execute("w1", {
-			todos: [{ content: "Task D", activeForm: "Working on D", status: "pending" }],
-		});
+		await makeTodos(writeTool, "Task E");
 		const firstTodoId = getPersisted()[0].id!;
 		await readTool.execute("r1", {});
 
@@ -453,11 +380,7 @@ describe("stale todo_update error classification (real agent loop)", () => {
 			messages: [],
 			tools: [updateTool as unknown as AgentTool],
 		};
-
-		const config: AgentLoopConfig = {
-			model: createModel(),
-			convertToLlm: identityConverter,
-		};
+		const config: AgentLoopConfig = { model: createModel(), convertToLlm: identityConverter };
 
 		let callIndex = 0;
 		const streamFn = () => {
@@ -496,217 +419,42 @@ describe("stale todo_update error classification (real agent loop)", () => {
 
 		const events: AgentEvent[] = [];
 		const stream = agentLoop([createUserMessage("go")], context, config, undefined, streamFn);
-
 		for await (const event of stream) {
 			events.push(event);
 		}
-
-		// Capture the real emitted outcome
-		const toolEnd = events.find(
-			(e): e is Extract<AgentEvent, { type: "tool_execution_end" }> => e.type === "tool_execution_end",
-		);
-		expect(toolEnd).toBeDefined();
-
-		// Feed the real outcome through the ToolExecutionComponent renderer
-		const ui = { requestRender: () => {} };
-		const component = new ToolExecutionComponent(
-			"todo_update",
-			{ updates: [{ id: firstTodoId, status: "completed" }], expectedRevision: 0 },
-			{ showImages: true },
-			undefined,
-			ui as any,
-			"/tmp",
-		);
-
-		component.updateResult({ ...toolEnd!.result, isError: toolEnd!.isError });
-
-		// C05: renderer does not throw
-		const rendered = stripAnsi(component.render(120).join("\n"));
-		expect(() => component.render(80)).not.toThrow();
-
-		// C05: visible TODO_READ_REQUIRED text rendered
-		expect(rendered).toContain("TODO_READ_REQUIRED");
-		expect(rendered).toContain("todo_read");
-
-		// C05: output is non-empty
-		expect(rendered.trim().length).toBeGreaterThan(0);
-	});
-
-	// -----------------------------------------------------------------------
-	// C06: Normal agent-loop completion (no regression)
-	// -----------------------------------------------------------------------
-
-	it("C06: throwing on stale revision does not regress agent-loop completion", async () => {
-		const { writeTool, readTool, updateTool, getPersisted } = createTodoTools();
-
-		await writeTool.execute("w1", {
-			todos: [{ content: "Task E", activeForm: "Working on E", status: "pending" }],
-		});
-		const firstTodoId = getPersisted()[0].id!;
-		await readTool.execute("r1", {});
-
-		const context: AgentContext = {
-			systemPrompt: "You are helpful.",
-			messages: [],
-			tools: [updateTool as unknown as AgentTool],
-		};
-
-		const config: AgentLoopConfig = {
-			model: createModel(),
-			convertToLlm: identityConverter,
-		};
-
-		let callIndex = 0;
-		const streamFn = () => {
-			const s = new MockAssistantStream();
-			queueMicrotask(() => {
-				if (callIndex === 0) {
-					s.push({
-						type: "done",
-						reason: "toolUse",
-						message: createAssistantMessage(
-							[
-								{
-									type: "toolCall",
-									id: "stale-4",
-									name: "todo_update",
-									arguments: {
-										updates: [{ id: firstTodoId, status: "completed" }],
-										expectedRevision: 0,
-									},
-								},
-							],
-							"toolUse",
-						),
-					});
-				} else {
-					s.push({
-						type: "done",
-						reason: "stop",
-						message: createAssistantMessage([{ type: "text", text: "Done" }]),
-					});
-				}
-				callIndex++;
-			});
-			return s;
-		};
-
-		const events: AgentEvent[] = [];
-		const stream = agentLoop([createUserMessage("go")], context, config, undefined, streamFn);
-
-		for await (const event of stream) {
-			events.push(event);
-		}
-
-		// C06: agent loop completes normally
 		const eventTypes = events.map((e) => e.type);
 		expect(eventTypes).toContain("agent_start");
-		expect(eventTypes).toContain("tool_execution_start");
 		expect(eventTypes).toContain("tool_execution_end");
 		expect(eventTypes).toContain("agent_end");
 	});
+});
 
-	// -----------------------------------------------------------------------
-	// C07: Direct execute contract — returns TODO_READ_REQUIRED on stale revision
-	// -----------------------------------------------------------------------
-
-	it("C07: direct todo_update.execute() returns TODO_READ_REQUIRED on stale revision", async () => {
-		const { writeTool, readTool, updateTool, getPersisted } = createTodoTools();
-
-		await writeTool.execute("w1", {
-			todos: [{ content: "Task F", activeForm: "Working on F", status: "pending" }],
-		});
+// C10: direct execute contract — stale revision auto-recovers, no TODO_READ_REQUIRED
+describe("direct todo_update.execute contract", () => {
+	it("C10: stale revision returns automatic-rebase success details (not TODO_READ_REQUIRED)", async () => {
+		const { writeTool, readTool, updateTool, getPersisted, getRevision } = createTodoTools();
+		await makeTodos(writeTool, "Task F");
 		const firstTodoId = getPersisted()[0].id!;
+		const revBefore = getRevision();
 		await readTool.execute("r1", {});
 
-		// C07: stale call returns TODO_READ_REQUIRED tool result
-		const result = await updateTool.execute("stale-dir-2", {
+		const result = await updateTool.execute("stale-dir", {
 			updates: [{ id: firstTodoId, status: "completed" }],
-			expectedRevision: 0,
+			expectedRevision: revBefore - 1,
 		});
 		const text = result.content[0];
-		if (text.type !== "text") throw new Error("expected text content");
-		expect(text.text).toContain("TODO_READ_REQUIRED");
-	});
-
-	// -----------------------------------------------------------------------
-	// C08: Structured information — error message contains revision numbers
-	// -----------------------------------------------------------------------
-
-	it("C08: stale error message contains expected and current revision numbers", async () => {
-		const { writeTool, readTool, updateTool, getPersisted } = createTodoTools();
-
-		await writeTool.execute("w1", {
-			todos: [{ content: "Task G", activeForm: "Working on G", status: "pending" }],
-		});
-		const firstTodoId = getPersisted()[0].id!;
-		await readTool.execute("r1", {});
-
-		const context: AgentContext = {
-			systemPrompt: "You are helpful.",
-			messages: [],
-			tools: [updateTool as unknown as AgentTool],
-		};
-
-		const config: AgentLoopConfig = {
-			model: createModel(),
-			convertToLlm: identityConverter,
-		};
-
-		let callIndex = 0;
-		const streamFn = () => {
-			const s = new MockAssistantStream();
-			queueMicrotask(() => {
-				if (callIndex === 0) {
-					s.push({
-						type: "done",
-						reason: "toolUse",
-						message: createAssistantMessage(
-							[
-								{
-									type: "toolCall",
-									id: "stale-5",
-									name: "todo_update",
-									arguments: {
-										updates: [{ id: firstTodoId, status: "completed" }],
-										expectedRevision: 0,
-									},
-								},
-							],
-							"toolUse",
-						),
-					});
-				} else {
-					s.push({
-						type: "done",
-						reason: "stop",
-						message: createAssistantMessage([{ type: "text", text: "Done" }]),
-					});
-				}
-				callIndex++;
-			});
-			return s;
-		};
-
-		const events: AgentEvent[] = [];
-		const stream = agentLoop([createUserMessage("go")], context, config, undefined, streamFn);
-
-		for await (const event of stream) {
-			events.push(event);
-		}
-
-		const toolEnd = events.find(
-			(e): e is Extract<AgentEvent, { type: "tool_execution_end" }> => e.type === "tool_execution_end",
-		);
-		expect(toolEnd).toBeDefined();
-
-		const text = toolEnd!.result.content
-			.filter((c: { type: string; text?: string }): c is { type: "text"; text: string } => c.type === "text")
-			.map((c: { type: "text"; text: string }) => c.text)
-			.join("\n");
-
-		// C08: error message contains both revision numbers
-		expect(text).toMatch(/revision\s+0/i);
-		expect(text).toMatch(/current is\s+1/i);
+		if (text.type !== "text") throw new Error("expected text");
+		expect(text.text).not.toContain("TODO_READ_REQUIRED");
+		expect(text.text).toContain("rebase");
+		// mutated once via automatic rebase
+		expect(getPersisted()[0].status).toBe("completed");
 	});
 });
+
+function makeTodos(writeTool: ReturnType<typeof createTodoTools>["writeTool"], content: string): Promise<string> {
+	return writeTool
+		.execute("w-seed", {
+			todos: [{ content, activeForm: `Working on ${content}`, status: "pending" }],
+		})
+		.then(() => ""); // id captured after write via getPersisted
+}

@@ -117,6 +117,7 @@ import { getLatestCompactionEntry } from "./session-manager.js";
 import type { SettingsManager } from "./settings-manager.js";
 import { BUILTIN_SLASH_COMMANDS, type SlashCommandInfo, type SlashCommandLocation } from "./slash-commands.js";
 import { buildSystemPromptRegions } from "./system-prompt.js";
+import { TodoEngine } from "./todo/index.js";
 import type { BashOperations } from "./tools/bash.js";
 import { createAllTools } from "./tools/index.js";
 import { createMemoryWriteTool } from "./tools/memory-write.js";
@@ -384,6 +385,7 @@ export class AgentSession {
 	private _todoPerTurnLock = createPerTurnLock();
 	private _todoReadSnapshot: { revision: number; timestamp: number } | null = null;
 	private _todoUpdateRejectionState = { count: 0 };
+	private _todoEngine = new TodoEngine("session");
 	private _memoryItems: MemoryItem[] = [];
 	private _delegatedTasks: DelegatedTask[] = [];
 	private _tasks: Task[] = [];
@@ -838,6 +840,7 @@ export class AgentSession {
 			}
 			if (!event.isError && event.toolName !== "todo_write" && event.toolName !== "todo_read") {
 				this._todoLoopGuard.resetOnNonTodoToolSuccess(event.toolName);
+				this._todoEngine.recordProgress();
 			}
 			const extensionEvent: ToolExecutionEndEvent = {
 				type: "tool_execution_end",
@@ -1054,6 +1057,14 @@ export class AgentSession {
 	 */
 	getTodos(): ReadonlyArray<TodoItem> {
 		return this._todos;
+	}
+
+	/**
+	 * Live TODO subsystem diagnostics (progress epoch, snapshot/ledger counts,
+	 * loop-chain state). Read-only, used by operability surfaces.
+	 */
+	getTodoDiagnostics() {
+		return this._todoEngine.getDiagnostics();
 	}
 
 	/**
@@ -3191,6 +3202,7 @@ export class AgentSession {
 					this._todoUpdateRejectionState.count = 0;
 				},
 			},
+			this._todoEngine,
 		);
 		const todoUpdateTool = createTodoUpdateTool(
 			() => this._todos,
@@ -3204,6 +3216,7 @@ export class AgentSession {
 				},
 			},
 			this._todoUpdateRejectionState,
+			this._todoEngine,
 		);
 		this._baseToolRegistry.set("todo_write", todoWriteTool as unknown as AgentTool);
 		this._baseToolRegistry.set("todo_read", todoReadTool as unknown as AgentTool);
