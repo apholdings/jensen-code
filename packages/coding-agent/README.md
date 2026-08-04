@@ -499,7 +499,17 @@ pi config                   # Enable/disable package resources
 jensen agents list --json   # Inspect the canonical subagent registry
 jensen agents validate      # Validate definitions and fallback references
 jensen skills validate      # Validate loaded skill dependencies before use
+jensen eval packs --json    # List built-in and local evaluation packs
+jensen eval validate --json # Validate scenario schemas and fixture references
+jensen eval run core-runtime --mode fixture --json
+jensen doctor eval --json   # Read-only evaluation diagnostics
 ```
+
+### Evaluation and release gates
+
+Jensen's evaluation runtime treats scenarios, fixtures, candidate configuration, durable events, assertions, and result artifacts as versioned data. Use `jensen eval packs`, `jensen eval scenarios`, and `jensen eval validate` to inspect the built-in deterministic packs. `jensen eval run <scenario-or-pack> --mode offline|fixture|sandbox` runs bounded evaluation; `live` mode is disabled unless `JENSEN_EVAL_LIVE=1`, `--live`, an explicit provider configuration, and a positive cost budget are all supplied.
+
+Deterministic safety and task assertions outrank semantic judges and aggregate metrics. Candidate self-report cannot set a verdict, missing evidence is not a pass, and safety failures cannot be averaged away. Evaluation artifacts are content-addressed and include scenario, candidate, environment, evaluator, and evidence provenance. Baselines are created and promoted explicitly; they are never silently replaced. Repeated runs retain separate artifacts, and flaky results are explicit rather than clean passes. Ordinary CI uses deterministic fixture providers and no paid API.
 
 ### Modes
 

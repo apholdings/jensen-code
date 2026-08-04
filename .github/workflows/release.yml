@@ -40,6 +40,13 @@ jobs:
       - name: Validate (build + check + deterministic tests)
         run: npm run validate
 
+      - name: Evaluate release quality gates
+        run: |
+          node packages/coding-agent/dist/cli.js eval validate --json
+          node packages/coding-agent/dist/cli.js eval run core-runtime --mode fixture --json
+          node packages/coding-agent/dist/cli.js eval run safe-execution --mode fixture --json
+          node packages/coding-agent/dist/cli.js eval run todo-recovery --mode fixture --json
+
       - name: Create Release Pull Request or prepare release state
         id: changesets
         uses: changesets/action@v1
