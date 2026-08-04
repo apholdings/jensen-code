@@ -49,4 +49,3 @@ The Jensen implementation is original TypeScript under the repository's MIT lice
 - SWE-bench paper: https://arxiv.org/abs/2310.06770
 - AgentBench paper: https://arxiv.org/abs/2308.03688
 - OpenTelemetry GenAI semantic conventions: https://opentelemetry.io/docs/specs/semconv/gen-ai/
-

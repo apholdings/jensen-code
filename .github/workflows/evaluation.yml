@@ -54,4 +54,3 @@ jobs:
         run: |
           node packages/coding-agent/dist/cli.js eval validate --json
           node packages/coding-agent/dist/cli.js eval run cross-platform --mode fixture --json
-
