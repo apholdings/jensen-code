@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.2
+
+### Patch Changes
+
+- 3f46ae6: Complete the production evaluation runtime with real sandbox lifecycle enforcement, opt-in live-provider execution, independent reviewers, paired Cavecrew comparisons, versioned evaluation RPC operations, bounded dashboard projections, protected retention and pruning, and single-commit release provenance checks.
+
 ## 1.8.1
 
 ### Patch Changes
