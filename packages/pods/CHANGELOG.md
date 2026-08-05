@@ -1,6 +1,6 @@
 # @apholdings/jensen-pods
 
-## 1.10.0
+## 2.0.0
 
 ### Minor Changes
 
@@ -43,7 +43,7 @@
 ### Patch Changes
 
 - Updated dependencies [1f51e24]
-  - @apholdings/jensen-agent-core@1.10.0
+  - @apholdings/jensen-agent-core@2.0.0
 
 ## 1.9.0
 
