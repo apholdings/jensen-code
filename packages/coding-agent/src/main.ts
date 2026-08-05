@@ -22,6 +22,7 @@ import { exportFromFile } from "./core/export-html/index.js";
 import type { LoadExtensionsResult } from "./core/extensions/index.js";
 import { KeybindingsManager } from "./core/keybindings.js";
 import { handleAdaptiveCommand } from "./core/long-horizon/adaptive/cli.js";
+import { handleMissionCommand } from "./core/mission/cli.js";
 import { ModelRegistry } from "./core/model-registry.js";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
 import { handleOperabilityCommand } from "./core/operability-cli.js";
@@ -720,6 +721,10 @@ export async function main(args: string[]) {
 	}
 
 	if (await handleAdaptiveCommand(args)) {
+		return;
+	}
+
+	if (await handleMissionCommand(args)) {
 		return;
 	}
 
