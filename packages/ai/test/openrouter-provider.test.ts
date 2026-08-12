@@ -122,4 +122,30 @@ describe("OpenRouter openai-completions compatibility", () => {
 		expect(result.errorMessage).toContain("OPENROUTER_API_KEY");
 		expect(mockState.clientConfig).toBeUndefined();
 	});
+
+	it("dispatches a newly discovered OpenRouter model ID with reasoning effort and standard tool/streaming params", async () => {
+		process.env.OPENROUTER_API_KEY = "openrouter-key";
+
+		const model = createOpenRouterModel({
+			id: "x-ai/grok-4.6",
+			name: "Grok 4.6",
+			reasoning: true,
+		});
+
+		const result = await streamSimpleOpenAICompletions(model, createContext(), {
+			reasoning: "high",
+		}).result();
+
+		expect(result.stopReason).toBe("stop");
+		expect(mockState.clientConfig).toMatchObject({
+			apiKey: "openrouter-key",
+			baseURL: "https://openrouter.ai/api/v1",
+		});
+		expect(mockState.params).toMatchObject({
+			model: "x-ai/grok-4.6",
+			reasoning: { effort: "high" },
+		});
+		// OpenRouter normalizes reasoning to the nested reasoning object, not reasoning_effort
+		expect(mockState.params).not.toHaveProperty("reasoning_effort");
+	});
 });
