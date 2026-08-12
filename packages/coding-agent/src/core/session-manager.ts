@@ -562,6 +562,59 @@ export function findMostRecentSession(sessionDir: string): string | null {
 	}
 }
 
+export type SessionValidationResult = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Validate that a persisted session file can be parsed cleanly without mutating it.
+ *
+ * This is intentionally stricter than `loadEntriesFromFile()`'s callers need for
+ * normal loading: explicit resume must be able to distinguish a missing session
+ * from a corrupted one and must never overwrite the original bytes on failure.
+ */
+export function validateSessionFile(filePath: string): SessionValidationResult {
+	if (!existsSync(filePath)) {
+		return { ok: false, reason: "session file does not exist" };
+	}
+
+	let content: string;
+	try {
+		content = readFileSync(filePath, "utf8");
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return { ok: false, reason: `cannot read session file: ${message}` };
+	}
+
+	const trimmed = content.trim();
+	if (!trimmed) {
+		return { ok: false, reason: "session file is empty" };
+	}
+
+	const lines = trimmed.split("\n");
+	let firstEntry = true;
+	let lineNumber = 0;
+
+	for (const line of lines) {
+		lineNumber++;
+		if (!line.trim()) continue;
+
+		let entry: FileEntry;
+		try {
+			entry = JSON.parse(line) as FileEntry;
+		} catch {
+			return { ok: false, reason: `malformed JSON on line ${lineNumber}` };
+		}
+
+		if (firstEntry) {
+			firstEntry = false;
+			if (entry.type !== "session" || typeof (entry as SessionHeader).id !== "string") {
+				return { ok: false, reason: "invalid session header" };
+			}
+		}
+	}
+
+	return { ok: true };
+}
+
 function isMessageWithContent(message: AgentMessage): message is Message {
 	return typeof (message as Message).role === "string" && "content" in message;
 }
@@ -1620,5 +1673,37 @@ export class SessionManager {
 		} catch {
 			return [];
 		}
+	}
+
+	/**
+	 * Resolve a persisted session by its exact session ID.
+	 *
+	 * Session IDs are opaque strings (UUIDs by default). This compares logical
+	 * IDs exactly and never treats the requested value as a filesystem path, so
+	 * path-like input such as `../../etc/passwd` simply does not match anything.
+	 *
+	 * @param sessionId Exact session ID to resolve
+	 * @param sessionDir Optional session directory to search first (e.g. an
+	 *                   explicit `--session-dir`). The default global sessions
+	 *                   directory is always searched as a fallback.
+	 */
+	static async findById(sessionId: string, sessionDir?: string): Promise<SessionInfo | null> {
+		// Reject empty and path-like values early. Real session IDs never contain
+		// path separators, and this prevents path fragments from being treated as IDs.
+		if (!sessionId || sessionId.includes("/") || sessionId.includes("\\")) {
+			return null;
+		}
+
+		const candidates: SessionInfo[] = [];
+
+		if (sessionDir) {
+			const localSessions = await SessionManager.list(process.cwd(), sessionDir);
+			candidates.push(...localSessions);
+		}
+
+		const allSessions = await SessionManager.listAll();
+		candidates.push(...allSessions);
+
+		return candidates.find((s) => s.id === sessionId) ?? null;
 	}
 }

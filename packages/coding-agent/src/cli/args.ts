@@ -18,6 +18,8 @@ export interface Args {
 	thinking?: ThinkingLevel;
 	continue?: boolean;
 	resume?: boolean;
+	/** Session ID requested via the explicit `resume <SESSION_ID>` command. */
+	resumeSessionId?: string;
 	help?: boolean;
 	version?: boolean;
 	mode?: Mode;
@@ -183,6 +185,7 @@ ${chalk.bold("Usage:")}
   ${APP_NAME} [options] [@files...] [messages...]
 
 ${chalk.bold("Commands:")}
+  ${APP_NAME} resume <SESSION_ID>      Continue a persisted session by exact session ID
   ${APP_NAME} install <source> [-l]    Install extension source and add to settings
   ${APP_NAME} remove <source> [-l]     Remove extension source from settings
   ${APP_NAME} update [source]          Update installed extensions (skips pinned sources)

@@ -16,6 +16,31 @@ Sessions can be removed by deleting their `.jsonl` files under `~/.pi/agent/sess
 
 Pi also supports deleting sessions interactively from `/resume` (select a session and press `Ctrl+D`, then confirm). When available, pi uses the `trash` CLI to avoid permanent deletion.
 
+## Resuming a Session by ID
+
+Explicitly continue a previously persisted session by its exact session ID:
+
+```bash
+jensen resume <SESSION_ID>
+```
+
+```bash
+jensen resume 9ad37e10-243e-4fe6-9d7c-59c2e327aabc
+```
+
+This resolves the session by exact ID (not a prefix), restores its persisted
+conversation history, model/thinking configuration, memory/todos/tasks, and
+working directory, and continues writing under the same session ID. Session IDs
+are opaque strings; you can discover them with `/session` in the TUI or in the
+`--resume` session picker.
+
+Failure behavior is strict:
+
+- An unknown ID exits with `Session not found: <SESSION_ID>` and never creates a
+  new session or falls back to the latest session.
+- A corrupted session file fails explicitly and leaves the persisted bytes
+  untouched; it is not silently replaced with fresh state.
+
 ## Session Version
 
 Sessions have a version field in the header:
@@ -372,6 +397,10 @@ Key methods for working with sessions programmatically.
 ### Static Listing Methods
 - `SessionManager.list(cwd, sessionDir?, onProgress?)` - List sessions for a directory
 - `SessionManager.listAll(onProgress?)` - List all sessions across all projects
+- `SessionManager.findById(sessionId, sessionDir?)` - Resolve a persisted session by exact ID
+
+### Validation
+- `validateSessionFile(path)` - Validate a session file parses cleanly without mutating it (used by explicit resume to distinguish missing from corrupted sessions)
 
 ### Instance Methods - Session Management
 - `newSession(options?)` - Start a new session (options: `{ parentSession?: string }`)

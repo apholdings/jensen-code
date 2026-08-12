@@ -206,7 +206,14 @@ pi -c                  # Continue most recent session
 pi -r                  # Browse and select from past sessions
 pi --no-session        # Ephemeral mode (don't save)
 pi --session <path>    # Use specific session file or ID
+jensen resume <ID>     # Continue a persisted session by exact session ID
 ```
+
+`jensen resume <SESSION_ID>` resolves a persisted session by its exact ID and
+continues it in place: conversation history, model/thinking configuration, and
+working directory are restored, and new activity is written under the same
+session ID. You can obtain a session ID from `/session` in the TUI or from the
+`--resume` session picker.
 
 ### Branching
 
@@ -544,6 +551,7 @@ Deterministic safety and task assertions outrank semantic judges and aggregate m
 
 | Option | Description |
 |--------|-------------|
+| `resume <SESSION_ID>` | Continue a persisted session by exact session ID |
 | `-c`, `--continue` | Continue most recent session |
 | `-r`, `--resume` | Browse and select session |
 | `--session <path>` | Use specific session file or partial UUID |

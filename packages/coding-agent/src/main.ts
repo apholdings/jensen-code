@@ -12,6 +12,7 @@ import { type Args, parseArgs, printHelp } from "./cli/args.js";
 import { selectConfig } from "./cli/config-selector.js";
 import { processFileArguments } from "./cli/file-processor.js";
 import { listModels } from "./cli/list-models.js";
+import { parseResumeCommand } from "./cli/resume-command.js";
 import { selectSession } from "./cli/session-picker.js";
 import { APP_NAME, getAgentDir, getModelsPath, VERSION } from "./config.js";
 import { AuthStorage } from "./core/auth-storage.js";
@@ -31,7 +32,7 @@ import { DefaultResourceLoader } from "./core/resource-loader.js";
 import { handleRoutingCommand } from "./core/routing/cli.js";
 import { handleWorkspaceCommand } from "./core/safety/cli.js";
 import { type CreateAgentSessionOptions, createAgentSession } from "./core/sdk.js";
-import { SessionManager } from "./core/session-manager.js";
+import { SessionManager, validateSessionFile } from "./core/session-manager.js";
 import { SettingsManager } from "./core/settings-manager.js";
 import { handleSubagentCommand } from "./core/subagent-cli.js";
 import { printTimings, time } from "./core/timings.js";
@@ -376,6 +377,55 @@ async function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: 
 	return { type: "not_found", arg: sessionArg };
 }
 
+function printResumeHelp(): void {
+	console.log(`${chalk.bold("Usage:")}
+  ${APP_NAME} resume <SESSION_ID>
+
+Continue a previously persisted session identified by its exact session ID.
+The requested session is restored with its conversation history, model/thinking
+configuration, and working directory. New activity continues under the same
+session ID.
+
+Example:
+  ${APP_NAME} resume 9ad37e10-243e-4fe6-9d7c-59c2e327aabc
+
+Session IDs are shown by /session and in the --resume session picker.
+`);
+}
+
+/**
+ * Resolve and open a persisted session by exact ID.
+ *
+ * Fails safely (and never mutates persisted data) when the ID is unknown or the
+ * session file is corrupted. A successful open keeps the session identity from
+ * the persisted header, so future appends continue under the same session ID.
+ */
+async function openSessionById(sessionId: string, sessionDir?: string): Promise<SessionManager> {
+	const sessionInfo = await SessionManager.findById(sessionId, sessionDir);
+	if (!sessionInfo) {
+		console.error(chalk.red(`Session not found: ${sessionId}`));
+		process.exit(1);
+	}
+
+	const validation = validateSessionFile(sessionInfo.path);
+	if (!validation.ok) {
+		console.error(chalk.red(`Cannot resume session ${sessionId}: ${validation.reason}`));
+		console.error(chalk.dim(`Session file: ${sessionInfo.path}`));
+		console.error(chalk.dim("The persisted session was left untouched."));
+		process.exit(1);
+	}
+
+	const sessionManager = SessionManager.open(sessionInfo.path, sessionDir);
+	if (sessionManager.getSessionId() !== sessionId) {
+		console.error(
+			chalk.red(`Session identity mismatch: requested ${sessionId}, loaded ${sessionManager.getSessionId()}`),
+		);
+		process.exit(1);
+	}
+
+	return sessionManager;
+}
+
 /** Prompt user for yes/no confirmation */
 async function promptConfirm(message: string): Promise<boolean> {
 	return new Promise((resolve) => {
@@ -431,6 +481,10 @@ async function createSessionManager(
 		effectiveSessionDir = await callSessionDirectoryHook(extensions, cwd);
 	}
 
+	if (parsed.resumeSessionId) {
+		return openSessionById(parsed.resumeSessionId, effectiveSessionDir);
+	}
+
 	if (parsed.session) {
 		const resolved = await resolveSessionPath(parsed.session, cwd, effectiveSessionDir);
 
@@ -479,6 +533,12 @@ function buildSessionOptions(
 
 	if (sessionManager) {
 		options.sessionManager = sessionManager;
+		// Explicit resume continues in the session's original working directory
+		// rather than the directory where `jensen resume` was invoked. Empty cwd
+		// (legacy sessions) falls back to the current directory via createAgentSession.
+		if (parsed.resumeSessionId && sessionManager.getCwd()) {
+			options.cwd = sessionManager.getCwd();
+		}
 	}
 
 	// Model from CLI
@@ -508,7 +568,7 @@ function buildSessionOptions(
 		}
 	}
 
-	if (!options.model && scopedModels.length > 0 && !parsed.continue && !parsed.resume) {
+	if (!options.model && scopedModels.length > 0 && !parsed.continue && !parsed.resume && !parsed.resumeSessionId) {
 		// Check if saved default is in scoped models - use it if so, otherwise first scoped model
 		const savedProvider = settingsManager.getDefaultProvider();
 		const savedModelId = settingsManager.getDefaultModel();
@@ -728,11 +788,29 @@ export async function main(args: string[]) {
 		return;
 	}
 
+	// Detect the explicit `resume <SESSION_ID>` command before generic argument
+	// parsing so the subcommand and its ID are not treated as prompt messages.
+	const resumeCommand = parseResumeCommand(args);
+
+	if (resumeCommand.kind === "help") {
+		printResumeHelp();
+		process.exit(0);
+	}
+
+	if (resumeCommand.kind === "missing") {
+		console.error(chalk.red("Missing required session ID."));
+		console.error(chalk.dim(`\nUsage:\n  ${APP_NAME} resume <SESSION_ID>`));
+		process.exit(1);
+	}
+
+	const resumeSessionId = resumeCommand.kind === "resume" ? resumeCommand.sessionId : undefined;
+	const argsForParse = resumeSessionId !== undefined ? args.slice(2) : args;
+
 	// Run migrations (pass cwd for project-local migrations)
 	const { migratedAuthProviders: migratedProviders, deprecationWarnings } = runMigrations(process.cwd());
 
 	// First pass: parse args to get --extension paths
-	const firstPass = parseArgs(args);
+	const firstPass = parseArgs(argsForParse);
 
 	// Early load extensions to discover their CLI flags
 	const cwd = process.cwd();
@@ -780,7 +858,12 @@ export async function main(args: string[]) {
 	}
 
 	// Second pass: parse args with extension flags
-	const parsed = parseArgs(args, extensionFlags);
+	const parsed = parseArgs(argsForParse, extensionFlags);
+
+	// Record the explicit resume target for session resolution and model precedence.
+	if (resumeSessionId !== undefined) {
+		parsed.resumeSessionId = resumeSessionId;
+	}
 
 	// Pass flag values to extensions via runtime
 	for (const [name, value] of parsed.unknownFlags) {
