@@ -474,6 +474,22 @@ Read the [blog post](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) 
 
 ---
 
+## Reliable Agent Runtime
+
+Jensen 2.1.0 adds a **Reliability Kernel**: the model proposes actions and
+completion, while Jensen owns state, execution, evidence, validation, and
+completion. The kernel normalizes model output into a finite set of Jensen-owned
+actions, validates every executable action before execution, records observed
+evidence, runs deterministic verification, and enforces a Completion Gate so a
+model cannot self-certify completion.
+
+**The model proposes completion. Jensen verifies completion.**
+
+See [docs/reliable-agent-runtime.md](docs/reliable-agent-runtime.md) for the
+architecture, authority model, and extension points.
+
+---
+
 ## Subagents and Cavecrew
 
 Inspect the canonical registry and skill dependency state with:
