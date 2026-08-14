@@ -213,6 +213,30 @@ describe("TEST C — multi-rollover mission", () => {
 	});
 });
 
+describe("TEST C2 — default keep-recent tail enables rollover", () => {
+	it("does not retain the whole conversation when keepRecentTokens is omitted", async () => {
+		const cap = capability(4096, 512);
+		const archive = new InMemoryEvidenceArchive();
+		const checkpoint = makeCheckpoint("mission_c2");
+
+		const messages: AgentMessage[] = [];
+		for (let i = 0; i < 40; i++) messages.push(user(pad(100)), assistant(pad(100)));
+
+		const governor = new ContextGovernor({
+			capability: cap,
+			archive,
+			checkpointProvider: () => checkpoint,
+			// keepRecentTokens intentionally omitted: the capability-relative
+			// default must be a fraction of the safe budget, never the whole
+			// conversation (a fixed 20000-token tail made rollover a no-op).
+		});
+
+		const result = await governor.govern({ systemPrompt: "sys", messages });
+		expect(result.diagnostics.rolloverOccurred).toBe(true);
+		assertFits(result.assembly, cap);
+	});
+});
+
 describe("TEST D — large tool result virtualization", () => {
 	it("archives the full output and keeps only a synopsis hot", async () => {
 		const cap = capability(8192, 2048);

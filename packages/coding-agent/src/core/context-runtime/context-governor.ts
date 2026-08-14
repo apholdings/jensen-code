@@ -74,7 +74,11 @@ export interface ContextGovernorOptions {
 }
 
 const DEFAULT_MAX_ITERATIONS = 8;
-const DEFAULT_KEEP_RECENT_TOKENS = 20000;
+// The recent hot tail kept across a rollover must be a fraction of the safe
+// input budget, never the whole conversation. A fixed 20000-token tail made
+// rollover/trim no-ops on small windows because it retained every message.
+const DEFAULT_KEEP_RECENT_RATIO = 0.3;
+const MIN_KEEP_RECENT_TOKENS = 1024;
 const DEFAULT_TOOL_RESULT_VIRTUALIZE_THRESHOLD = 768;
 const DEFAULT_MIN_RETAINED_MESSAGES = 4;
 const TOOL_RESULT_SYNOPSIS_CHARS = 400;
@@ -186,7 +190,12 @@ export class ContextGovernor {
 			checkpointProvider: options.checkpointProvider,
 			capabilityProvider: options.capabilityProvider,
 			maxIterations: options.maxIterations ?? DEFAULT_MAX_ITERATIONS,
-			keepRecentTokens: options.keepRecentTokens ?? DEFAULT_KEEP_RECENT_TOKENS,
+			keepRecentTokens:
+				options.keepRecentTokens ??
+				Math.max(
+					MIN_KEEP_RECENT_TOKENS,
+					Math.floor(options.capability.safeInputBudget * DEFAULT_KEEP_RECENT_RATIO),
+				),
 			toolResultVirtualizeThreshold:
 				options.toolResultVirtualizeThreshold ?? DEFAULT_TOOL_RESULT_VIRTUALIZE_THRESHOLD,
 			minRetainedMessages: options.minRetainedMessages ?? DEFAULT_MIN_RETAINED_MESSAGES,

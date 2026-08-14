@@ -348,7 +348,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 						contextCapabilityOverrides,
 					);
 				},
-				keepRecentTokens: governorSettings.keepRecentTokens ?? settingsManager.getCompactionKeepRecentTokens(),
+				keepRecentTokens: governorSettings.keepRecentTokens,
 				toolResultVirtualizeThreshold: governorSettings.toolResultVirtualizeThreshold,
 			})
 		: undefined;
