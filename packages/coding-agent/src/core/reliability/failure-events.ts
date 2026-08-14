@@ -2,7 +2,7 @@
  * Normalized failure taxonomy.
  *
  * Failures become structured runtime events instead of arbitrary strings so the
- * future Recovery Engine (2.1.1) can attach cleanly. No autonomous recovery
+ * future Recovery Engine (2.2.1) can attach cleanly. No autonomous recovery
  * policy is implemented here — only classification and observability.
  */
 

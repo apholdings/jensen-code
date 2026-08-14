@@ -1,14 +1,18 @@
 /**
- * Reliability execution step — the single Jensen-owned path from raw model
- * output to validated execution and evidence recording.
+ * Reliability execution step — a Jensen-owned decode/validate/execute/record
+ * pipeline over raw model output.
  *
  * This is the authority boundary in code form: raw output is decoded into an
  * AgentAction, validated against the tool registry/boundary/policy, and only
  * then executed. Evidence is recorded by Jensen from the observed outcome.
  *
- * The live agent loop and the deterministic Reliability Suite both go through
- * this function, so adversarial behavior cannot bypass the kernel by taking a
- * different code path.
+ * The deterministic Reliability Suite drives the kernel through this function
+ * with a scripted model and tool harness. The LIVE agent loop integrates with
+ * the same decoder/validator/evidence/gate primitives through
+ * {@link ReliabilitySessionBridge} (wired by ReliabilitySessionController as
+ * Agent beforeToolCall/afterToolCall/onTurnEnd hooks) rather than through this
+ * function, so the live loop is not duplicated and adversarial behavior cannot
+ * bypass the kernel by taking a different code path.
  */
 
 import { decodeAction } from "./action-decoder.js";

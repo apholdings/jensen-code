@@ -25,6 +25,7 @@ import {
 	parseTasks,
 	parseTodoSnapshot,
 	SESSION_MEMORY_CUSTOM_TYPE,
+	SESSION_RELIABILITY_CUSTOM_TYPE,
 	SESSION_TASKS_CUSTOM_TYPE,
 	SESSION_TODO_ENGINE_CUSTOM_TYPE,
 	SESSION_TODOS_CUSTOM_TYPE,
@@ -1161,6 +1162,36 @@ export class SessionManager {
 			}
 		}
 		return [];
+	}
+
+	/**
+	 * Persist the Reliability Kernel mission document for the current session.
+	 *
+	 * Stored as an additive custom entry so existing sessions remain loadable and
+	 * compaction never destroys the authoritative mission state. Callers are
+	 * responsible for serializing the MissionRuntime document.
+	 */
+	appendReliabilityState(document: unknown): string {
+		return this.appendCustomEntry(SESSION_RELIABILITY_CUSTOM_TYPE, document);
+	}
+
+	/**
+	 * Return the latest Reliability Kernel mission document on the current branch,
+	 * or undefined when this session has no persisted reliability state.
+	 *
+	 * The payload is intentionally `unknown`: the reliability subsystem owns
+	 * schema validation and deserialization so a corrupt/foreign payload is
+	 * detected there without corrupting session loading.
+	 */
+	getLatestReliabilityState(): { data: unknown; entryId: string } | undefined {
+		const entries = this.getBranch();
+		for (let i = entries.length - 1; i >= 0; i--) {
+			const entry = entries[i];
+			if (entry.type === "custom" && entry.customType === SESSION_RELIABILITY_CUSTOM_TYPE) {
+				return { data: entry.data, entryId: entry.id };
+			}
+		}
+		return undefined;
 	}
 
 	/** Append a session info entry (e.g., display name). Returns entry id. */

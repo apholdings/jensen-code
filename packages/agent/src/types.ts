@@ -94,6 +94,36 @@ export interface AfterToolCallContext {
 	context: AgentContext;
 }
 
+/**
+ * Context passed to `onTurnEnd`.
+ *
+ * This fires when the model has finished a turn without requesting further tool
+ * calls (and there are no steering messages). It is the authoritative point at
+ * which a runtime-owned policy (for example a completion gate) may decide that
+ * the run should NOT stop and instead continue with another model turn.
+ */
+export interface TurnEndContext {
+	/** Messages accumulated in this run so far (prompts + assistant + tool results). */
+	messages: AgentMessage[];
+	/** The final assistant message for the turn that just ended (no tool calls). */
+	lastAssistantMessage: AssistantMessage;
+	/** Current agent context. */
+	context: AgentContext;
+}
+
+/**
+ * Result returned from `onTurnEnd`.
+ *
+ * - `{ continue: false }` or `undefined`: the run ends normally (`agent_end`).
+ * - `{ continue: true }`: the run does not end; if `message` is provided it is
+ *   injected as the next turn's prompt (e.g. a structured `FINALIZATION_REJECTED`
+ *   message), otherwise the loop simply continues.
+ */
+export interface TurnEndResult {
+	continue: boolean;
+	message?: AgentMessage;
+}
+
 export interface AgentLoopConfig extends SimpleStreamOptions {
 	model: Model<any>;
 
@@ -215,6 +245,17 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * The hook receives the agent abort signal and is responsible for honoring it.
 	 */
 	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
+
+	/**
+	 * Called when the model has finished a turn without requesting further tool
+	 * calls, right before the run would emit `agent_end`.
+	 *
+	 * Return `{ continue: true }` to keep the run alive (optionally injecting a
+	 * message for the next turn) so a runtime-owned policy — such as a completion
+	 * gate — can require additional work from the model. Return `undefined` or
+	 * `{ continue: false }` to allow the run to end.
+	 */
+	onTurnEnd?: (context: TurnEndContext) => Promise<TurnEndResult | undefined>;
 }
 
 /**

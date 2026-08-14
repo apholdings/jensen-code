@@ -15,6 +15,8 @@ export * from "./failure-events.js";
 export * from "./integration.js";
 export * from "./mission-contract-factory.js";
 export * from "./mission-runtime.js";
+export * from "./session-controller.js";
 export * from "./telemetry.js";
 export * from "./types.js";
 export * from "./verifier.js";
+export * from "./workspace-verification.js";

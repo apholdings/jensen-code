@@ -168,6 +168,10 @@ async function runLoop(
 	// Check for steering messages at start (user may have typed while waiting)
 	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
 
+	// Tracks the most recent assistant message so a turn-end policy (completion
+	// gate) can inspect the model's "finished" output before the run stops.
+	let lastAssistantMessage: AssistantMessage | undefined;
+
 	// Outer loop: continues when queued follow-up messages arrive after agent would stop
 	while (true) {
 		let hasMoreToolCalls = true;
@@ -194,6 +198,7 @@ async function runLoop(
 			// Stream assistant response
 			const message = await streamAssistantResponse(currentContext, config, signal, emit, streamFn);
 			newMessages.push(message);
+			lastAssistantMessage = message;
 
 			if (message.stopReason === "error" || message.stopReason === "aborted") {
 				await emit({ type: "turn_end", message, toolResults: [] });
@@ -220,12 +225,30 @@ async function runLoop(
 			pendingMessages = (await config.getSteeringMessages?.()) || [];
 		}
 
-		// Agent would stop here. Check for follow-up messages.
+		// Agent would stop here. Check for follow-up messages first: a queued
+		// user follow-up means the model is not truly "done" yet.
 		const followUpMessages = (await config.getFollowUpMessages?.()) || [];
 		if (followUpMessages.length > 0) {
 			// Set as pending so inner loop processes them
 			pendingMessages = followUpMessages;
 			continue;
+		}
+
+		// Model finished its turn without further tool calls and no follow-up is
+		// queued. Consult the turn-end policy hook (e.g. a completion gate) before
+		// the run is allowed to stop. The hook may inject a message and continue.
+		if (lastAssistantMessage) {
+			const turnEnd = await config.onTurnEnd?.({
+				messages: newMessages,
+				lastAssistantMessage,
+				context: currentContext,
+			});
+			if (turnEnd?.continue) {
+				if (turnEnd.message) {
+					pendingMessages = [turnEnd.message];
+				}
+				continue;
+			}
 		}
 
 		// No more messages, exit

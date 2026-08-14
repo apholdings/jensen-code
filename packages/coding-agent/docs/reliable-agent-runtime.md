@@ -25,6 +25,30 @@ flowchart TD
     Gate -->|accept| Completed[MISSION COMPLETED]
 ```
 
+### Production wiring (2.2.0)
+
+In 2.2.0 the kernel is authoritative in the real interactive runtime. There is
+no separate "normal Jensen" versus "Jensen with the Reliability Kernel" path:
+
+```mermaid
+flowchart TD
+    TUI[TUI / CLI] --> AgentSession[AgentSession]
+    AgentSession --> Bridge[ReliabilitySessionBridge]
+    Bridge --> Runtime[MissionRuntime]
+    Bridge --> Validation[Action Validation]
+    Bridge --> Evidence[Evidence Store]
+    Bridge --> Verification[Verification Engine]
+    Bridge --> Gate[Completion Gate]
+    AgentSession --> Loop[Agent Loop / Tool Executor]
+    Loop -->|beforeToolCall| Bridge
+    Loop -->|afterToolCall| Bridge
+    Loop -->|turn end| Gate
+```
+
+The model proposes actions and may propose finalization; Jensen owns tool
+authorization, mission state, evidence, verification, criterion state, and
+completion.
+
 ## Authority model
 
 | Actor | Authority |
@@ -133,10 +157,41 @@ Unverified acceptance criteria:
 
 ## Session / resume behavior
 
-The Mission Ledger is embedded in session-associated durable state. On resume,
-Jensen recovers the goal, constraints, criteria, criterion status, and evidence
-references without restarting from zero. Old sessions without a Mission Ledger
-remain valid and are not treated as corrupted.
+The Mission Ledger is embedded in session-associated durable state as an
+additive `session_reliability` session entry. On `jensen resume <SESSION_ID>`,
+Jensen restores the goal, constraints, criteria, criterion status, execution
+state, and evidence references from the persisted document — without restarting
+from zero and without asking the model to re-derive them. The session ID and
+mission ID both stay stable across resume. Old sessions without a Mission
+Ledger remain valid and are not treated as corrupted; they initialize the
+Reliability Kernel in governance mode.
+
+## Lifecycle
+
+```text
+session
+  → mission (created on task start, restored on resume)
+  → action (model proposes)
+  → validation (Jensen authorizes or blocks)
+  → execution (real tool runs)
+  → evidence (Jensen records the observed outcome)
+  → verification (deterministic checks for acceptance criteria)
+  → completion (Completion Gate accepts or rejects)
+  → persistence (mission state appended to the session)
+  → resume (mission state restored on `jensen resume <SESSION_ID>`)
+```
+
+A mission represents the durable user task/work unit; it is not recreated for
+every assistant turn.
+
+## Turn end vs mission end
+
+These are distinct. An assistant turn ends whenever the model stops requesting
+tool calls. The mission ends only when the Completion Gate accepts
+finalization. A model may print "Done." while required acceptance criteria
+remain unsatisfied; Jensen rejects that finalization and returns a structured
+`FINALIZATION_REJECTED` message so the model can continue. Rejections are
+bounded to prevent infinite loops.
 
 ## Local-model behavior
 
@@ -184,11 +239,28 @@ prove that the trusted runtime stays safe when the model misbehaves:
 - R14 dirty working tree preservation
 - R15 finalization rejection
 
+### Activation suite (2.2.0)
+
+Integration scenarios that drive the REAL `AgentSession` / agent loop with a
+scripted fake model:
+
+- A01 live `beforeToolCall` validation
+- A02 live `afterToolCall` evidence
+- A03 live finalization rejection
+- A04 live finalization pass
+- A05 session mission persistence
+- A06 explicit resume restores mission
+- A07 compaction preserves mission
+- A08 old session loads without reliability state
+- A09 boundary prevents real execution
+- A10 adversarial fake model through the production loop
+
 ## Future extension points
 
-- **Recovery Engine (2.1.1):** consumes the structured failure taxonomy and
-  `ActionValidationFailure.recoverable` flag for bounded, observable repair.
-- **Model Profiler (2.1.3):** populates the capability abstraction used to select
+- **Recovery Engine (2.2.1):** consumes the structured failure taxonomy and
+  `ActionValidationFailure.recoverable` flag for bounded, observable repair
+  (stagnation recovery, multi-strategy retry, model escalation).
+- **Model Profiler (2.2.2):** populates the capability abstraction used to select
   the strongest decoding route.
 - **Context Engine:** retrieves only the evidence references it needs rather than
   the full history.

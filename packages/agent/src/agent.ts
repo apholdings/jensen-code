@@ -29,6 +29,8 @@ import type {
 	StreamFn,
 	ThinkingLevel,
 	ToolExecutionMode,
+	TurnEndContext,
+	TurnEndResult,
 } from "./types.js";
 
 /**
@@ -111,6 +113,9 @@ export interface AgentOptions {
 
 	/** Called after a tool finishes executing, before final tool events are emitted. */
 	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
+
+	/** Called when the model has finished a turn without further tool calls, before `agent_end`. */
+	onTurnEnd?: (context: TurnEndContext) => Promise<TurnEndResult | undefined>;
 }
 
 export class Agent {
@@ -154,6 +159,7 @@ export class Agent {
 		context: AfterToolCallContext,
 		signal?: AbortSignal,
 	) => Promise<AfterToolCallResult | undefined>;
+	private _onTurnEnd?: (context: TurnEndContext) => Promise<TurnEndResult | undefined>;
 
 	constructor(opts: AgentOptions = {}) {
 		this._state = { ...this._state, ...opts.initialState };
@@ -171,6 +177,7 @@ export class Agent {
 		this._toolExecution = opts.toolExecution ?? "parallel";
 		this._beforeToolCall = opts.beforeToolCall;
 		this._afterToolCall = opts.afterToolCall;
+		this._onTurnEnd = opts.onTurnEnd;
 	}
 
 	/**
@@ -253,6 +260,10 @@ export class Agent {
 			| undefined,
 	) {
 		this._afterToolCall = value;
+	}
+
+	setOnTurnEnd(value: ((context: TurnEndContext) => Promise<TurnEndResult | undefined>) | undefined) {
+		this._onTurnEnd = value;
 	}
 
 	get state(): AgentState {
@@ -553,6 +564,7 @@ export class Agent {
 			toolExecution: this._toolExecution,
 			beforeToolCall: this._beforeToolCall,
 			afterToolCall: this._afterToolCall,
+			onTurnEnd: this._onTurnEnd,
 			convertToLlm: this.convertToLlm,
 			transformContext: this.transformContext,
 			getApiKey: this.getApiKey,

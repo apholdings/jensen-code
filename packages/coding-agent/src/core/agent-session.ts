@@ -106,6 +106,10 @@ import {
 import type { BashExecutionMessage, CustomMessage } from "./messages.js";
 import type { ModelRegistry } from "./model-registry.js";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.js";
+import type { MissionDefinitionInput } from "./reliability/mission-contract-factory.js";
+import type { MissionRuntime } from "./reliability/mission-runtime.js";
+import { ReliabilitySessionController } from "./reliability/session-controller.js";
+import { createWorkspaceVerificationExecutor } from "./reliability/workspace-verification.js";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.js";
 import type {
 	BranchSummaryEntry,
@@ -390,6 +394,9 @@ export class AgentSession {
 	private _delegatedTasks: DelegatedTask[] = [];
 	private _tasks: Task[] = [];
 
+	// Reliability Kernel (2.2.0): active for normal agent sessions by default.
+	private _reliability: ReliabilitySessionController | undefined = undefined;
+
 	// Extension system
 	private _extensionRunner: ExtensionRunner | undefined = undefined;
 	private _turnIndex = 0;
@@ -437,10 +444,21 @@ export class AgentSession {
 		this._cavemanLevel = config.cavemanLevel ?? "off";
 		this._baseToolsOverride = config.baseToolsOverride;
 
+		// Reliability Kernel (2.2.0): initialize before tool hooks so the bridge is
+		// authoritative for every tool call and turn end. Restores a persisted
+		// mission on resume, otherwise starts in governance mode.
+		this._reliability = new ReliabilitySessionController({
+			cwd: this._cwd,
+			sessionManager: this.sessionManager,
+			verificationExecutor: createWorkspaceVerificationExecutor({ cwd: this._cwd }),
+			getTools: () => this.agent.state.tools,
+		});
+
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 		this._installAgentToolHooks();
+		this._installReliabilityTurnEndHook();
 
 		const restoredContext = this.sessionManager.buildSessionContext();
 		this._todos = restoredContext.todos as TodoItem[];
@@ -469,6 +487,17 @@ export class AgentSession {
 	 */
 	private _installAgentToolHooks(): void {
 		this.agent.setBeforeToolCall(async ({ toolCall, args }) => {
+			// Reliability Kernel (2.2.0): validate the requested action against the
+			// tool registry and mission policy before execution. Invalid actions are
+			// blocked and returned as structured failures to the model.
+			const reliability = this._reliability;
+			if (reliability) {
+				const decision = await reliability.beforeToolCall(toolCall);
+				if (decision.block) {
+					return { block: true, reason: decision.reason };
+				}
+			}
+
 			const runner = this._extensionRunner;
 			if (!runner?.hasHandlers("tool_call")) {
 				return undefined;
@@ -492,6 +521,10 @@ export class AgentSession {
 		});
 
 		this.agent.setAfterToolCall(async ({ toolCall, args, result, isError }) => {
+			// Reliability Kernel (2.2.0): record the observed real tool outcome as
+			// authoritative evidence before any extension override is applied.
+			this._reliability?.afterToolCall(toolCall, isError);
+
 			if (toolCall.name === "todo_write" && !isError) {
 				const details = result.details as Record<string, unknown> | undefined;
 				if (details?.changed === true || details?.todoWriteAlreadyApplied === true) {
@@ -524,6 +557,74 @@ export class AgentSession {
 				details: hookResult.details,
 			};
 		});
+	}
+
+	/**
+	 * Install the Reliability Kernel turn-end hook.
+	 *
+	 * When a mission is active, "the model finished its turn without further tool
+	 * calls" is routed through the Completion Gate. A rejected finalization keeps
+	 * the run alive with a structured FINALIZATION_REJECTED message so the model
+	 * gets another bounded turn.
+	 */
+	private _installReliabilityTurnEndHook(): void {
+		this.agent.setOnTurnEnd(async () => {
+			if (!this._reliability) return undefined;
+			const result = await this._reliability.onTurnEnd();
+			return result.continue ? { continue: true, message: result.message } : { continue: false };
+		});
+	}
+
+	// =========================================================================
+	// Reliability Kernel public API
+	// =========================================================================
+
+	/** Whether the Reliability Kernel has an active (or restored) mission. */
+	get reliabilityActive(): boolean {
+		return this._reliability?.isActive ?? false;
+	}
+
+	/** Active mission id, if any. */
+	get missionId(): string | undefined {
+		return this._reliability?.missionId;
+	}
+
+	/** Active mission phase, if any. */
+	get reliabilityPhase(): ReliabilitySessionController["phase"] {
+		return this._reliability?.phase;
+	}
+
+	/** Read-only access to the active MissionRuntime (for tooling/tests). */
+	get reliabilityRuntime(): MissionRuntime | undefined {
+		return this._reliability?.runtime;
+	}
+
+	/** True when a persisted reliability document failed to deserialize (kept intact). */
+	get corruptReliabilityState(): boolean {
+		return this._reliability?.corruptPersistedState ?? false;
+	}
+
+	/** Current acceptance-criterion view for the active mission. */
+	getReliabilityCriteria(): ReturnType<ReliabilitySessionController["criterionView"]> {
+		return this._reliability?.criterionView() ?? [];
+	}
+
+	/** Compact authoritative mission state for model context, if active. */
+	getMissionSummary(): string | undefined {
+		return this._reliability?.summarizeForModel();
+	}
+
+	/** Start (or replace) the governed mission for this session. */
+	startMission(definition: MissionDefinitionInput): void {
+		this._reliability?.startMission(definition);
+		this._applyReliabilityContext();
+	}
+
+	/** Inject the current authoritative mission state into the next model turn. */
+	private _applyReliabilityContext(): void {
+		if (this._reliability?.isActive) {
+			this.agent.setDynamicPrompt(this._reliability.summarizeForModel());
+		}
 	}
 
 	// =========================================================================
@@ -1931,6 +2032,11 @@ export class AgentSession {
 		if (this._toolRegistry.has("todo_write") && !this.getActiveToolNames().includes("todo_write")) {
 			this.setActiveToolsByName([...this.getActiveToolNames(), "todo_write"]);
 		}
+
+		// Reliability Kernel: reset per-run finalization budget and inject the
+		// authoritative mission state into this turn's context.
+		this._reliability?.resetRun();
+		this._applyReliabilityContext();
 
 		await this.agent.prompt(messages);
 		await this.waitForRetry();

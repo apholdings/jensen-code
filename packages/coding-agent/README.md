@@ -485,8 +485,22 @@ model cannot self-certify completion.
 
 **The model proposes completion. Jensen verifies completion.**
 
+### 2.2.0 activation
+
+In 2.2.0 the Reliability Kernel is **automatic** for normal Jensen agent
+sessions. Opening Jensen normally means the kernel is active: real tool calls
+flow through reliability hooks, real tool outcomes become authoritative
+evidence, the Completion Gate controls live completion, and mission state
+persists with the session.
+
+An assistant turn ending is **not** the same as a mission completing. When a
+mission is active, the model "stopping" is routed through the Completion Gate;
+a premature "done" produces a structured `FINALIZATION_REJECTED` and gives the
+model a bounded chance to continue. `jensen resume <SESSION_ID>` restores the
+same mission with its criterion and evidence state intact.
+
 See [docs/reliable-agent-runtime.md](docs/reliable-agent-runtime.md) for the
-architecture, authority model, and extension points.
+architecture, authority model, lifecycle, and extension points.
 
 ---
 

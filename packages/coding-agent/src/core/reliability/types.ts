@@ -94,7 +94,7 @@ export type ActionValidationFailureCategory =
 
 /**
  * Structured validation failure. Never executes the tool. This is the API
- * foundation for the future Recovery Engine (2.1.1).
+ * foundation for the future Recovery Engine (2.2.1).
  */
 export interface ActionValidationFailure {
 	category: ActionValidationFailureCategory;
