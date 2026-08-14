@@ -9,6 +9,12 @@ import {
 import { getAgentDir, getDocsPath } from "../config.js";
 import { AgentSession } from "./agent-session.js";
 import { AuthStorage } from "./auth-storage.js";
+import {
+	type ContextCapabilityOverrides,
+	ContextGovernor,
+	EvidenceFileStore,
+	resolveContextCapability,
+} from "./context-runtime/index.js";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
 import type { ExtensionRunner, LoadExtensionsResult, ToolDefinition } from "./extensions/index.js";
 import { convertToLlm } from "./messages.js";
@@ -316,6 +322,37 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
 
+	// Long-Horizon Context Virtualization (2.5.0). The governor is the preflight
+	// boundary that keeps every request within the safe input budget. It is
+	// wired into transformContext below and its checkpoint provider is bound to
+	// the AgentSession after construction.
+	const governorSettings = settingsManager.getContextGovernorSettings();
+	const contextCapabilityOverrides: ContextCapabilityOverrides = {
+		configuredContextWindow: governorSettings.configuredContextWindow,
+		reservedOutputTokens: governorSettings.reservedOutputTokens,
+		safetyReserveTokens: governorSettings.safetyReserveTokens,
+		softPressureRatio: governorSettings.softPressureRatio,
+	};
+	const contextGovernor = governorSettings.enabled
+		? new ContextGovernor({
+				capability: resolveContextCapability(
+					{ modelContextWindow: model?.contextWindow ?? 0, modelMaxTokens: model?.maxTokens ?? 8192 },
+					contextCapabilityOverrides,
+				),
+				archive: new EvidenceFileStore(join(agentDir, "context-evidence")),
+				capabilityProvider: () => {
+					const currentModel = agent.state.model;
+					if (!currentModel?.contextWindow) return undefined as never;
+					return resolveContextCapability(
+						{ modelContextWindow: currentModel.contextWindow, modelMaxTokens: currentModel.maxTokens ?? 8192 },
+						contextCapabilityOverrides,
+					);
+				},
+				keepRecentTokens: governorSettings.keepRecentTokens ?? settingsManager.getCompactionKeepRecentTokens(),
+				toolResultVirtualizeThreshold: governorSettings.toolResultVirtualizeThreshold,
+			})
+		: undefined;
+
 	agent = new Agent({
 		initialState: {
 			systemPrompt: "",
@@ -340,8 +377,17 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		sessionId: sessionManager.getSessionId(),
 		transformContext: async (messages) => {
 			const runner = extensionRunnerRef.current;
-			if (!runner) return messages;
-			return runner.emitContext(messages);
+			const withExtensions = runner ? await runner.emitContext(messages) : messages;
+			if (!contextGovernor) return withExtensions;
+			const currentModel = agent.state.model;
+			if (!currentModel?.contextWindow) return withExtensions;
+			const result = await contextGovernor.govern({
+				systemPrompt: agent.state.systemPrompt,
+				dynamicPrompt: agent.state.dynamicPrompt,
+				messages: withExtensions,
+				tools: agent.state.tools,
+			});
+			return result.assembly.messages;
 		},
 		steeringMode: settingsManager.getSteeringMode(),
 		followUpMode: settingsManager.getFollowUpMode(),
@@ -403,6 +449,10 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		extensionRunnerRef,
 	});
 	const extensionsResult = resourceLoader.getExtensions();
+
+	// Bind the governor's checkpoint provider to the session's durable-projection
+	// checkpoint so a rollover rehydrates operational state across the SAME mission.
+	contextGovernor?.setCheckpointProvider(() => session.buildMissionContextCheckpoint());
 
 	return {
 		session,

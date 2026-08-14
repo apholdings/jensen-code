@@ -51,6 +51,11 @@ import {
 	prepareCompaction,
 	shouldCompact,
 } from "./compaction/index.js";
+import {
+	createMissionContextCheckpoint,
+	type FindingRecord,
+	type MissionContextCheckpoint,
+} from "./context-runtime/index.js";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
 import {
 	buildDelegatedWorkSummary,
@@ -298,6 +303,9 @@ export interface SessionStats {
 /** Standard thinking levels */
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high"];
 
+/** Bounded provider-overflow recovery attempts (Phase P). */
+const MAX_OVERFLOW_RECOVERY_ATTEMPTS = 3;
+
 /** Thinking levels including xhigh (for supported models) */
 const THINKING_LEVELS_WITH_XHIGH: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
 
@@ -367,7 +375,7 @@ export class AgentSession {
 	// Compaction state
 	private _compactionAbortController: AbortController | undefined = undefined;
 	private _autoCompactionAbortController: AbortController | undefined = undefined;
-	private _overflowRecoveryAttempted = false;
+	private _overflowRecoveryCount = 0;
 
 	// Branch summarization state
 	private _branchSummaryAbortController: AbortController | undefined = undefined;
@@ -614,6 +622,83 @@ export class AgentSession {
 		return this._reliability?.summarizeForModel();
 	}
 
+	/**
+	 * Build a durable-projection mission context checkpoint (L2 warm memory).
+	 *
+	 * This is a bounded, deterministic projection over already-durable state —
+	 * the Reliability Kernel mission (objective/constraints/criteria/failures),
+	 * session memory, todos, tasks, and latest compaction file operations. It is
+	 * used by the Context Governor to rehydrate operational state across a
+	 * rollover and never carries completion authority.
+	 */
+	buildMissionContextCheckpoint(): MissionContextCheckpoint | undefined {
+		const runtime = this._reliability?.runtime;
+		const missionId = this._reliability?.missionId ?? this.sessionManager.getSessionId();
+		if (!missionId) return undefined;
+
+		const constraints: string[] = [];
+		if (runtime) {
+			for (const c of runtime.constraints) constraints.push(`${c.id}: ${c.statement}`);
+		}
+
+		const completedSteps: string[] = [];
+		const pendingSteps: string[] = [];
+		for (const todo of this._todos) {
+			const text = todo.status === "in_progress" ? todo.activeForm : todo.content;
+			if (todo.status === "completed") completedSteps.push(todo.content);
+			else pendingSteps.push(text);
+		}
+
+		const nextActions: string[] = [];
+		for (const task of this._tasks) {
+			if (task.status === "in_progress") nextActions.push(task.activeForm ?? task.subject);
+			else if (task.status === "pending") nextActions.push(task.subject);
+		}
+
+		// Bounded: keep the checkpoint compact by construction.
+		const findings: FindingRecord[] = this._memoryItems.slice(0, 24).map((item) => ({
+			subject: item.key,
+			detail: item.value,
+		}));
+
+		const activeFiles = this._latestCompactionFileLists();
+
+		const blockers: string[] = [];
+		if (runtime) {
+			for (const failure of runtime.failures.slice(-8)) {
+				if (failure.category === "CONTEXT_REQUIRED" || failure.category === "FINALIZATION_REJECTED") {
+					blockers.push(failure.message);
+				}
+			}
+		}
+
+		return createMissionContextCheckpoint(missionId, {
+			objective: runtime?.goal ?? this.getMissionSummary() ?? "",
+			constraints,
+			decisions: [],
+			plan: "",
+			completedSteps,
+			pendingSteps,
+			activeFiles,
+			findings,
+			evidenceRefs: [],
+			testState: {},
+			blockers,
+			nextActions: nextActions.slice(0, 12),
+		});
+	}
+
+	private _latestCompactionFileLists(): string[] {
+		const branch = this.sessionManager.getBranch();
+		const latest = getLatestCompactionEntry(branch);
+		if (!latest) return [];
+		const details = latest.details as { readFiles?: string[]; modifiedFiles?: string[] } | undefined;
+		const files = new Set<string>();
+		for (const f of details?.readFiles ?? []) files.add(f);
+		for (const f of details?.modifiedFiles ?? []) files.add(f);
+		return [...files].slice(0, 64);
+	}
+
 	/** Start (or replace) the governed mission for this session. */
 	startMission(definition: MissionDefinitionInput): void {
 		this._reliability?.startMission(definition);
@@ -693,7 +778,7 @@ export class AgentSession {
 		// When a user message starts, check if it's from either queue and remove it BEFORE emitting
 		// This ensures the UI sees the updated queue state
 		if (event.type === "message_start" && event.message.role === "user") {
-			this._overflowRecoveryAttempted = false;
+			this._overflowRecoveryCount = 0;
 			const messageText = this._getUserMessageText(event.message);
 			if (messageText) {
 				// Check steering queue first
@@ -751,7 +836,7 @@ export class AgentSession {
 
 				const assistantMsg = event.message as AssistantMessage;
 				if (assistantMsg.stopReason !== "error") {
-					this._overflowRecoveryAttempted = false;
+					this._overflowRecoveryCount = 0;
 				}
 
 				// Reset retry counter immediately on successful assistant response
@@ -2812,19 +2897,20 @@ export class AgentSession {
 
 		// Case 1: Overflow - LLM returned context overflow error
 		if (sameModel && isContextOverflow(assistantMessage, contextWindow)) {
-			if (this._overflowRecoveryAttempted) {
+			if (this._overflowRecoveryCount >= MAX_OVERFLOW_RECOVERY_ATTEMPTS) {
 				this._emit({
 					type: "auto_compaction_end",
 					result: undefined,
 					aborted: false,
 					willRetry: false,
 					errorMessage:
-						"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
+						`Context overflow recovery failed after ${MAX_OVERFLOW_RECOVERY_ATTEMPTS} verified compact-and-retry attempts. ` +
+						"The working set still exceeds the provider's effective context. Reduce tools, shrink the system prompt, or configure a larger context window.",
 				});
 				return;
 			}
 
-			this._overflowRecoveryAttempted = true;
+			this._overflowRecoveryCount += 1;
 			// Remove the error message from agent state (it IS saved to session for history,
 			// but we don't want it in context for the retry)
 			const messages = this.agent.state.messages;

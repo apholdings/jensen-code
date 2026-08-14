@@ -17,6 +17,21 @@ export interface BranchSummarySettings {
 	skipPrompt?: boolean; // default: false - when true, skips "Summarize branch?" prompt and defaults to no summary
 }
 
+/**
+ * Long-Horizon Context Virtualization (2.5.0). Governs the preflight context
+ * budget: input + reserved output + safety reserve must never exceed the
+ * configured context window.
+ */
+export interface ContextGovernorSettings {
+	enabled?: boolean; // default: true
+	configuredContextWindow?: number; // authoritative when API cannot report it
+	reservedOutputTokens?: number;
+	safetyReserveTokens?: number;
+	softPressureRatio?: number;
+	keepRecentTokens?: number;
+	toolResultVirtualizeThreshold?: number;
+}
+
 export interface RetrySettings {
 	enabled?: boolean; // default: true
 	maxRetries?: number; // default: 3
@@ -91,6 +106,7 @@ export interface Settings {
 	followUpMode?: "all" | "one-at-a-time";
 	theme?: string;
 	compaction?: CompactionSettings;
+	contextGovernor?: ContextGovernorSettings;
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettings;
 	hideThinkingBlock?: boolean;
@@ -699,6 +715,31 @@ export class SettingsManager {
 			enabled: this.getCompactionEnabled(),
 			reserveTokens: this.getCompactionReserveTokens(),
 			keepRecentTokens: this.getCompactionKeepRecentTokens(),
+		};
+	}
+
+	getContextGovernorEnabled(): boolean {
+		return this.settings.contextGovernor?.enabled ?? true;
+	}
+
+	getContextGovernorSettings(): {
+		enabled: boolean;
+		configuredContextWindow?: number;
+		reservedOutputTokens?: number;
+		safetyReserveTokens?: number;
+		softPressureRatio?: number;
+		keepRecentTokens?: number;
+		toolResultVirtualizeThreshold?: number;
+	} {
+		const s = this.settings.contextGovernor ?? {};
+		return {
+			enabled: this.getContextGovernorEnabled(),
+			configuredContextWindow: s.configuredContextWindow,
+			reservedOutputTokens: s.reservedOutputTokens,
+			safetyReserveTokens: s.safetyReserveTokens,
+			softPressureRatio: s.softPressureRatio,
+			keepRecentTokens: s.keepRecentTokens,
+			toolResultVirtualizeThreshold: s.toolResultVirtualizeThreshold,
 		};
 	}
 
