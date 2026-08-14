@@ -387,6 +387,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				messages: withExtensions,
 				tools: agent.state.tools,
 			});
+			if (process.env.JENSEN_CONTEXT_TELEMETRY) {
+				process.stderr.write(`[context-governor] ${JSON.stringify(result.diagnostics)}\n`);
+			}
 			return result.assembly.messages;
 		},
 		steeringMode: settingsManager.getSteeringMode(),
