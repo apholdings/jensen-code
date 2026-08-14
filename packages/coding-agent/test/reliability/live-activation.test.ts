@@ -1,5 +1,5 @@
 /**
- * Live Reliability Kernel activation tests (2.1.1).
+ * Live Reliability Kernel activation tests (2.2.0).
  *
  * These tests drive the REAL AgentSession + agent loop with a scripted fake
  * stream (no real LLM) and real tools, proving that the Reliability Kernel is

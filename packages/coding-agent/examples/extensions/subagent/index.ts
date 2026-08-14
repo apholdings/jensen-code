@@ -11,10 +11,18 @@ import type { Message } from "@apholdings/jensen-ai";
 import { StringEnum } from "@apholdings/jensen-ai";
 import {
 	APP_NAME,
+	createMissionRequest,
 	createSubagentContextPacket,
 	type ExtensionAPI,
 	type ExtensionContext,
 	getMarkdownTheme,
+	MissionExecutionService,
+	type MissionRequest,
+	type MissionState,
+	newMissionId,
+	ProcessMissionExecutor,
+	type ProcessMissionLaunch,
+	type ProcessMissionOutcome,
 	type ResolvedSubagentInvocation,
 	resolveSubagentInvocation,
 	type Theme,
@@ -75,6 +83,14 @@ interface SingleResult {
 	failureStage?: FailureStage;
 	diagnosticMessage?: string;
 	invocation?: SubagentInvocation;
+	/**
+	 * Canonical mission lifecycle state (First-Class Missions 2.3.0). This is
+	 * the authoritative classification; `exitCode` is only executor diagnostics.
+	 */
+	missionState?: MissionState;
+	/** True only when missionState === "SUCCEEDED". Subagent children are PARTIAL
+	 *  unless verified, because the legacy child path cannot prove mission success. */
+	success?: boolean;
 }
 
 interface SubagentDetails {
@@ -461,6 +477,25 @@ function getFailureDiagnostic(result: SingleResult): string {
 
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
+/** Explicit structured parent mission identity (never PID-derived). */
+interface ParentMissionIdentity {
+	missionId: string;
+	depth: number;
+}
+
+/**
+ * Derive the canonical mission lifecycle state for a subagent child from its
+ * observed outcome. A raw exit code of 0 is classified as PARTIAL
+ * ("execution completed but unverified"), never SUCCEEDED: the legacy child
+ * path cannot prove mission-level success.
+ */
+function deriveMissionState(result: SingleResult): MissionState {
+	if (result.stopReason === "aborted") return "CANCELLED";
+	if (result.failureStage === "launch") return "CRASHED";
+	if (result.failureStage) return "FAILED";
+	return "PARTIAL";
+}
+
 async function runSingleAgent(
 	defaultCwd: string,
 	agents: AgentConfig[],
@@ -474,6 +509,7 @@ async function runSingleAgent(
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
 	runSubagent: SubagentRunner,
 	modelRegistry: ExtensionContext["modelRegistry"],
+	parentMission: ParentMissionIdentity,
 ): Promise<SingleResult> {
 	const agent = agents.find((candidate) => candidate.name === agentName);
 
@@ -492,6 +528,8 @@ async function runSingleAgent(
 			diagnosticMessage: discoveryError
 				? formatDiscoveryError(discoveryError)
 				: getUnknownAgentDiagnostic(agentName, agents),
+			missionState: "FAILED",
+			success: false,
 		};
 	}
 
@@ -521,16 +559,31 @@ async function runSingleAgent(
 
 	try {
 		let resolvedInvocation: ResolvedSubagentInvocation;
+		let missionRequest: MissionRequest;
 		try {
+			// First-Class Missions (2.3.0): build an explicit child MissionRequest.
+			// Identity is structured (missionId + parentMissionId + depth), never
+			// derived from PID or process state.
+			missionRequest = createMissionRequest({
+				parent: parentMission,
+				objective: task,
+				agent: agentName,
+				executionMode: "execute",
+				acceptanceCriteria: [],
+			});
 			resolvedInvocation = resolveSubagentInvocation({
 				requestedAgent: agentName,
-				parentRunId: `subagent-parent-${process.pid}`,
+				parentRunId: missionRequest.parentMissionId ?? missionRequest.missionId,
+				childRunId: missionRequest.missionId,
 				modelRegistry,
 				source: agent.source === "project" ? "workspace" : "user",
 			});
+			currentResult.missionState = "RUNNING";
 		} catch (error) {
 			currentResult.failureStage = "lookup";
 			currentResult.diagnosticMessage = error instanceof Error ? error.message : String(error);
+			currentResult.missionState = "FAILED";
+			currentResult.success = false;
 			return currentResult;
 		}
 		const invocation = buildSubagentInvocation(defaultCwd, agent, task, cwd, resolvedInvocation);
@@ -553,24 +606,56 @@ async function runSingleAgent(
 		invocation.args[invocation.args.length - 1] =
 			`Context packet (JSON): ${JSON.stringify(contextPacket)}\nTask: ${task}`;
 		invocation.displayCommand = [invocation.command, ...invocation.args].join(" ");
-		const runResult = await runSubagent({
-			invocation,
-			agent,
-			resolvedInvocation,
-			signal,
-			onMessage: (message) => {
-				currentResult.messages.push(message);
-				applyAssistantUsage(currentResult, message);
-				emitUpdate();
-			},
+
+		// First-Class Missions (2.3.0): route the real subprocess execution
+		// through the ProcessMissionExecutor seam. The legacy SubagentRunner is
+		// now only the harness the executor drives (bounded compatibility adapter).
+		const harness = (launch: ProcessMissionLaunch, launchSignal?: AbortSignal): Promise<ProcessMissionOutcome> =>
+			new Promise((resolve) => {
+				runSubagent({
+					invocation: {
+						command: launch.command,
+						args: [...launch.args],
+						cwd: launch.cwd,
+						displayCommand: [launch.command, ...launch.args].join(" "),
+					},
+					agent,
+					resolvedInvocation,
+					signal: launchSignal ?? signal,
+					onMessage: (message) => {
+						currentResult.messages.push(message);
+						applyAssistantUsage(currentResult, message);
+						emitUpdate();
+					},
+				}).then((runResult) =>
+					resolve({
+						exitCode: runResult.exitCode,
+						stdout: "",
+						stderr: runResult.stderr,
+						launchError: runResult.launchError,
+					}),
+				);
+			});
+
+		const executor = new ProcessMissionExecutor({
+			executorId: "subagent-process",
+			buildLaunch: () => ({
+				command: invocation.command,
+				args: [...invocation.args],
+				cwd: invocation.cwd,
+			}),
+			harness,
 		});
+		const missionService = new MissionExecutionService();
+		missionService.register(executor);
+		const missionResult = await missionService.execute(missionRequest, { executorId: "subagent-process", signal });
 
-		currentResult.exitCode = runResult.exitCode;
-		currentResult.stderr = runResult.stderr;
+		currentResult.exitCode = missionResult.executorDiagnostics.processExitCode ?? -1;
+		currentResult.stderr = missionResult.executorDiagnostics.stderr ?? "";
 
-		if (runResult.launchError) {
+		if (missionResult.executorDiagnostics.launchError) {
 			currentResult.failureStage = "launch";
-			currentResult.diagnosticMessage = `Failed to launch child process: ${runResult.launchError}. Command: ${invocation.displayCommand}`;
+			currentResult.diagnosticMessage = `Failed to launch child process: ${missionResult.executorDiagnostics.launchError}. Command: ${invocation.displayCommand}`;
 		}
 
 		if (currentResult.stopReason === "error" || currentResult.errorMessage) {
@@ -604,6 +689,11 @@ async function runSingleAgent(
 				currentResult.diagnosticMessage = error instanceof Error ? error.message : String(error);
 			}
 		}
+
+		// First-Class Missions (2.3.0): authoritative lifecycle classification.
+		// exitCode is only executor diagnostics; missionState tells the truth.
+		currentResult.missionState = deriveMissionState(currentResult);
+		currentResult.success = currentResult.missionState === "SUCCEEDED";
 
 		return currentResult;
 	} finally {
@@ -700,6 +790,10 @@ export function createSubagentTool(options?: {
 			const agents = discovery.agents;
 			const confirmProjectAgents = params.confirmProjectAgents ?? true;
 
+			// First-Class Missions (2.3.0): one explicit root delegation mission per
+			// subagent tool invocation. Child missions derive their identity from it.
+			const parentMission: ParentMissionIdentity = { missionId: newMissionId(), depth: 0 };
+
 			const hasChain = (params.chain?.length ?? 0) > 0;
 			const hasTasks = (params.tasks?.length ?? 0) > 0;
 			const hasSingle = Boolean(params.agent && params.task);
@@ -773,6 +867,7 @@ export function createSubagentTool(options?: {
 						makeDetails,
 						runSubagent,
 						ctx.modelRegistry,
+						parentMission,
 					);
 					results.push(result);
 
@@ -860,24 +955,30 @@ export function createSubagentTool(options?: {
 						makeDetails,
 						runSubagent,
 						ctx.modelRegistry,
+						parentMission,
 					);
 					allResults[index] = result;
 					emitParallelUpdate();
 					return result;
 				});
 
-				const successCount = results.filter((result) => result.exitCode === 0 && !result.failureStage).length;
+				const completedCount = results.filter((result) => result.exitCode === 0 && !result.failureStage).length;
+				const allCompleted = completedCount === results.length;
 				const summaries = results.map((result) => {
 					const output = extractFinalOutput(result.messages).text;
 					const previewSource = output || getFailureDiagnostic(result);
 					const preview = previewSource.slice(0, 100) + (previewSource.length > 100 ? "..." : "");
-					return `[${result.agent}] ${result.exitCode === 0 && !result.failureStage ? "completed" : "failed"}: ${preview}`;
+					const state =
+						result.missionState ?? (result.exitCode === 0 && !result.failureStage ? "PARTIAL" : "FAILED");
+					return `[${result.agent}] ${state.toLowerCase()}: ${preview}`;
 				});
 				return {
 					content: textContent(
-						`Parallel: ${successCount}/${results.length} succeeded\n\n${summaries.join("\n\n")}`,
+						`Parallel: ${completedCount}/${results.length} completed (execution, unverified)\n\n${summaries.join("\n\n")}`,
 					),
 					details: makeDetails(results),
+					// Structured failure signal: a mixed/failed set is never clean success.
+					isError: !allCompleted,
 				};
 			}
 
@@ -901,6 +1002,7 @@ export function createSubagentTool(options?: {
 					makeDetails,
 					runSubagent,
 					ctx.modelRegistry,
+					parentMission,
 				);
 				if (
 					result.exitCode !== 0 ||
