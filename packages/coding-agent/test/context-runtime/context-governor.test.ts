@@ -460,3 +460,44 @@ describe("TEST N — corrupt checkpoint", () => {
 		expect(() => result.diagnostics).toBeTruthy();
 	});
 });
+
+describe("TEST O — evidence refs survive rollover", () => {
+	it("archived evidence refs are carried into the rollover checkpoint preamble", async () => {
+		const cap = capability(2048, 512);
+		const archive = new InMemoryEvidenceArchive();
+		const governor = new ContextGovernor({
+			capability: cap,
+			archive,
+			keepRecentTokens: 96,
+			minRetainedMessages: 2,
+		});
+
+		// First govern: virtualize one large tool result.
+		const big = pad(1500);
+		const first = await governor.govern({
+			systemPrompt: "sys",
+			messages: [user("run"), toolResult("call_1", "bash", big), assistant("ok")],
+		});
+		expect(first.diagnostics.evidenceIdsArchived.length).toBe(1);
+		const refs = governor.getArchivedEvidenceRefs();
+		expect(refs).toHaveLength(1);
+		expect(refs[0]!.evidenceId).toBe(first.diagnostics.evidenceIdsArchived[0]);
+
+		// Bind a checkpoint that carries the refs (the same wiring used by the SDK).
+		governor.setCheckpointProvider(() =>
+			createMissionContextCheckpoint("mission_o", { evidenceRefs: governor.getArchivedEvidenceRefs() }),
+		);
+
+		// Second govern: force a rollover with enough accumulated messages.
+		const messages: AgentMessage[] = [];
+		for (let i = 0; i < 40; i++) messages.push(user(pad(80)), assistant(pad(80)));
+		const second = await governor.govern({ systemPrompt: "sys", messages });
+		expect(second.diagnostics.rolloverOccurred).toBe(true);
+
+		const preamble = second.assembly.messages.find(
+			(m) => (m as { customType?: string }).customType === "mission_context_checkpoint",
+		);
+		expect(preamble).toBeDefined();
+		expect((preamble as { content: string }).content).toContain(refs[0]!.evidenceId);
+	});
+});

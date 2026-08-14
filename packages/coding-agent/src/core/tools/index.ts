@@ -92,6 +92,10 @@ export {
 	type ReadToolOptions,
 	readTool,
 } from "./read.js";
+export {
+	createRetrieveEvidenceTool,
+	type RetrieveEvidenceInput,
+} from "./retrieve-evidence.js";
 export { TodoLoopGuard } from "./todo-loop-guard.js";
 export { createTodoReadTool, type TodoReadInput, todoReadTool } from "./todo-read.js";
 export { createTodoUpdateTool, type TodoUpdateInput, todoUpdateTool } from "./todo-update.js";
@@ -141,6 +145,7 @@ import { memoryWriteTool } from "./memory-write.js";
 import { createPowerShellTool, type PowerShellToolOptions, powershellTool } from "./powershell.js";
 import { createProcessManagerTool, type ProcessManagerToolOptions, processManagerTool } from "./process-manager.js";
 import { createReadTool, type ReadToolOptions, readTool } from "./read.js";
+import { retrieveEvidenceTool } from "./retrieve-evidence.js";
 import { todoReadTool } from "./todo-read.js";
 import { todoUpdateTool } from "./todo-update.js";
 import { todoWriteTool } from "./todo-write.js";
@@ -213,6 +218,7 @@ export const allTools = withEffectsRecord({
 	todo_read: todoReadTool,
 	todo_update: todoUpdateTool,
 	memory_write: memoryWriteTool,
+	retrieve_evidence: retrieveEvidenceTool,
 	grep: grepTool,
 	find: findTool,
 	ls: lsTool,

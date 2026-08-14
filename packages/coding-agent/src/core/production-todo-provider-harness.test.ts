@@ -386,6 +386,7 @@ describe("production todo/provider harness", () => {
 				"edit",
 				"memory_write",
 				"read",
+				"retrieve_evidence",
 				"todo_read",
 				"todo_update",
 				"todo_write",

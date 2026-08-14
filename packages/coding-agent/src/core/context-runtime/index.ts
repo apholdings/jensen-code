@@ -42,6 +42,17 @@ export {
 	redactSecrets,
 } from "./evidence-archive.js";
 export {
+	clampEvidencePageLimit,
+	DEFAULT_EVIDENCE_PAGE_CHARS,
+	type EvidenceIntegrity,
+	type EvidenceRetrievalMetadata,
+	type EvidenceRetrievalOptions,
+	type EvidenceRetrievalResult,
+	type EvidenceRetrievalStatus,
+	MAX_EVIDENCE_PAGE_CHARS,
+	retrieveEvidencePage,
+} from "./evidence-retrieval.js";
+export {
 	type CheckpointPatch,
 	checkpointToRehydrationPreamble,
 	createMissionContextCheckpoint,

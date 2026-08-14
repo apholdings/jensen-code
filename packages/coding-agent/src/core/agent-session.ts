@@ -53,6 +53,7 @@ import {
 } from "./compaction/index.js";
 import {
 	createMissionContextCheckpoint,
+	type EvidenceArchive,
 	type FindingRecord,
 	type MissionContextCheckpoint,
 } from "./context-runtime/index.js";
@@ -130,6 +131,7 @@ import { TodoEngine } from "./todo/index.js";
 import type { BashOperations } from "./tools/bash.js";
 import { createAllTools } from "./tools/index.js";
 import { createMemoryWriteTool } from "./tools/memory-write.js";
+import { createRetrieveEvidenceTool } from "./tools/retrieve-evidence.js";
 import {
 	createTaskCreateTool,
 	createTaskGetTool,
@@ -240,6 +242,8 @@ export interface AgentSessionConfig {
 	initialActiveToolNames?: string[];
 	/** Override base tools (useful for custom runtimes). */
 	baseToolsOverride?: Record<string, AgentTool>;
+	/** Cold evidence archive for the model-facing retrieve_evidence capability. */
+	evidenceArchive?: EvidenceArchive;
 	/** Enable brief-only output contract for this session. Default: false */
 	briefOnly?: boolean;
 	/** Enable Caveman output compression for this session. Default: "off" */
@@ -416,6 +420,7 @@ export class AgentSession {
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
 	private _baseToolsOverride?: Record<string, AgentTool>;
+	private _evidenceArchive?: EvidenceArchive;
 	private _extensionUIContext?: ExtensionUIContext;
 	private _extensionCommandContextActions?: ExtensionCommandContextActions;
 	private _extensionShutdownHandler?: ShutdownHandler;
@@ -451,6 +456,7 @@ export class AgentSession {
 		this._briefOnly = config.briefOnly ?? false;
 		this._cavemanLevel = config.cavemanLevel ?? "off";
 		this._baseToolsOverride = config.baseToolsOverride;
+		this._evidenceArchive = config.evidenceArchive;
 
 		// Reliability Kernel (2.2.0): initialize before tool hooks so the bridge is
 		// authoritative for every tool call and turn end. Restores a persisted
@@ -631,7 +637,9 @@ export class AgentSession {
 	 * used by the Context Governor to rehydrate operational state across a
 	 * rollover and never carries completion authority.
 	 */
-	buildMissionContextCheckpoint(): MissionContextCheckpoint | undefined {
+	buildMissionContextCheckpoint(
+		evidenceRefs: { evidenceId: string; summary: string }[] = [],
+	): MissionContextCheckpoint | undefined {
 		const runtime = this._reliability?.runtime;
 		const missionId = this._reliability?.missionId ?? this.sessionManager.getSessionId();
 		if (!missionId) return undefined;
@@ -681,7 +689,7 @@ export class AgentSession {
 			pendingSteps,
 			activeFiles,
 			findings,
-			evidenceRefs: [],
+			evidenceRefs: evidenceRefs.slice(-24),
 			testState: {},
 			blockers,
 			nextActions: nextActions.slice(0, 12),
@@ -3424,6 +3432,15 @@ export class AgentSession {
 		});
 		this._baseToolRegistry.set("memory_write", memoryWriteTool as unknown as AgentTool);
 
+		// Model-facing evidence rehydration (2.5.0 extension). Retrieves bounded,
+		// integrity-verified pages of cold evidence by id. Read-only; does not
+		// move completion authority. Registered only when a session archive is
+		// provided (the SDK always provides one for governed sessions).
+		if (this._evidenceArchive) {
+			const retrieveEvidenceTool = createRetrieveEvidenceTool(this._evidenceArchive);
+			this._baseToolRegistry.set("retrieve_evidence", retrieveEvidenceTool as unknown as AgentTool);
+		}
+
 		// Create task tools with session callbacks
 		const taskCreateTool = createTaskCreateTool(
 			() => this._tasks,
@@ -3484,6 +3501,7 @@ export class AgentSession {
 					"todo_read",
 					"todo_update",
 					"memory_write",
+					"retrieve_evidence",
 					"web_search",
 					"web_fetch",
 					"deep_research",

@@ -119,6 +119,16 @@ function makeCheckpointMessage(checkpoint: MissionContextCheckpoint): AgentMessa
 	} as AgentMessage;
 }
 
+/** Return the originating archive id when a tool result came from retrieve_evidence. */
+function getEvidenceSourceId(message: ToolResultMessage): string | undefined {
+	const details = (message as { details?: unknown }).details;
+	if (typeof details === "object" && details !== null) {
+		const id = (details as Record<string, unknown>).__evidenceSourceId;
+		return typeof id === "string" && id.length > 0 ? id : undefined;
+	}
+	return undefined;
+}
+
 /** Find a safe front cut index: the suffix must not start with a toolResult. */
 function findSafeCutIndex(messages: AgentMessage[], maxSuffixTokens: number): number {
 	let accumulated = 0;
@@ -167,6 +177,9 @@ export class ContextGovernor {
 	/** Tool results already archived during this governor's lifetime. */
 	private readonly _archivedToolCallIds = new Set<string>();
 
+	/** Cumulative evidence refs (id -> short summary) archived during this governor's lifetime. */
+	private readonly _archivedEvidenceRefs = new Map<string, string>();
+
 	/** Count of provider overflow disagreements recorded (bounded reduction). */
 	private _overflowCount = 0;
 
@@ -181,6 +194,15 @@ export class ContextGovernor {
 	/** Number of provider overflow disagreements recorded. */
 	get overflowCount(): number {
 		return this._overflowCount;
+	}
+
+	/**
+	 * Cumulative evidence references archived during this governor's lifetime.
+	 * Used to persist references into the durable mission checkpoint so they
+	 * survive a rollover without embedding the raw artifact.
+	 */
+	getArchivedEvidenceRefs(): { evidenceId: string; summary: string }[] {
+		return [...this._archivedEvidenceRefs].map(([evidenceId, summary]) => ({ evidenceId, summary }));
 	}
 
 	constructor(options: ContextGovernorOptions) {
@@ -456,6 +478,35 @@ export class ContextGovernor {
 			const text = toolResultText(result);
 			if (text.length === 0) continue;
 
+			// Identity reuse: content fetched via retrieve_evidence already has an
+			// authoritative cold copy. Collapse it back to the ORIGINAL evidence ref
+			// instead of archiving a duplicate (avoids archive -> retrieve -> archive
+			// duplicate chains).
+			const originEvidenceId = getEvidenceSourceId(result);
+			if (originEvidenceId) {
+				const synopsis = synopsisFor(text);
+				messages[i] = {
+					...result,
+					content: [
+						{
+							type: "text",
+							text:
+								`[evidence retrieval collapsed] ${result.toolName} — synopsis: ${synopsis}\n` +
+								`<evidence ref="${originEvidenceId}"/>`,
+						},
+					],
+					details: {
+						...(typeof result.details === "object" && result.details !== null ? result.details : {}),
+						__virtualizedEvidenceId: originEvidenceId,
+					},
+				} as ToolResultMessage;
+				// Mark processed so the collapsed ref is not re-collapsed on a later
+				// governance iteration (which would otherwise loop without rollover).
+				this._archivedToolCallIds.add(result.toolCallId);
+				changed = true;
+				continue;
+			}
+
 			const record = buildEvidenceRecord({
 				kind: "tool-result",
 				source: result.toolName,
@@ -471,6 +522,7 @@ export class ContextGovernor {
 			this._archivedToolCallIds.add(result.toolCallId);
 
 			const synopsis = synopsisFor(text);
+			this._archivedEvidenceRefs.set(record.evidenceId, synopsis.slice(0, 120));
 			messages[i] = {
 				...result,
 				content: [

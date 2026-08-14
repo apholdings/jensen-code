@@ -271,6 +271,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		"todo_read",
 		"todo_update",
 		"memory_write",
+		"retrieve_evidence",
 		"web_search",
 		"web_fetch",
 		"deep_research",
@@ -322,6 +323,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
 
+	// Cold evidence archive (L3) is created once and shared by the governor (for
+	// virtualization) and the model-facing retrieve_evidence capability (for
+	// bounded rehydration). A single store means evidence references remain
+	// resolvable across rollovers and session resumes.
+	const evidenceArchive = new EvidenceFileStore(join(agentDir, "context-evidence"));
+
 	// Long-Horizon Context Virtualization (2.5.0). The governor is the preflight
 	// boundary that keeps every request within the safe input budget. It is
 	// wired into transformContext below and its checkpoint provider is bound to
@@ -339,7 +346,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 					{ modelContextWindow: model?.contextWindow ?? 0, modelMaxTokens: model?.maxTokens ?? 8192 },
 					contextCapabilityOverrides,
 				),
-				archive: new EvidenceFileStore(join(agentDir, "context-evidence")),
+				archive: evidenceArchive,
 				capabilityProvider: () => {
 					const currentModel = agent.state.model;
 					if (!currentModel?.contextWindow) return undefined as never;
@@ -450,12 +457,17 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		modelRegistry,
 		initialActiveToolNames,
 		extensionRunnerRef,
+		evidenceArchive,
 	});
 	const extensionsResult = resourceLoader.getExtensions();
 
 	// Bind the governor's checkpoint provider to the session's durable-projection
 	// checkpoint so a rollover rehydrates operational state across the SAME mission.
-	contextGovernor?.setCheckpointProvider(() => session.buildMissionContextCheckpoint());
+	// Evidence references are persisted so the model can page old cold artifacts
+	// back after rollover via retrieve_evidence.
+	contextGovernor?.setCheckpointProvider(() =>
+		session.buildMissionContextCheckpoint(contextGovernor.getArchivedEvidenceRefs()),
+	);
 
 	return {
 		session,
