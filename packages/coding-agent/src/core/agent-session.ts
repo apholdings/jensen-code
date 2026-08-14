@@ -1403,6 +1403,7 @@ export class AgentSession {
 					})();
 				},
 				getSystemPrompt: () => this.systemPrompt,
+				getActiveMissionId: () => this.missionId,
 			}
 		);
 	}
@@ -3206,6 +3207,7 @@ export class AgentSession {
 					})();
 				},
 				getSystemPrompt: () => this.systemPrompt,
+				getActiveMissionId: () => this.missionId,
 			},
 			{
 				registerProvider: (name, config) => {

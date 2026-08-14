@@ -57,6 +57,15 @@ export {
 	serializeConversation,
 	shouldCompact,
 } from "./core/compaction/index.js";
+// Durable Delegation orchestration (2.5.0)
+export {
+	type DelegationParentIdentity,
+	type DurableDelegationChildOutcome,
+	DurableMissionDelegator,
+	type DurableMissionDelegatorOptions,
+	parentIdentityFor,
+	rootDelegationMissionId,
+} from "./core/durable-delegation/index.js";
 export { createEventBus, type EventBus, type EventBusController } from "./core/event-bus.js";
 // Execution diagnostics (doctor lsp|tools|scheduler|jobs)
 export {

@@ -11,13 +11,17 @@ import type { Message } from "@apholdings/jensen-ai";
 import { StringEnum } from "@apholdings/jensen-ai";
 import {
 	APP_NAME,
+	createFileDurableMissionStore,
 	createMissionRequest,
 	createSubagentContextPacket,
+	type DelegationParentIdentity,
+	DurableMissionDelegator,
+	type DurableMissionStore,
 	type ExtensionAPI,
 	type ExtensionContext,
 	getMarkdownTheme,
-	MissionExecutionService,
 	type MissionRequest,
+	type MissionResult,
 	type MissionState,
 	newMissionId,
 	ProcessMissionExecutor,
@@ -91,6 +95,14 @@ interface SingleResult {
 	/** True only when missionState === "SUCCEEDED". Subagent children are PARTIAL
 	 *  unless verified, because the legacy child path cannot prove mission success. */
 	success?: boolean;
+	/** Durable child mission id (Durable Delegation 2.5.0). Canonical identity. */
+	childMissionId?: string;
+	/** Real parent mission id the child was created under (never PID-derived). */
+	parentMissionId?: string;
+	/** Durable attempt id allocated before executor launch. */
+	attemptId?: string;
+	/** Executor execution id attached after launch (when launch succeeded). */
+	executionId?: string;
 }
 
 interface SubagentDetails {
@@ -477,23 +489,20 @@ function getFailureDiagnostic(result: SingleResult): string {
 
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
-/** Explicit structured parent mission identity (never PID-derived). */
-interface ParentMissionIdentity {
-	missionId: string;
-	depth: number;
-}
-
 /**
- * Derive the canonical mission lifecycle state for a subagent child from its
- * observed outcome. A raw exit code of 0 is classified as PARTIAL
- * ("execution completed but unverified"), never SUCCEEDED: the legacy child
- * path cannot prove mission-level success.
+ * Resolve the parent mission identity for a delegated child. When the live
+ * AgentSession has an active first-class/reliability mission, that mission is
+ * the real parent. Otherwise a deterministic session-scoped root-delegation
+ * anchor is ensured durably so a child never becomes a root merely because
+ * identity was not propagated. Never PID-derived.
  */
-function deriveMissionState(result: SingleResult): MissionState {
-	if (result.stopReason === "aborted") return "CANCELLED";
-	if (result.failureStage === "launch") return "CRASHED";
-	if (result.failureStage) return "FAILED";
-	return "PARTIAL";
+async function resolveParentMissionIdentity(
+	ctx: ExtensionContext,
+	delegator: DurableMissionDelegator,
+): Promise<DelegationParentIdentity> {
+	const activeId = ctx.getActiveMissionId();
+	if (activeId) return { missionId: activeId, depth: 0 };
+	return delegator.ensureRootDelegationMission(ctx.sessionManager.getSessionId());
 }
 
 async function runSingleAgent(
@@ -509,7 +518,8 @@ async function runSingleAgent(
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
 	runSubagent: SubagentRunner,
 	modelRegistry: ExtensionContext["modelRegistry"],
-	parentMission: ParentMissionIdentity,
+	parentMission: DelegationParentIdentity,
+	delegator: DurableMissionDelegator,
 ): Promise<SingleResult> {
 	const agent = agents.find((candidate) => candidate.name === agentName);
 
@@ -561,24 +571,32 @@ async function runSingleAgent(
 		let resolvedInvocation: ResolvedSubagentInvocation;
 		let missionRequest: MissionRequest;
 		try {
-			// First-Class Missions (2.3.0): build an explicit child MissionRequest.
-			// Identity is structured (missionId + parentMissionId + depth), never
-			// derived from PID or process state.
-			missionRequest = createMissionRequest({
-				parent: parentMission,
-				objective: task,
-				agent: agentName,
-				executionMode: "execute",
-				acceptanceCriteria: [],
-			});
+			// Durable Delegation (2.5.0): the child's canonical identity is
+			// allocated FIRST (never PID-derived), then the registry policy is
+			// resolved, then the durable child request is built with the resolved
+			// policy metadata. The child becomes durable before any process runs.
+			const childMissionId = newMissionId();
 			resolvedInvocation = resolveSubagentInvocation({
 				requestedAgent: agentName,
-				parentRunId: missionRequest.parentMissionId ?? missionRequest.missionId,
-				childRunId: missionRequest.missionId,
+				parentRunId: parentMission.missionId,
+				childRunId: childMissionId,
 				modelRegistry,
 				source: agent.source === "project" ? "workspace" : "user",
 			});
+			missionRequest = createMissionRequest({
+				missionId: childMissionId,
+				parent: parentMission,
+				objective: task,
+				agent: resolvedInvocation.canonicalAgentName,
+				executionMode: resolvedInvocation.executionMode,
+				acceptanceCriteria: [],
+				budget: resolvedInvocation.effectiveBudget,
+				capabilities: resolvedInvocation.effectiveAllowedTools,
+				modelPolicy: { provider: resolvedInvocation.provider, model: resolvedInvocation.resolvedModel },
+			});
 			currentResult.missionState = "RUNNING";
+			currentResult.childMissionId = childMissionId;
+			currentResult.parentMissionId = parentMission.missionId;
 		} catch (error) {
 			currentResult.failureStage = "lookup";
 			currentResult.diagnosticMessage = error instanceof Error ? error.message : String(error);
@@ -607,9 +625,9 @@ async function runSingleAgent(
 			`Context packet (JSON): ${JSON.stringify(contextPacket)}\nTask: ${task}`;
 		invocation.displayCommand = [invocation.command, ...invocation.args].join(" ");
 
-		// First-Class Missions (2.3.0): route the real subprocess execution
-		// through the ProcessMissionExecutor seam. The legacy SubagentRunner is
-		// now only the harness the executor drives (bounded compatibility adapter).
+		// The legacy SubagentRunner is now only the harness the executor drives.
+		// ProcessMissionExecutor remains purely an execution mechanism; the
+		// DurableMissionDelegator owns durable lifecycle persistence.
 		const harness = (launch: ProcessMissionLaunch, launchSignal?: AbortSignal): Promise<ProcessMissionOutcome> =>
 			new Promise((resolve) => {
 				runSubagent({
@@ -646,12 +664,18 @@ async function runSingleAgent(
 			}),
 			harness,
 		});
-		const missionService = new MissionExecutionService();
-		missionService.register(executor);
-		const missionResult = await missionService.execute(missionRequest, { executorId: "subagent-process", signal });
+
+		// Durable Delegation (2.5.0): create the child durably (CREATED), then
+		// let the coordinator drive QUEUED → LAUNCHING + attemptId →
+		// executor.launch → RUNNING + executionId → terminal. The extension never
+		// calls the executor directly.
+		const outcome = await delegator.executeChild(missionRequest, executor, { signal });
+		const missionResult: MissionResult = outcome.result;
 
 		currentResult.exitCode = missionResult.executorDiagnostics.processExitCode ?? -1;
 		currentResult.stderr = missionResult.executorDiagnostics.stderr ?? "";
+		currentResult.attemptId = outcome.attemptId;
+		currentResult.executionId = outcome.executionId;
 
 		if (missionResult.executorDiagnostics.launchError) {
 			currentResult.failureStage = "launch";
@@ -690,10 +714,12 @@ async function runSingleAgent(
 			}
 		}
 
-		// First-Class Missions (2.3.0): authoritative lifecycle classification.
-		// exitCode is only executor diagnostics; missionState tells the truth.
-		currentResult.missionState = deriveMissionState(currentResult);
-		currentResult.success = currentResult.missionState === "SUCCEEDED";
+		// Canonical MissionResult is the authoritative classification. The
+		// compatibility adapter may derive presentation diagnostics (failureStage,
+		// diagnosticMessage) from executor details, but it never overwrites the
+		// canonical mission state with prose.
+		currentResult.missionState = missionResult.state;
+		currentResult.success = missionResult.success;
 
 		return currentResult;
 	} finally {
@@ -764,8 +790,19 @@ function hasToolErrorFlag(result: AgentToolResult<SubagentDetails>): boolean {
 
 export function createSubagentTool(options?: {
 	runSubagent?: SubagentRunner;
+	/** Injected durable store (tests use temp dirs; default is the user store). */
+	store?: DurableMissionStore;
+	/** Deterministic clock override (tests). */
+	now?: () => number;
+	/** Attempt identity factory override (tests). */
+	attemptIdFactory?: () => string;
 }): ToolDefinition<typeof SubagentParams, SubagentDetails> {
 	const runSubagent = options?.runSubagent ?? createDefaultSubagentRunner();
+	const delegator = new DurableMissionDelegator({
+		store: options?.store ?? createFileDurableMissionStore(),
+		now: options?.now,
+		attemptIdFactory: options?.attemptIdFactory,
+	});
 
 	return {
 		name: "subagent",
@@ -790,9 +827,10 @@ export function createSubagentTool(options?: {
 			const agents = discovery.agents;
 			const confirmProjectAgents = params.confirmProjectAgents ?? true;
 
-			// First-Class Missions (2.3.0): one explicit root delegation mission per
-			// subagent tool invocation. Child missions derive their identity from it.
-			const parentMission: ParentMissionIdentity = { missionId: newMissionId(), depth: 0 };
+			// Durable Delegation (2.5.0): resolve the REAL parent mission identity.
+			// The active reliability mission is the parent when present; otherwise a
+			// deterministic session-scoped root-delegation anchor is ensured durably.
+			const parentMission = await resolveParentMissionIdentity(ctx, delegator);
 
 			const hasChain = (params.chain?.length ?? 0) > 0;
 			const hasTasks = (params.tasks?.length ?? 0) > 0;
@@ -868,6 +906,7 @@ export function createSubagentTool(options?: {
 						runSubagent,
 						ctx.modelRegistry,
 						parentMission,
+						delegator,
 					);
 					results.push(result);
 
@@ -956,6 +995,7 @@ export function createSubagentTool(options?: {
 						runSubagent,
 						ctx.modelRegistry,
 						parentMission,
+						delegator,
 					);
 					allResults[index] = result;
 					emitParallelUpdate();
@@ -1003,6 +1043,7 @@ export function createSubagentTool(options?: {
 					runSubagent,
 					ctx.modelRegistry,
 					parentMission,
+					delegator,
 				);
 				if (
 					result.exitCode !== 0 ||

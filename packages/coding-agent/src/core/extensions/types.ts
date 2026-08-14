@@ -285,6 +285,12 @@ export interface ExtensionContext {
 	compact(options?: CompactOptions): void;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
+	/**
+	 * Current active first-class/reliability mission id, if any. Used to bridge
+	 * the live AgentSession mission identity into the durable delegation tree so
+	 * a delegated child references its real parent mission (never PID-derived).
+	 */
+	getActiveMissionId(): string | undefined;
 }
 
 /**
@@ -1352,6 +1358,7 @@ export interface ExtensionContextActions {
 	getContextUsage: () => ContextUsage | undefined;
 	compact: (options?: CompactOptions) => void;
 	getSystemPrompt: () => string;
+	getActiveMissionId: () => string | undefined;
 }
 
 /**

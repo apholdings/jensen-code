@@ -10,6 +10,9 @@ export default defineConfig({
 			{ find: '@apholdings/jensen-ai/oauth', replacement: resolve(packageDir, '../ai/src/oauth.ts') },
 			{ find: '@apholdings/jensen-ai', replacement: resolve(packageDir, '../ai/src/index.ts') },
 			{ find: '@apholdings/jensen-agent-core', replacement: resolve(packageDir, '../agent/src/index.ts') },
+			{ find: '@apholdings/jensen-code/hooks', replacement: resolve(packageDir, 'src/core/hooks/index.ts') },
+			{ find: '@apholdings/jensen-code', replacement: resolve(packageDir, 'src/index.ts') },
+			{ find: '@apholdings/jensen-tui', replacement: resolve(packageDir, '../tui/src/index.ts') },
 		],
 	},
 	test: {

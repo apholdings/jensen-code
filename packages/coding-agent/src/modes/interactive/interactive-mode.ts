@@ -2115,6 +2115,7 @@ export class InteractiveMode {
 				})();
 			},
 			getSystemPrompt: () => this.session.systemPrompt,
+			getActiveMissionId: () => this.session.missionId,
 		});
 
 		// Set up the extension shortcut handler on the default editor
