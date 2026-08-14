@@ -77,6 +77,19 @@ export interface ExecutorDiagnostics {
  */
 export type MissionExecutionOutcome = "COMPLETED" | "FAILED" | "CANCELLED" | "TIMED_OUT" | "CRASHED";
 
+export const MISSION_EXECUTION_OUTCOMES: ReadonlySet<MissionExecutionOutcome> = new Set<MissionExecutionOutcome>([
+	"COMPLETED",
+	"FAILED",
+	"CANCELLED",
+	"TIMED_OUT",
+	"CRASHED",
+]);
+
+/** Runtime type guard for a canonical MissionExecutionOutcome. */
+export function isMissionExecutionOutcome(value: unknown): value is MissionExecutionOutcome {
+	return typeof value === "string" && (MISSION_EXECUTION_OUTCOMES as ReadonlySet<string>).has(value);
+}
+
 // =============================================================================
 // MissionResult
 // =============================================================================

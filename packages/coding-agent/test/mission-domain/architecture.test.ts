@@ -19,12 +19,17 @@ const PURE_DOMAIN_FILES = [
 	"mission-result.ts",
 	"mission-executor.ts",
 	"reliability-mapping.ts",
+	"durable-store.ts",
+	"durable-coordinator.ts",
 ] as const;
 
 const FORBIDDEN_IMPORTS = [
 	"node:child_process",
+	"node:fs",
 	'from "child_process"',
 	"from 'child_process'",
+	'from "fs"',
+	"from 'fs'",
 	"@apholdings/jensen-ai",
 	"@apholdings/jensen-tui",
 	"modes/interactive",

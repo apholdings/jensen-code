@@ -10,8 +10,11 @@ import {
 	assertMissionTransition,
 	canTransitionMissionState,
 	classifyExecutorOutcome,
+	isMissionState,
 	isMissionSuccessState,
+	isResumableMissionState,
 	isTerminalMissionState,
+	MISSION_STATES,
 	MISSION_SUCCESS_STATES,
 	MISSION_TERMINAL_STATES,
 	type MissionState,
@@ -23,6 +26,8 @@ const TERMINAL: MissionState[] = ["SUCCEEDED", "PARTIAL", "FAILED", "CANCELLED",
 describe("MissionState machine", () => {
 	it("B1 legal transitions are accepted", () => {
 		expect(canTransitionMissionState("CREATED", "QUEUED")).toBe(true);
+		expect(canTransitionMissionState("QUEUED", "LAUNCHING")).toBe(true);
+		expect(canTransitionMissionState("LAUNCHING", "RUNNING")).toBe(true);
 		expect(canTransitionMissionState("QUEUED", "RUNNING")).toBe(true);
 		expect(canTransitionMissionState("RUNNING", "WAITING")).toBe(true);
 		expect(canTransitionMissionState("RUNNING", "BLOCKED")).toBe(true);
@@ -90,5 +95,77 @@ describe("MissionState machine", () => {
 describe("terminal state set", () => {
 	it("contains exactly the six terminal states", () => {
 		expect([...MISSION_TERMINAL_STATES].sort()).toEqual([...TERMINAL].sort());
+	});
+});
+
+describe("INTERRUPTED state machine (2.4.0)", () => {
+	it("is a non-terminal, recoverable state, never success or terminal", () => {
+		expect(isTerminalMissionState("INTERRUPTED")).toBe(false);
+		expect(isMissionSuccessState("INTERRUPTED")).toBe(false);
+		expect(canTransitionMissionState("INTERRUPTED", "QUEUED")).toBe(true);
+	});
+
+	it("active non-terminal states may be reconciled to INTERRUPTED", () => {
+		expect(canTransitionMissionState("QUEUED", "INTERRUPTED")).toBe(true);
+		expect(canTransitionMissionState("RUNNING", "INTERRUPTED")).toBe(true);
+		expect(canTransitionMissionState("WAITING", "INTERRUPTED")).toBe(true);
+		expect(canTransitionMissionState("BLOCKED", "INTERRUPTED")).toBe(true);
+		expect(canTransitionMissionState("RETRYING", "INTERRUPTED")).toBe(true);
+	});
+
+	it("CREATED never becomes INTERRUPTED (no attempt was ever owned)", () => {
+		expect(canTransitionMissionState("CREATED", "INTERRUPTED")).toBe(false);
+	});
+
+	it("recovery exits INTERRUPTED only to QUEUED/CANCELLED/FAILED", () => {
+		expect(canTransitionMissionState("INTERRUPTED", "QUEUED")).toBe(true);
+		expect(canTransitionMissionState("INTERRUPTED", "CANCELLED")).toBe(true);
+		expect(canTransitionMissionState("INTERRUPTED", "FAILED")).toBe(true);
+		expect(canTransitionMissionState("INTERRUPTED", "SUCCEEDED")).toBe(false);
+		expect(canTransitionMissionState("INTERRUPTED", "RUNNING")).toBe(false);
+	});
+
+	it("INTERRUPTED is resumable and never self-transitions", () => {
+		expect(isResumableMissionState("INTERRUPTED")).toBe(true);
+		expect(assertMissionTransition("INTERRUPTED", "INTERRUPTED").ok).toBe(false);
+	});
+
+	it("INTERRUPTED is in MISSION_STATES and validated by the type guard", () => {
+		expect(MISSION_STATES.has("INTERRUPTED")).toBe(true);
+		expect(isMissionState("INTERRUPTED")).toBe(true);
+		expect(isMissionState("NOT_A_STATE")).toBe(false);
+	});
+});
+
+describe("LAUNCHING state machine (2.4.0)", () => {
+	it("is a non-terminal, non-success, resumable bridge state", () => {
+		expect(isTerminalMissionState("LAUNCHING")).toBe(false);
+		expect(isMissionSuccessState("LAUNCHING")).toBe(false);
+		expect(isResumableMissionState("LAUNCHING")).toBe(true);
+	});
+
+	it("is entered only from QUEUED", () => {
+		expect(canTransitionMissionState("QUEUED", "LAUNCHING")).toBe(true);
+		expect(canTransitionMissionState("CREATED", "LAUNCHING")).toBe(false);
+		expect(canTransitionMissionState("RUNNING", "LAUNCHING")).toBe(false);
+		expect(canTransitionMissionState("INTERRUPTED", "LAUNCHING")).toBe(false);
+	});
+
+	it("exits to RUNNING (ownership confirmed), FAILED (launch rejected), or INTERRUPTED (recovery)", () => {
+		expect(canTransitionMissionState("LAUNCHING", "RUNNING")).toBe(true);
+		expect(canTransitionMissionState("LAUNCHING", "FAILED")).toBe(true);
+		expect(canTransitionMissionState("LAUNCHING", "INTERRUPTED")).toBe(true);
+		expect(canTransitionMissionState("LAUNCHING", "SUCCEEDED")).toBe(false);
+		expect(canTransitionMissionState("LAUNCHING", "PARTIAL")).toBe(false);
+	});
+
+	it("never self-transitions and is validated by the type guard", () => {
+		expect(assertMissionTransition("LAUNCHING", "LAUNCHING").ok).toBe(false);
+		expect(MISSION_STATES.has("LAUNCHING")).toBe(true);
+		expect(isMissionState("LAUNCHING")).toBe(true);
+	});
+
+	it("recovery sees LAUNCHING as an active nonterminal state", () => {
+		expect(canTransitionMissionState("LAUNCHING", "INTERRUPTED")).toBe(true);
 	});
 });

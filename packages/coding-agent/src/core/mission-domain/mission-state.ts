@@ -16,6 +16,23 @@
  * this file may be reached from a raw process exit code alone: SUCCEEDED is a
  * mission-level claim that must be supported by verified completion (see the
  * Reliability Kernel's Completion Gate).
+ *
+ * `INTERRUPTED` (added in 2.4.0) is a NON-terminal, recoverable state meaning:
+ * "the mission is not terminal, but Jensen lost authoritative ownership of the
+ * previous execution attempt and recovery is required." It is reached only from
+ * an active non-terminal state (QUEUED/RUNNING/WAITING/BLOCKED/RETRYING) during
+ * restart reconciliation, never from a raw process exit code, and it is never a
+ * success or a failure signal.
+ *
+ * `LAUNCHING` (added in 2.4.0) is a NON-terminal state meaning "execution
+ * initiation has begun (a durable attempt identity exists) but authoritative
+ * runtime ownership (the executor's execution id) has not yet been confirmed."
+ * It is the durable bridge between QUEUED and RUNNING that closes the
+ * launch-persistence crash window: an attempt intent is persisted BEFORE the
+ * executor is invoked, so a crash immediately after launch can never erase the
+ * fact that an attempt may have started. It is entered only from QUEUED and
+ * exits to RUNNING (ownership confirmed), FAILED (executor rejected launch), or
+ * INTERRUPTED (restart reconciliation). It is never a success or failure.
  */
 
 // =============================================================================
@@ -30,10 +47,12 @@
 export type MissionState =
 	| "CREATED"
 	| "QUEUED"
+	| "LAUNCHING"
 	| "RUNNING"
 	| "WAITING"
 	| "BLOCKED"
 	| "RETRYING"
+	| "INTERRUPTED"
 	| "SUCCEEDED"
 	| "PARTIAL"
 	| "FAILED"
@@ -42,15 +61,44 @@ export type MissionState =
 	| "CRASHED";
 
 /**
+ * All canonical mission states. Used for runtime validation of untrusted
+ * (durable) state values so a persisted record can never smuggle in a made-up
+ * state string.
+ */
+export const MISSION_STATES: ReadonlySet<MissionState> = new Set<MissionState>([
+	"CREATED",
+	"QUEUED",
+	"LAUNCHING",
+	"RUNNING",
+	"WAITING",
+	"BLOCKED",
+	"RETRYING",
+	"INTERRUPTED",
+	"SUCCEEDED",
+	"PARTIAL",
+	"FAILED",
+	"CANCELLED",
+	"TIMED_OUT",
+	"CRASHED",
+]);
+
+/** Runtime type guard for a canonical MissionState. */
+export function isMissionState(value: unknown): value is MissionState {
+	return typeof value === "string" && (MISSION_STATES as ReadonlySet<string>).has(value);
+}
+
+/**
  * States from which a mission can continue (i.e. not terminal).
  */
 export const MISSION_RESUMABLE_STATES: ReadonlySet<MissionState> = new Set<MissionState>([
 	"CREATED",
 	"QUEUED",
+	"LAUNCHING",
 	"RUNNING",
 	"WAITING",
 	"BLOCKED",
 	"RETRYING",
+	"INTERRUPTED",
 ]);
 
 /**
@@ -80,13 +128,15 @@ const MISSION_TRANSITIONS: ReadonlyMap<MissionState, ReadonlySet<MissionState>> 
 	ReadonlySet<MissionState>
 >([
 	["CREATED", new Set<MissionState>(["QUEUED", "CANCELLED"])],
-	["QUEUED", new Set<MissionState>(["RUNNING", "CANCELLED", "FAILED"])],
+	["QUEUED", new Set<MissionState>(["LAUNCHING", "RUNNING", "CANCELLED", "FAILED", "INTERRUPTED"])],
+	["LAUNCHING", new Set<MissionState>(["RUNNING", "FAILED", "INTERRUPTED"])],
 	[
 		"RUNNING",
 		new Set<MissionState>([
 			"WAITING",
 			"BLOCKED",
 			"RETRYING",
+			"INTERRUPTED",
 			"SUCCEEDED",
 			"PARTIAL",
 			"FAILED",
@@ -95,9 +145,10 @@ const MISSION_TRANSITIONS: ReadonlyMap<MissionState, ReadonlySet<MissionState>> 
 			"CRASHED",
 		]),
 	],
-	["WAITING", new Set<MissionState>(["RUNNING", "BLOCKED", "CANCELLED", "FAILED", "TIMED_OUT"])],
-	["BLOCKED", new Set<MissionState>(["RUNNING", "WAITING", "RETRYING", "FAILED", "CANCELLED"])],
-	["RETRYING", new Set<MissionState>(["RUNNING", "BLOCKED", "FAILED", "CANCELLED", "TIMED_OUT"])],
+	["WAITING", new Set<MissionState>(["RUNNING", "BLOCKED", "CANCELLED", "FAILED", "TIMED_OUT", "INTERRUPTED"])],
+	["BLOCKED", new Set<MissionState>(["RUNNING", "WAITING", "RETRYING", "FAILED", "CANCELLED", "INTERRUPTED"])],
+	["RETRYING", new Set<MissionState>(["RUNNING", "BLOCKED", "FAILED", "CANCELLED", "TIMED_OUT", "INTERRUPTED"])],
+	["INTERRUPTED", new Set<MissionState>(["QUEUED", "FAILED", "CANCELLED"])],
 	["SUCCEEDED", new Set<MissionState>()],
 	["PARTIAL", new Set<MissionState>()],
 	["FAILED", new Set<MissionState>()],
