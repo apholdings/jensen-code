@@ -45,6 +45,7 @@ export {
 export {
 	type CreateMissionRequestInput,
 	createMissionRequest,
+	isSafeChildSessionId,
 	type MissionAcceptanceCriterion,
 	type MissionBudget,
 	type MissionExecutionMode,
@@ -53,6 +54,7 @@ export {
 	type MissionRequestValidationError,
 	type MissionRequestValidationResult,
 	type MissionWorkspaceScope,
+	newChildSessionId,
 	newMissionId,
 	validateMissionRequest,
 } from "./mission-request.js";

@@ -84,6 +84,19 @@ export interface MissionRequest {
 	 * caller-supplied key independent of the generated `missionId`.
 	 */
 	readonly idempotencyKey?: string;
+	/**
+	 * Durable child AgentSession identity. Allocated BEFORE external execution
+	 * and immutable for the life of the mission. A delegated child mission binds
+	 * to exactly one AgentSession; explicit resume restores this exact session
+	 * rather than allocating a replacement. Never PID-derived.
+	 */
+	readonly childSessionId?: string;
+	/**
+	 * Inherited operational constraints (parent + user policy). Durable so an
+	 * interrupted + resumed child retains its guardrails without reconstructing
+	 * them from prompt prose.
+	 */
+	readonly constraints?: readonly string[];
 	/** Immutable reference/context package for the mission. */
 	readonly context?: Readonly<Record<string, unknown>>;
 	readonly createdAtMs: number;
@@ -106,6 +119,8 @@ export interface CreateMissionRequestInput {
 	capabilities?: readonly string[];
 	modelPolicy?: MissionModelPolicy;
 	idempotencyKey?: string;
+	childSessionId?: string;
+	constraints?: readonly string[];
 	context?: Readonly<Record<string, unknown>>;
 	/** Timestamp override for deterministic construction (defaults to now). */
 	now?: number;
@@ -134,6 +149,8 @@ export function createMissionRequest(input: CreateMissionRequestInput): MissionR
 		capabilities: input.capabilities ? Object.freeze([...input.capabilities]) : undefined,
 		modelPolicy: input.modelPolicy ? Object.freeze({ ...input.modelPolicy }) : undefined,
 		idempotencyKey: input.idempotencyKey,
+		childSessionId: input.childSessionId,
+		constraints: input.constraints ? Object.freeze([...input.constraints]) : undefined,
 		context: input.context ? Object.freeze({ ...input.context }) : undefined,
 		createdAtMs: input.now ?? Date.now(),
 	});
@@ -142,6 +159,16 @@ export function createMissionRequest(input: CreateMissionRequestInput): MissionR
 /** Stable canonical mission id. UUID-based, never PID-derived. */
 export function newMissionId(): string {
 	return `mission_${randomUUID()}`;
+}
+
+/** Stable durable child AgentSession id. UUID-based, never PID-derived. */
+export function newChildSessionId(): string {
+	return `child_${randomUUID()}`;
+}
+
+/** A child session id is an opaque path-safe identity (used as a session header id). */
+export function isSafeChildSessionId(value: string): boolean {
+	return /^[A-Za-z0-9._-]+$/u.test(value) && value !== "." && value !== "..";
 }
 
 // =============================================================================
@@ -157,7 +184,9 @@ export type MissionRequestValidationError =
 	| "MISSING_OBJECTIVE"
 	| "MISSING_AGENT"
 	| "INVALID_EXECUTION_MODE"
-	| "DUPLICATE_CRITERION_ID";
+	| "DUPLICATE_CRITERION_ID"
+	| "UNSAFE_CHILD_SESSION_ID"
+	| "INVALID_CONSTRAINTS";
 
 export type MissionRequestValidationResult =
 	| { valid: true; request: MissionRequest }
@@ -210,6 +239,19 @@ export function validateMissionRequest(request: MissionRequest): MissionRequestV
 			}
 			if (typeof criterion.id === "string") seen.add(criterion.id);
 		}
+	}
+
+	if (request.childSessionId !== undefined) {
+		if (typeof request.childSessionId !== "string" || !isSafeChildSessionId(request.childSessionId)) {
+			errors.push("UNSAFE_CHILD_SESSION_ID");
+		}
+	}
+
+	if (
+		request.constraints !== undefined &&
+		(!Array.isArray(request.constraints) || request.constraints.some((c) => typeof c !== "string"))
+	) {
+		errors.push("INVALID_CONSTRAINTS");
 	}
 
 	if (errors.length > 0) return { valid: false, errors };

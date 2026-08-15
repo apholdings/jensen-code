@@ -469,6 +469,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		session.buildMissionContextCheckpoint(contextGovernor.getArchivedEvidenceRefs()),
 	);
 
+	// Persist newly-archived evidence references into the session so a durable
+	// child can retrieve pre-interruption evidence after explicit resume.
+	contextGovernor?.setEvidenceRefsSink((refs) => {
+		sessionManager.appendSessionEvidenceRefs(refs);
+	});
+
 	return {
 		session,
 		extensionsResult,

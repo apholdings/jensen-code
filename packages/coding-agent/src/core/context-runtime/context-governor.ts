@@ -29,7 +29,11 @@ import {
 import { type ContextAssembly, estimateAssemblyInputTokens, estimateMessageTokensFor } from "./context-token.js";
 import type { EvidenceArchive } from "./evidence-archive.js";
 import { buildEvidenceRecord } from "./evidence-archive.js";
-import { checkpointToRehydrationPreamble, type MissionContextCheckpoint } from "./mission-checkpoint.js";
+import {
+	checkpointToRehydrationPreamble,
+	type EvidenceReference,
+	type MissionContextCheckpoint,
+} from "./mission-checkpoint.js";
 
 export type GovernorAction = "pass" | "virtualized" | "rollover" | "compacted" | "unrecoverable";
 
@@ -180,6 +184,9 @@ export class ContextGovernor {
 	/** Cumulative evidence refs (id -> short summary) archived during this governor's lifetime. */
 	private readonly _archivedEvidenceRefs = new Map<string, string>();
 
+	/** Optional sink notified when cumulative evidence refs change (durable persistence). */
+	private _evidenceRefsSink?: (refs: EvidenceReference[]) => void;
+
 	/** Count of provider overflow disagreements recorded (bounded reduction). */
 	private _overflowCount = 0;
 
@@ -228,6 +235,20 @@ export class ContextGovernor {
 	/** Update the checkpoint provider (set after the session builds it). */
 	setCheckpointProvider(provider: ContextGovernorOptions["checkpointProvider"]): void {
 		this._options.checkpointProvider = provider;
+	}
+
+	/**
+	 * Attach a durable sink for archived evidence references. Invoked whenever
+	 * new cold evidence is archived so references can survive process death and
+	 * be restored on explicit child resume.
+	 */
+	setEvidenceRefsSink(sink: (refs: EvidenceReference[]) => void): void {
+		this._evidenceRefsSink = sink;
+	}
+
+	private _emitEvidenceRefs(): void {
+		if (!this._evidenceRefsSink) return;
+		this._evidenceRefsSink(this.getArchivedEvidenceRefs());
 	}
 
 	/** Update the capability provider (for runtime model switches). */
@@ -523,6 +544,7 @@ export class ContextGovernor {
 
 			const synopsis = synopsisFor(text);
 			this._archivedEvidenceRefs.set(record.evidenceId, synopsis.slice(0, 120));
+			this._emitEvidenceRefs();
 			messages[i] = {
 				...result,
 				content: [

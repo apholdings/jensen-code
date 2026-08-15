@@ -12,18 +12,22 @@ import { type Args, parseArgs, printHelp } from "./cli/args.js";
 import { selectConfig } from "./cli/config-selector.js";
 import { processFileArguments } from "./cli/file-processor.js";
 import { listModels } from "./cli/list-models.js";
+import { parseResumeChildCommand } from "./cli/resume-child-command.js";
 import { parseResumeCommand } from "./cli/resume-command.js";
 import { selectSession } from "./cli/session-picker.js";
 import { APP_NAME, getAgentDir, getModelsPath, VERSION } from "./config.js";
 import { AuthStorage } from "./core/auth-storage.js";
 import { handleBenchmarkCommand } from "./core/benchmark/index.js";
 import { checkTodoHealth } from "./core/doctor.js";
+import { bindChildSession, defaultChildSessionDir, resumeChildMission } from "./core/durable-child-session/index.js";
+import { DurableMissionDelegator } from "./core/durable-delegation/index.js";
 import { handleEvaluationCommand } from "./core/evaluation/cli.js";
 import { exportFromFile } from "./core/export-html/index.js";
 import type { LoadExtensionsResult } from "./core/extensions/index.js";
 import { KeybindingsManager } from "./core/keybindings.js";
 import { handleAdaptiveCommand } from "./core/long-horizon/adaptive/cli.js";
 import { handleMissionCommand } from "./core/mission/cli.js";
+import { createFileDurableMissionStore } from "./core/mission-durable/index.js";
 import { ModelRegistry } from "./core/model-registry.js";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
 import { handleOperabilityCommand } from "./core/operability-cli.js";
@@ -393,6 +397,106 @@ Session IDs are shown by /session and in the --resume session picker.
 `);
 }
 
+function printResumeChildHelp(): void {
+	console.log(`${chalk.bold("Usage:")}
+  ${APP_NAME} resume-child <MISSION_ID>
+
+Explicitly resume an INTERRUPTED durable child mission. The child restores the
+SAME durable AgentSession and the SAME logical mission, but allocates a NEW
+execution attempt, then continues remaining work from its operational checkpoint.
+
+Example:
+  ${APP_NAME} resume-child mission_1b2f...
+`);
+}
+
+/**
+ * Handle the explicit `resume-child <MISSION_ID>` command. Loads the durable
+ * mission, resolves + validates the bound child session, and drives the
+ * coordinator to a canonical terminal result with a new attempt/execution.
+ */
+async function handleResumeChildCommand(args: string[]): Promise<boolean> {
+	const parsed = parseResumeChildCommand(args);
+	if (parsed.kind === "none") return false;
+
+	if (parsed.kind === "help") {
+		printResumeChildHelp();
+		return true;
+	}
+
+	if (parsed.kind === "missing") {
+		console.error(chalk.red("Missing required mission ID."));
+		console.error(chalk.dim(`\nUsage:\n  ${APP_NAME} resume-child <MISSION_ID>`));
+		process.exitCode = 1;
+		return true;
+	}
+
+	const missionId = parsed.missionId;
+	const agentDir = getAgentDir();
+	const sessionDir = defaultChildSessionDir(agentDir);
+	const store = createFileDurableMissionStore();
+	const delegator = new DurableMissionDelegator({ store });
+
+	const cliEntry = process.argv[1];
+	const command = process.execPath;
+	const prefixArgs = [...process.execArgv, cliEntry];
+
+	try {
+		const outcome = await resumeChildMission(delegator, {
+			store,
+			missionId,
+			sessionDir,
+			buildResumeLaunch: ({ request, resumePrompt, childSessionId }) => {
+				const launchArgs = [
+					...prefixArgs,
+					"--mode",
+					"json",
+					"-p",
+					"--child-mission",
+					missionId,
+					"--session-id",
+					childSessionId,
+					"--session-dir",
+					sessionDir,
+				];
+				if (request.modelPolicy) {
+					launchArgs.push("--provider", request.modelPolicy.provider, "--model", request.modelPolicy.model);
+				}
+				if (request.capabilities && request.capabilities.length > 0) {
+					launchArgs.push("--tools", request.capabilities.join(","));
+				}
+				launchArgs.push(resumePrompt);
+				return {
+					command,
+					args: launchArgs,
+					cwd: request.workspaceScope?.cwd ?? process.cwd(),
+				};
+			},
+		});
+
+		console.log(
+			JSON.stringify(
+				{
+					missionId: outcome.missionId,
+					parentMissionId: outcome.parentMissionId,
+					childSessionId: outcome.record.request.childSessionId,
+					attemptId: outcome.attemptId,
+					executionId: outcome.executionId,
+					missionState: outcome.result.state,
+					success: outcome.result.success,
+				},
+				null,
+				2,
+			),
+		);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		console.error(chalk.red(message));
+		process.exitCode = 1;
+	}
+	return true;
+}
+
 /**
  * Resolve and open a persisted session by exact ID.
  *
@@ -483,6 +587,31 @@ async function createSessionManager(
 
 	if (parsed.resumeSessionId) {
 		return openSessionById(parsed.resumeSessionId, effectiveSessionDir);
+	}
+
+	// Explicit stable session identity (durable child execution). Opens the
+	// existing session when present (resume) or creates one with the exact id
+	// (first execution). Never regenerates the id merely because execution restarts.
+	if (parsed.sessionId) {
+		const existing = effectiveSessionDir
+			? await SessionManager.findByExactIdInDir(parsed.sessionId, effectiveSessionDir)
+			: await SessionManager.findById(parsed.sessionId);
+		if (existing) {
+			const validation = validateSessionFile(existing.path);
+			if (!validation.ok) {
+				console.error(chalk.red(`Cannot open session ${parsed.sessionId}: ${validation.reason}`));
+				process.exit(1);
+			}
+			const manager = SessionManager.open(existing.path, effectiveSessionDir);
+			if (manager.getSessionId() !== parsed.sessionId) {
+				console.error(
+					chalk.red(`Session identity mismatch: requested ${parsed.sessionId}, loaded ${manager.getSessionId()}`),
+				);
+				process.exit(1);
+			}
+			return manager;
+		}
+		return SessionManager.createWithId(cwd, effectiveSessionDir, parsed.sessionId);
 	}
 
 	if (parsed.session) {
@@ -788,6 +917,12 @@ export async function main(args: string[]) {
 		return;
 	}
 
+	// Detect the explicit `resume-child <MISSION_ID>` command before generic
+	// argument parsing (and before `resume <SESSION_ID>`).
+	if (await handleResumeChildCommand(args)) {
+		return;
+	}
+
 	// Detect the explicit `resume <SESSION_ID>` command before generic argument
 	// parsing so the subcommand and its ID are not treated as prompt messages.
 	const resumeCommand = parseResumeCommand(args);
@@ -953,6 +1088,25 @@ export async function main(args: string[]) {
 			process.exit(0);
 		}
 		sessionManager = SessionManager.open(selectedPath, effectiveSessionDir);
+	}
+
+	// Durable child binding: a delegated child carries --child-mission. Bind the
+	// session to that mission on first execution and validate the binding on
+	// resume. Fails closed on mismatch; never silently rebinds.
+	if (parsed.childMission) {
+		if (!sessionManager || !sessionManager.isPersisted()) {
+			console.error(
+				chalk.red("--child-mission requires a persistent session (--no-session is invalid for durable children)"),
+			);
+			process.exit(1);
+		}
+		try {
+			bindChildSession(sessionManager, parsed.childMission);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			console.error(chalk.red(`Child session binding failed: ${message}`));
+			process.exit(1);
+		}
 	}
 
 	const { options: sessionOptions, cliThinkingFromModel } = buildSessionOptions(

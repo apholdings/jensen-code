@@ -26,6 +26,10 @@ export interface Args {
 	noSession?: boolean;
 	session?: string;
 	sessionDir?: string;
+	/** Explicit session identity for durable child execution (stable across resume). */
+	sessionId?: string;
+	/** Durable child mission identity used to bind the session and restore state. */
+	childMission?: string;
 	models?: string[];
 	tools?: ToolName[];
 	noTools?: boolean;
@@ -93,6 +97,10 @@ export function parseArgs(args: string[], extensionFlags?: Map<string, { type: "
 			result.session = args[++i];
 		} else if (arg === "--session-dir" && i + 1 < args.length) {
 			result.sessionDir = args[++i];
+		} else if (arg === "--session-id" && i + 1 < args.length) {
+			result.sessionId = args[++i];
+		} else if (arg === "--child-mission" && i + 1 < args.length) {
+			result.childMission = args[++i];
 		} else if (arg === "--models" && i + 1 < args.length) {
 			result.models = args[++i].split(",").map((s) => s.trim());
 		} else if (arg === "--no-tools") {

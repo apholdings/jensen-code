@@ -44,6 +44,22 @@ import type { TodoEngineState } from "./todo/todo-engine.js";
 
 export const CURRENT_SESSION_VERSION = 3;
 
+/** Custom entry type for the durable child mission<->session binding (2.6.0). */
+export const SESSION_CHILD_BINDING_CUSTOM_TYPE = "child_mission_binding";
+/** Custom entry type for persisted cold-evidence references (2.6.0). */
+export const SESSION_EVIDENCE_REFS_CUSTOM_TYPE = "session_evidence_refs";
+
+/**
+ * Durable identity binding between a child AgentSession and its logical
+ * mission. Persisted inside the session so a restored session can never
+ * silently attach itself to a different mission.
+ */
+export interface ChildMissionBinding {
+	sessionId: string;
+	missionId: string;
+	parentMissionId?: string;
+}
+
 export interface SessionHeader {
 	type: "session";
 	version?: number; // v1 sessions don't have this
@@ -1194,6 +1210,61 @@ export class SessionManager {
 		return undefined;
 	}
 
+	/**
+	 * Persist the durable child mission binding for this session. Binding is a
+	 * one-way identity correlation: it does NOT duplicate mission state (the
+	 * DurableMissionStore remains authoritative); it only records which mission
+	 * this session belongs to so a mismatched restore can fail closed.
+	 */
+	appendChildBinding(binding: ChildMissionBinding): string {
+		return this.appendCustomEntry(SESSION_CHILD_BINDING_CUSTOM_TYPE, binding);
+	}
+
+	/** Latest durable child mission binding on the current branch, if any. */
+	getLatestChildBinding(): ChildMissionBinding | undefined {
+		const entries = this.getBranch();
+		for (let i = entries.length - 1; i >= 0; i--) {
+			const entry = entries[i];
+			if (entry.type === "custom" && entry.customType === SESSION_CHILD_BINDING_CUSTOM_TYPE) {
+				const data = entry.data as ChildMissionBinding | undefined;
+				if (
+					typeof data === "object" &&
+					data !== null &&
+					typeof data.missionId === "string" &&
+					typeof data.sessionId === "string"
+				) {
+					return {
+						sessionId: data.sessionId,
+						missionId: data.missionId,
+						parentMissionId: typeof data.parentMissionId === "string" ? data.parentMissionId : undefined,
+					};
+				}
+				return undefined;
+			}
+		}
+		return undefined;
+	}
+
+	/** Persist the latest cold-evidence references produced by the Context Governor. */
+	appendSessionEvidenceRefs(refs: Array<{ evidenceId: string; summary: string }>): string {
+		return this.appendCustomEntry(SESSION_EVIDENCE_REFS_CUSTOM_TYPE, refs);
+	}
+
+	/** Latest persisted cold-evidence references on the current branch, if any. */
+	getLatestSessionEvidenceRefs(): Array<{ evidenceId: string; summary: string }> {
+		const entries = this.getBranch();
+		for (let i = entries.length - 1; i >= 0; i--) {
+			const entry = entries[i];
+			if (entry.type === "custom" && entry.customType === SESSION_EVIDENCE_REFS_CUSTOM_TYPE) {
+				if (!Array.isArray(entry.data)) return [];
+				return (entry.data as Array<{ evidenceId?: unknown; summary?: unknown }>)
+					.filter((r) => typeof r?.evidenceId === "string" && typeof r?.summary === "string")
+					.map((r) => ({ evidenceId: r.evidenceId as string, summary: r.summary as string }));
+			}
+		}
+		return [];
+	}
+
 	/** Append a session info entry (e.g., display name). Returns entry id. */
 	appendSessionInfo(name: string): string {
 		const entry: SessionInfoEntry = {
@@ -1556,6 +1627,18 @@ export class SessionManager {
 	}
 
 	/**
+	 * Create a new persisted session with an explicit stable identity.
+	 * Used by durable child execution so the childSessionId is established
+	 * BEFORE external execution and remains stable across process restart.
+	 */
+	static createWithId(cwd: string, sessionDir: string | undefined, id: string): SessionManager {
+		const dir = sessionDir ?? getDefaultSessionDir(cwd);
+		const manager = new SessionManager(cwd, dir, undefined, true);
+		manager.newSession({ id });
+		return manager;
+	}
+
+	/**
 	 * Open a specific session file.
 	 * @param path Path to session file
 	 * @param sessionDir Optional session directory for /new or /branch. If omitted, derives from file's parent.
@@ -1736,5 +1819,20 @@ export class SessionManager {
 		candidates.push(...allSessions);
 
 		return candidates.find((s) => s.id === sessionId) ?? null;
+	}
+
+	/**
+	 * Resolve a session by exact id within a single, explicitly-known directory.
+	 *
+	 * Unlike `findById`, this never scans the global sessions directory. Durable
+	 * child sessions live in a dedicated directory, so resume startup stays fast
+	 * and deterministic (no global filesystem walk).
+	 */
+	static async findByExactIdInDir(sessionId: string, sessionDir: string): Promise<SessionInfo | null> {
+		if (!sessionId || sessionId.includes("/") || sessionId.includes("\\")) {
+			return null;
+		}
+		const localSessions = await SessionManager.list(process.cwd(), sessionDir);
+		return localSessions.find((s) => s.id === sessionId) ?? null;
 	}
 }

@@ -148,9 +148,28 @@ export class DurableMissionDelegator {
 		const coordinator = this.coordinator(executor);
 		await coordinator.createMission(request);
 		const terminal = await coordinator.resume(request.missionId, { signal: options.signal });
+		return this._outcome(terminal);
+	}
+
+	/**
+	 * Explicitly resume an interrupted child to terminal state. Does NOT create
+	 * the mission (it must already exist durably). Allocates a NEW execution
+	 * attempt while preserving the prior attempt history and the immutable
+	 * mission/session identity.
+	 */
+	async resumeMission(
+		missionId: string,
+		executor: MissionExecutor,
+		options: { signal?: AbortSignal } = {},
+	): Promise<DurableDelegationChildOutcome> {
+		const terminal = await this.coordinator(executor).resume(missionId, { signal: options.signal });
+		return this._outcome(terminal);
+	}
+
+	private _outcome(terminal: DurableMissionRecord): DurableDelegationChildOutcome {
 		const result = terminal.result;
 		if (!result) {
-			throw new Error(`Mission ${request.missionId} did not reach a terminal result`);
+			throw new Error(`Mission ${terminal.missionId} did not reach a terminal result`);
 		}
 		const lastAttempt = terminal.attempts[terminal.attempts.length - 1];
 		return {

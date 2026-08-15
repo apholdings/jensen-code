@@ -17,12 +17,14 @@ import {
 	type DelegationParentIdentity,
 	DurableMissionDelegator,
 	type DurableMissionStore,
+	defaultChildSessionDir,
 	type ExtensionAPI,
 	type ExtensionContext,
 	getMarkdownTheme,
 	type MissionRequest,
 	type MissionResult,
 	type MissionState,
+	newChildSessionId,
 	newMissionId,
 	ProcessMissionExecutor,
 	type ProcessMissionLaunch,
@@ -97,6 +99,8 @@ interface SingleResult {
 	success?: boolean;
 	/** Durable child mission id (Durable Delegation 2.5.0). Canonical identity. */
 	childMissionId?: string;
+	/** Durable child AgentSession id (Durable Child Session Restore 2.6.0). */
+	childSessionId?: string;
 	/** Real parent mission id the child was created under (never PID-derived). */
 	parentMissionId?: string;
 	/** Durable attempt id allocated before executor launch. */
@@ -305,11 +309,26 @@ export function buildSubagentInvocation(
 	defaultCwd: string,
 	_agent: AgentConfig,
 	task: string,
-	cwd?: string,
-	resolvedInvocation?: ResolvedSubagentInvocation,
+	cwd: string | undefined,
+	resolvedInvocation: ResolvedSubagentInvocation | undefined,
+	childIdentity: { childMissionId: string; childSessionId: string; childSessionDir: string },
 ): SubagentInvocation {
 	const { command, prefixArgs } = resolveCliCommandPrefix();
-	const args = [...prefixArgs, "--mode", "json", "-p", "--no-session"];
+	// Durable delegated children run with an explicit, stable session identity
+	// (never the ephemeral --no-session path). This lets the child persist its
+	// conversation/todo/memory/evidence and be explicitly resumed later.
+	const args = [
+		...prefixArgs,
+		"--mode",
+		"json",
+		"-p",
+		"--child-mission",
+		childIdentity.childMissionId,
+		"--session-id",
+		childIdentity.childSessionId,
+		"--session-dir",
+		childIdentity.childSessionDir,
+	];
 	if (resolvedInvocation) args.push("--model", resolvedInvocation.resolvedModel);
 	if (resolvedInvocation && resolvedInvocation.effectiveAllowedTools.length > 0)
 		args.push("--tools", resolvedInvocation.effectiveAllowedTools.join(","));
@@ -570,12 +589,17 @@ async function runSingleAgent(
 	try {
 		let resolvedInvocation: ResolvedSubagentInvocation;
 		let missionRequest: MissionRequest;
+		let childMissionId: string;
+		let childSessionId: string;
+		let childSessionDir: string;
 		try {
 			// Durable Delegation (2.5.0): the child's canonical identity is
 			// allocated FIRST (never PID-derived), then the registry policy is
 			// resolved, then the durable child request is built with the resolved
 			// policy metadata. The child becomes durable before any process runs.
-			const childMissionId = newMissionId();
+			childMissionId = newMissionId();
+			childSessionId = newChildSessionId();
+			childSessionDir = defaultChildSessionDir();
 			resolvedInvocation = resolveSubagentInvocation({
 				requestedAgent: agentName,
 				parentRunId: parentMission.missionId,
@@ -593,9 +617,12 @@ async function runSingleAgent(
 				budget: resolvedInvocation.effectiveBudget,
 				capabilities: resolvedInvocation.effectiveAllowedTools,
 				modelPolicy: { provider: resolvedInvocation.provider, model: resolvedInvocation.resolvedModel },
+				childSessionId,
+				constraints: resolvedInvocation.effectiveDeniedEffects,
 			});
 			currentResult.missionState = "RUNNING";
 			currentResult.childMissionId = childMissionId;
+			currentResult.childSessionId = childSessionId;
 			currentResult.parentMissionId = parentMission.missionId;
 		} catch (error) {
 			currentResult.failureStage = "lookup";
@@ -604,7 +631,11 @@ async function runSingleAgent(
 			currentResult.success = false;
 			return currentResult;
 		}
-		const invocation = buildSubagentInvocation(defaultCwd, agent, task, cwd, resolvedInvocation);
+		const invocation = buildSubagentInvocation(defaultCwd, agent, task, cwd, resolvedInvocation, {
+			childMissionId,
+			childSessionId,
+			childSessionDir,
+		});
 		currentResult.invocation = invocation;
 
 		if (agent.systemPrompt.trim().length > 0) {

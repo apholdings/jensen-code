@@ -97,6 +97,19 @@ export {
 	resolveContextCapability,
 	type TestState,
 } from "./core/context-runtime/index.js";
+// Durable Child AgentSession Restore (2.6.0)
+export {
+	bindChildSession,
+	buildChildResumeCheckpoint,
+	buildChildResumePrompt,
+	ChildSessionRestoreError,
+	type ChildSessionRestoreErrorCode,
+	defaultChildSessionDir,
+	type ResolvedChildSession,
+	type ResumeChildMissionOptions,
+	resolveChildSessionForResume,
+	resumeChildMission,
+} from "./core/durable-child-session/index.js";
 // Durable Delegation orchestration (2.5.0)
 export {
 	type DelegationParentIdentity,
@@ -307,6 +320,7 @@ export {
 	isMissionState,
 	isMissionSuccessState,
 	isResumableMissionState,
+	isSafeChildSessionId,
 	isSafeMissionId,
 	isTerminalMissionState,
 	MISSION_CHAIN_CONTINUE_STATES,
@@ -336,6 +350,7 @@ export {
 	type MissionVerification,
 	type MissionWorkspaceScope,
 	missionRequestsEqual,
+	newChildSessionId,
 	newMissionId,
 	ProcessMissionExecutor,
 	type ProcessMissionExecutorOptions,
