@@ -83,6 +83,10 @@ function createDefaultHarness(options: { timeoutMs?: number }): ProcessMissionHa
 				shell: false,
 				stdio: ["ignore", "pipe", "pipe"],
 				env: { ...process.env, ...(launch.env ?? {}) },
+				// Detach on POSIX so the child becomes its own process-group
+				// leader; killing the group then terminates owned descendants
+				// (matching BackgroundJobRegistry / MCP client conventions).
+				detached: process.platform !== "win32",
 				windowsHide: true,
 			});
 
@@ -91,25 +95,46 @@ function createDefaultHarness(options: { timeoutMs?: number }): ProcessMissionHa
 			let launchError: string | undefined;
 			let timedOut = false;
 			let settled = false;
+			let forceTimer: NodeJS.Timeout | undefined;
+
+			const killTree = (signal: NodeJS.Signals) => {
+				if (child.pid && process.platform !== "win32") {
+					try {
+						process.kill(-child.pid, signal);
+						return;
+					} catch {
+						// Fall through to the direct child.
+					}
+				}
+				try {
+					child.kill(signal);
+				} catch {
+					// Already gone.
+				}
+			};
+
+			const killChild = () => {
+				killTree("SIGTERM");
+				forceTimer = setTimeout(() => {
+					// Only force-kill if the process is actually still running.
+					if (child.exitCode === null && child.signalCode === null) {
+						killTree("SIGKILL");
+					}
+				}, 5000);
+			};
 
 			const finish = (outcome: ProcessMissionOutcome) => {
 				if (settled) return;
 				settled = true;
 				clearTimeout(timeout);
+				if (forceTimer) clearTimeout(forceTimer);
 				resolve(outcome);
 			};
 
 			const timeout = setTimeout(() => {
 				timedOut = true;
-				child.kill("SIGKILL");
+				killChild();
 			}, timeoutMs);
-
-			const killChild = () => {
-				child.kill("SIGTERM");
-				setTimeout(() => {
-					if (!child.killed) child.kill("SIGKILL");
-				}, 5000);
-			};
 
 			if (signal) {
 				if (signal.aborted) {

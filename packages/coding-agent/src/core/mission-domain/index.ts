@@ -35,6 +35,23 @@ export {
 	parseDurableMissionRecord,
 	stableStringify,
 } from "./durable-store.js";
+// Execution heartbeat (2.8.0)
+export {
+	classifyHeartbeatRenewalError,
+	defaultHeartbeatScheduler,
+	ExecutionAuthorityLostError,
+	ExecutionHeartbeat,
+	type ExecutionHeartbeatDeps,
+	type HeartbeatAuthorityLossInfo,
+	type HeartbeatAuthorityLossReason,
+	type HeartbeatRenewalFailureKind,
+	type HeartbeatScheduler,
+	type HeartbeatTelemetry,
+	type HeartbeatTimer,
+	type HeartbeatTimingInput,
+	type ResolvedHeartbeatTiming,
+	resolveHeartbeatTiming,
+} from "./execution-heartbeat.js";
 // Execution lease + fencing (2.7.0)
 export {
 	DEFAULT_EXECUTION_LEASE_DURATION_MS,

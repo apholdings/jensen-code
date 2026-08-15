@@ -34,6 +34,16 @@ import {
 	type DurableMissionStore,
 } from "./durable-store.js";
 import {
+	defaultHeartbeatScheduler,
+	ExecutionAuthorityLostError,
+	ExecutionHeartbeat,
+	type HeartbeatAuthorityLossInfo,
+	type HeartbeatScheduler,
+	type HeartbeatTelemetry,
+	type ResolvedHeartbeatTiming,
+	resolveHeartbeatTiming,
+} from "./execution-heartbeat.js";
+import {
 	DEFAULT_EXECUTION_LEASE_DURATION_MS,
 	type ExecutionLease,
 	type ExecutionLeaseProof,
@@ -65,6 +75,12 @@ export interface DurableMissionCoordinatorOptions {
 	leaseDurationMs?: number;
 	/** Lease identity factory (tests). */
 	leaseIdFactory?: () => string;
+	/** Heartbeat renewal cadence override (defaults to leaseDurationMs / 3). */
+	heartbeatIntervalMs?: number;
+	/** Heartbeat safety margin override (defaults to leaseDurationMs / 6). */
+	renewalSafetyMarginMs?: number;
+	/** Injectable timer scheduler for deterministic heartbeat tests. */
+	heartbeatScheduler?: HeartbeatScheduler;
 }
 
 export interface DurableRecoveryReport {
@@ -131,6 +147,9 @@ export class DurableMissionCoordinator {
 	private readonly _ownerId: string;
 	private readonly _leaseDurationMs: number;
 	private readonly _leaseIdFactory: () => string;
+	private readonly _heartbeatTiming: ResolvedHeartbeatTiming;
+	private readonly _heartbeatScheduler: HeartbeatScheduler;
+	private readonly _heartbeats = new Map<string, ExecutionHeartbeat>();
 
 	constructor(store: DurableMissionStore, executor: MissionExecutor, options: DurableMissionCoordinatorOptions = {}) {
 		this._store = store;
@@ -140,6 +159,12 @@ export class DurableMissionCoordinator {
 		this._ownerId = options.ownerId ?? newExecutorOwnerId();
 		this._leaseDurationMs = options.leaseDurationMs ?? DEFAULT_EXECUTION_LEASE_DURATION_MS;
 		this._leaseIdFactory = options.leaseIdFactory ?? (() => `lease_${randomUUID()}`);
+		this._heartbeatTiming = resolveHeartbeatTiming({
+			leaseDurationMs: this._leaseDurationMs,
+			heartbeatIntervalMs: options.heartbeatIntervalMs,
+			renewalSafetyMarginMs: options.renewalSafetyMarginMs,
+		});
+		this._heartbeatScheduler = options.heartbeatScheduler ?? defaultHeartbeatScheduler;
 	}
 
 	/** The underlying persistence port (exposed for tests and load paths). */
@@ -154,6 +179,16 @@ export class DurableMissionCoordinator {
 	/** Stable executor owner identity used for lease acquisition. */
 	get ownerId(): string {
 		return this._ownerId;
+	}
+
+	/**
+	 * Latest heartbeat telemetry for a mission this coordinator executed. The
+	 * heartbeat object (and thus its telemetry) survives stop so callers can
+	 * inspect renewal/loss state after completion. Returns `undefined` before
+	 * the coordinator has ever run the mission.
+	 */
+	heartbeatTelemetry(missionId: string): HeartbeatTelemetry | undefined {
+		return this._heartbeats.get(missionId)?.telemetry();
 	}
 
 	// =========================================================================
@@ -457,76 +492,124 @@ export class DurableMissionCoordinator {
 	 */
 	async resume(missionId: string, options: MissionLaunchOptions = {}): Promise<DurableMissionRecord> {
 		const { record: queued, lease } = await this.acquireOwnership(missionId);
+		const proof: ExecutionLeaseProof = { leaseId: lease.leaseId, fencingToken: lease.fencingToken };
 		let record = queued;
 
-		// Allocate the durable attempt identity and persist LAUNCHING BEFORE
-		// invoking the executor. If Jensen crashes immediately after the executor
-		// actually launches but before RUNNING is persisted, the attempt intent
-		// survives durably and restart reconciliation marks it interrupted.
-		const attemptId = this._attemptIdFactory();
-		const launchAtMs = this._now();
-		let next = this._withTransition(record, "LAUNCHING", {
-			reason: "launch initiated",
-			attemptId,
-			atMs: launchAtMs,
-		});
-		next = {
-			...next,
-			currentAttemptId: attemptId,
-			startedAtMs: record.startedAtMs ?? launchAtMs,
-			attempts: [...record.attempts, { attemptId, startedAtMs: launchAtMs }],
-		};
-		record = await this._commitFenced(record, next, lease);
+		// Combine the caller's cancellation signal with the authority-loss signal
+		// produced by the heartbeat. Both abort the executor through the same
+		// AbortSignal path, but authority loss keeps a distinct diagnostic reason.
+		const authorityLost = new AbortController();
+		const signal = options.signal ? AbortSignal.any([options.signal, authorityLost.signal]) : authorityLost.signal;
+		let authorityLostInfo: HeartbeatAuthorityLossInfo | undefined;
 
-		const executor = this._executor;
-		let handle: MissionHandle;
+		const heartbeat = this._buildHeartbeat(missionId, proof, (info) => {
+			authorityLostInfo = info;
+			authorityLost.abort(info);
+		});
+		this._heartbeats.set(missionId, heartbeat);
+
+		let handle: MissionHandle | undefined;
+		let completed = false;
+
 		try {
-			handle = await executor.launch(record.request, { signal: options.signal });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return this._commitFenced(record, this._failLaunch(record, attemptId, message, launchAtMs), lease);
+			// Allocate the durable attempt identity and persist LAUNCHING BEFORE
+			// invoking the executor. If Jensen crashes immediately after the executor
+			// actually launches but before RUNNING is persisted, the attempt intent
+			// survives durably and restart reconciliation marks it interrupted.
+			const attemptId = this._attemptIdFactory();
+			const launchAtMs = this._now();
+			let next = this._withTransition(record, "LAUNCHING", {
+				reason: "launch initiated",
+				attemptId,
+				atMs: launchAtMs,
+			});
+			next = {
+				...next,
+				currentAttemptId: attemptId,
+				startedAtMs: record.startedAtMs ?? launchAtMs,
+				attempts: [...record.attempts, { attemptId, startedAtMs: launchAtMs }],
+			};
+			record = await this._commitFenced(record, next, lease);
+
+			const executor = this._executor;
+			try {
+				handle = await executor.launch(record.request, { signal });
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				const failed = await this._commitFenced(
+					record,
+					this._failLaunch(record, attemptId, message, launchAtMs),
+					lease,
+				);
+				completed = true;
+				return failed;
+			}
+
+			const executionId = handle.executionId;
+			next = this._withTransition(record, "RUNNING", {
+				reason: "executor launched",
+				executionId,
+			});
+			const launchAttemptIndex = next.attempts.length - 1;
+			next = {
+				...next,
+				currentAttemptId: attemptId,
+				currentExecutionId: executionId,
+				startedAtMs: record.startedAtMs ?? launchAtMs,
+				attempts: next.attempts.map((a, i) => (i === launchAttemptIndex ? { ...a, executionId } : a)),
+			};
+			record = await this._commitFenced(record, next, lease);
+
+			// Heartbeat starts only after RUNNING ownership is durably confirmed,
+			// so an execution that never actually launched is never renewed.
+			heartbeat.start(lease.expiresAtMs);
+
+			const result = await executor.awaitResult(handle, { signal });
+
+			// If the heartbeat proved authority was lost while we awaited the
+			// result, never write a terminal record: the fence (or the lease
+			// expiry + recovery path) remains the authority.
+			if (authorityLostInfo) {
+				throw new ExecutionAuthorityLostError(authorityLostInfo);
+			}
+
+			next = this._withTransition(record, result.state, {
+				reason: "executor result",
+				executionId,
+			});
+			const attemptIndex = next.attempts.length - 1;
+			const completedAttempt: DurableExecutionAttempt = {
+				...next.attempts[attemptIndex],
+				executionId,
+				finishedAtMs: result.finishedAtMs,
+				endReason: attemptEndReason(result),
+			};
+			next = {
+				...next,
+				result,
+				resultExecutionId: executionId,
+				finishedAtMs: result.finishedAtMs,
+				currentAttemptId: undefined,
+				currentExecutionId: undefined,
+				lease: undefined,
+				attempts: [...next.attempts.slice(0, attemptIndex), completedAttempt],
+			};
+
+			const terminal = await this._commitFenced(record, next, lease);
+			completed = true;
+			return terminal;
+		} finally {
+			heartbeat.stop();
+			if (!completed && handle) {
+				// Abnormal exit (authority lost, commit failure, or executor
+				// error): do not leave the child process running.
+				try {
+					await handle.cancel("execution aborted");
+				} catch {
+					// Best-effort: never mask the original failure.
+				}
+			}
 		}
-
-		const executionId = handle.executionId;
-		next = this._withTransition(record, "RUNNING", {
-			reason: "executor launched",
-			executionId,
-		});
-		const launchAttemptIndex = next.attempts.length - 1;
-		next = {
-			...next,
-			currentAttemptId: attemptId,
-			currentExecutionId: executionId,
-			startedAtMs: record.startedAtMs ?? launchAtMs,
-			attempts: next.attempts.map((a, i) => (i === launchAttemptIndex ? { ...a, executionId } : a)),
-		};
-		record = await this._commitFenced(record, next, lease);
-
-		const result = await executor.awaitResult(handle, { signal: options.signal });
-
-		next = this._withTransition(record, result.state, {
-			reason: "executor result",
-			executionId,
-		});
-		const attemptIndex = next.attempts.length - 1;
-		const completedAttempt: DurableExecutionAttempt = {
-			...next.attempts[attemptIndex],
-			executionId,
-			finishedAtMs: result.finishedAtMs,
-			endReason: attemptEndReason(result),
-		};
-		next = {
-			...next,
-			result,
-			resultExecutionId: executionId,
-			finishedAtMs: result.finishedAtMs,
-			currentAttemptId: undefined,
-			currentExecutionId: undefined,
-			lease: undefined,
-			attempts: [...next.attempts.slice(0, attemptIndex), completedAttempt],
-		};
-
-		return this._commitFenced(record, next, lease);
 	}
 
 	/**
@@ -580,6 +663,26 @@ export class DurableMissionCoordinator {
 	// Internals
 	// =========================================================================
 
+	private _buildHeartbeat(
+		missionId: string,
+		proof: ExecutionLeaseProof,
+		onAuthorityLost: (info: HeartbeatAuthorityLossInfo) => void,
+	): ExecutionHeartbeat {
+		return new ExecutionHeartbeat({
+			missionId,
+			leaseId: proof.leaseId,
+			fencingToken: proof.fencingToken,
+			timing: this._heartbeatTiming,
+			now: this._now,
+			schedule: this._heartbeatScheduler,
+			renew: async (now) => {
+				const renewed = await this.renewOwnership(missionId, proof, { now });
+				return { expiresAtMs: renewed.lease.expiresAtMs };
+			},
+			onAuthorityLost,
+		});
+	}
+
 	private _withTransition(
 		record: DurableMissionRecord,
 		to: MissionState,
@@ -604,35 +707,58 @@ export class DurableMissionCoordinator {
 		};
 	}
 
+	/**
+	 * Persist an execution-authoritative transition under the current fence.
+	 *
+	 * This is an atomic store mutation, NOT an optimistic `save` against a
+	 * coordinator-held snapshot. Heartbeat renewals legitimately advance the
+	 * ordinary `revision` while the execution is running, so a snapshot-based
+	 * `expectedRevision` would reject a valid terminal commit. The fencing token
+	 * (leaseId + fencingToken) is the authority here; `revision` is rebased onto
+	 * the current record so it remains a monotonic history counter.
+	 */
 	private async _commitFenced(
 		previous: DurableMissionRecord,
 		next: DurableMissionRecord,
 		proof: ExecutionLeaseProof,
 	): Promise<DurableMissionRecord> {
-		const result = await this._store.save(next, { expectedRevision: previous.revision, leaseProof: proof });
-		if (result.status === "saved") return next;
-		if (result.status === "stale") {
-			throw new ExecutionOwnershipError(
-				"STALE_REVISION",
-				`Stale revision for mission ${next.missionId}: expected ${result.expectedRevision}, found ${result.actualRevision}`,
-				{
-					missionId: next.missionId,
-					expectedRevision: result.expectedRevision,
-					actualRevision: result.actualRevision,
-				},
-			);
+		type CommitOutcome =
+			| { status: "committed"; record: DurableMissionRecord }
+			| { status: "lease_not_found" }
+			| { status: "stale_owner"; leaseId: string; fencingToken: number };
+
+		const result = await this._store.mutate<CommitOutcome>(previous.missionId, (current) => {
+			const lease = current.lease;
+			if (!lease) return { kind: "noop", value: { status: "lease_not_found" as const } };
+			if (lease.leaseId !== proof.leaseId || lease.fencingToken !== proof.fencingToken) {
+				return {
+					kind: "noop",
+					value: { status: "stale_owner" as const, leaseId: lease.leaseId, fencingToken: lease.fencingToken },
+				};
+			}
+			const committed: DurableMissionRecord = {
+				...next,
+				revision: current.revision + 1,
+			};
+			return { kind: "write", next: committed, value: { status: "committed" as const, record: committed } };
+		});
+
+		if (result.status === "missing") {
+			throw new ExecutionOwnershipError("LEASE_NOT_FOUND", `Mission ${next.missionId} not found`);
 		}
-		if (result.status === "stale_owner") {
-			throw new ExecutionOwnershipError(
-				"STALE_EXECUTION_OWNER",
-				`Stale execution owner for mission ${next.missionId}: lease no longer authoritative`,
-				{ missionId: next.missionId, leaseId: result.leaseId, fencingToken: result.fencingToken },
-			);
+		if (result.status === "corrupt") {
+			throw new Error(`Mission ${next.missionId} is corrupt: ${result.diagnostic}`);
 		}
-		if (result.status === "lease_not_found") {
+		const value = result.value;
+		if (value.status === "committed") return value.record;
+		if (value.status === "lease_not_found") {
 			throw new ExecutionOwnershipError("LEASE_NOT_FOUND", `Mission ${next.missionId} has no execution lease`);
 		}
-		throw new ExecutionOwnershipError("LEASE_CONFLICT", `Unexpected lease conflict for mission ${next.missionId}`);
+		throw new ExecutionOwnershipError(
+			"STALE_EXECUTION_OWNER",
+			`Stale execution owner for mission ${next.missionId}: lease no longer authoritative`,
+			{ missionId: next.missionId, leaseId: value.leaseId, fencingToken: value.fencingToken },
+		);
 	}
 
 	private _mapRenewResult(

@@ -24,6 +24,7 @@ import {
 	type DurableRecoveryReport,
 } from "../mission-domain/durable-coordinator.js";
 import type { DurableMissionRecord, DurableMissionStore } from "../mission-domain/durable-store.js";
+import type { HeartbeatScheduler, HeartbeatTelemetry } from "../mission-domain/execution-heartbeat.js";
 import {
 	type ExecutionLease,
 	type ExecutionLeaseProof,
@@ -54,6 +55,8 @@ export interface DurableDelegationChildOutcome {
 	executionId?: string;
 	/** Fencing epoch of the winning execution (ownership authority epoch). */
 	fencingToken: number;
+	/** Latest heartbeat telemetry for this execution (observability). */
+	heartbeatTelemetry?: HeartbeatTelemetry;
 }
 
 export interface DurableMissionDelegatorOptions {
@@ -68,6 +71,12 @@ export interface DurableMissionDelegatorOptions {
 	leaseDurationMs?: number;
 	/** Lease identity factory (tests). */
 	leaseIdFactory?: () => string;
+	/** Heartbeat renewal cadence override (defaults to leaseDurationMs / 3). */
+	heartbeatIntervalMs?: number;
+	/** Heartbeat safety margin override (defaults to leaseDurationMs / 6). */
+	renewalSafetyMarginMs?: number;
+	/** Injectable timer scheduler for deterministic heartbeat tests. */
+	heartbeatScheduler?: HeartbeatScheduler;
 }
 
 /**
@@ -114,6 +123,9 @@ export class DurableMissionDelegator {
 			ownerId: this._ownerId,
 			leaseDurationMs: options.leaseDurationMs,
 			leaseIdFactory: options.leaseIdFactory,
+			heartbeatIntervalMs: options.heartbeatIntervalMs,
+			renewalSafetyMarginMs: options.renewalSafetyMarginMs,
+			heartbeatScheduler: options.heartbeatScheduler,
 		};
 	}
 
@@ -174,7 +186,7 @@ export class DurableMissionDelegator {
 		const coordinator = this.coordinator(executor);
 		await coordinator.createMission(request);
 		const terminal = await coordinator.resume(request.missionId, { signal: options.signal });
-		return this._outcome(terminal);
+		return this._outcome(terminal, coordinator.heartbeatTelemetry(request.missionId));
 	}
 
 	/**
@@ -188,11 +200,15 @@ export class DurableMissionDelegator {
 		executor: MissionExecutor,
 		options: { signal?: AbortSignal } = {},
 	): Promise<DurableDelegationChildOutcome> {
-		const terminal = await this.coordinator(executor).resume(missionId, { signal: options.signal });
-		return this._outcome(terminal);
+		const coordinator = this.coordinator(executor);
+		const terminal = await coordinator.resume(missionId, { signal: options.signal });
+		return this._outcome(terminal, coordinator.heartbeatTelemetry(missionId));
 	}
 
-	private _outcome(terminal: DurableMissionRecord): DurableDelegationChildOutcome {
+	private _outcome(
+		terminal: DurableMissionRecord,
+		heartbeatTelemetry?: HeartbeatTelemetry,
+	): DurableDelegationChildOutcome {
 		const result = terminal.result;
 		if (!result) {
 			throw new Error(`Mission ${terminal.missionId} did not reach a terminal result`);
@@ -207,6 +223,7 @@ export class DurableMissionDelegator {
 			attemptId: lastAttempt?.attemptId ?? "",
 			executionId: terminal.resultExecutionId ?? lastAttempt?.executionId,
 			fencingToken: terminal.fencingToken,
+			heartbeatTelemetry,
 		};
 	}
 

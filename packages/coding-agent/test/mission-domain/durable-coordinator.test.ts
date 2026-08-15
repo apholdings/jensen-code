@@ -364,18 +364,21 @@ class CrashAfterLaunchStore implements DurableMissionStore {
 		return this.inner.load(missionId);
 	}
 
-	async save(record: DurableMissionRecord, options?: DurableMissionSaveOptions): Promise<DurableMissionSaveResult> {
-		if (record.state === "RUNNING") {
-			throw new Error("simulated crash after launch, before RUNNING persistence");
-		}
+	save(record: DurableMissionRecord, options?: DurableMissionSaveOptions): Promise<DurableMissionSaveResult> {
 		return this.inner.save(record, options);
 	}
 
-	mutate<T>(
+	async mutate<T>(
 		missionId: string,
 		mutation: (current: DurableMissionRecord) => DurableMissionMutation<T>,
 	): Promise<DurableMissionMutateResult<T>> {
-		return this.inner.mutate(missionId, mutation);
+		return this.inner.mutate(missionId, (current) => {
+			const output = mutation(current);
+			if (output.kind === "write" && output.next.state === "RUNNING") {
+				throw new Error("simulated crash after launch, before RUNNING persistence");
+			}
+			return output;
+		});
 	}
 
 	listMissions() {
