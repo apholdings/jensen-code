@@ -8,6 +8,7 @@
  * coordinator/delegator semantics below.
  */
 
+import type { AssignmentSummary } from "../assignment/assignment-types.js";
 import type { DurableMissionCoordinator } from "../mission-domain/durable-coordinator.js";
 import type {
 	DurableExecutionAttempt,
@@ -157,6 +158,10 @@ export interface MissionSummary {
 	interrupted: boolean;
 	resumable: boolean;
 	childCount: number;
+	/** Assignment designation (present only when an assignment store is wired). */
+	assigned: boolean;
+	currentAssignmentId?: string;
+	assignedExecutorId?: string;
 }
 
 /**
@@ -201,6 +206,8 @@ export interface MissionDetail {
 	evidenceRefs: MissionEvidenceRef[];
 	children: string[];
 	resumability: Resumability;
+	/** Current assignment designation, when an assignment store is wired. */
+	assignment?: AssignmentSummary;
 }
 
 // =============================================================================

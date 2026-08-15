@@ -203,6 +203,7 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} run|evidence|doctor|mcp  Inspect durable state and diagnostics
   ${APP_NAME} mission ...            Inspect/resume durable missions (Mission Control)
   ${APP_NAME} executor ...           Inspect/register/heartbeat executor runtimes
+  ${APP_NAME} assignment ...         Designate missions to executors (Assignment Foundation)
 
 ${chalk.bold("Options:")}
   --provider <name>              Provider name (default: google)

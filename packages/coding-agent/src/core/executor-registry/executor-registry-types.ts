@@ -19,6 +19,7 @@
 
 import { randomUUID } from "node:crypto";
 import * as os from "node:os";
+import type { AssignmentSummary } from "../assignment/assignment-types.js";
 
 // =============================================================================
 // Structured errors
@@ -237,8 +238,13 @@ export interface ExecutorDetail {
 	runtimeEpoch: number;
 	runtime?: ExecutorRuntime;
 	liveness: ExecutorLiveness;
-	/** Assignment correlation is deferred to the assignment slice. */
-	currentAssignments: { status: "unavailable"; reason: string };
+	/**
+	 * Bounded current-assignment summaries. Present only when an assignment
+	 * store is wired; otherwise `unavailable` (never fabricated).
+	 */
+	currentAssignments:
+		| { status: "available"; assignments: AssignmentSummary[] }
+		| { status: "unavailable"; reason: string };
 }
 
 export type ExecutorListSort = "createdAtMs" | "updatedAtMs" | "executorId";

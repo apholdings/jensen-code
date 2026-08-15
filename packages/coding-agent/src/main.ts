@@ -16,6 +16,7 @@ import { parseResumeChildCommand } from "./cli/resume-child-command.js";
 import { parseResumeCommand } from "./cli/resume-command.js";
 import { selectSession } from "./cli/session-picker.js";
 import { APP_NAME, getAgentDir, getModelsPath, VERSION } from "./config.js";
+import { handleAssignmentCommand } from "./core/assignment/cli.js";
 import { AuthStorage } from "./core/auth-storage.js";
 import { handleBenchmarkCommand } from "./core/benchmark/index.js";
 import { checkTodoHealth } from "./core/doctor.js";
@@ -913,6 +914,10 @@ export async function main(args: string[]) {
 	}
 
 	if (await handleExecutorCommand(args)) {
+		return;
+	}
+
+	if (await handleAssignmentCommand(args)) {
 		return;
 	}
 

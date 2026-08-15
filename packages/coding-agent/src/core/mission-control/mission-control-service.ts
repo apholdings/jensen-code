@@ -10,6 +10,8 @@
  * into FileDurableMissionStore, session directories, or lock files.
  */
 
+import type { AssignmentStore } from "../assignment/assignment-store.js";
+import { type AssignmentRecord, toAssignmentSummary } from "../assignment/assignment-types.js";
 import type { EvidenceArchive } from "../context-runtime/evidence-archive.js";
 import {
 	type EvidenceRetrievalOptions,
@@ -59,6 +61,8 @@ export interface MissionControlServiceOptions {
 	evidenceArchive?: EvidenceArchive;
 	/** Child AgentSession directory for explicit resume. */
 	sessionDir?: string;
+	/** Optional assignment store for surfacing current designation views. */
+	assignmentStore?: AssignmentStore;
 	/** Stable executor owner identity (defaults to a fresh host+UUID identity). */
 	ownerId?: string;
 	now?: () => number;
@@ -86,6 +90,7 @@ export class MissionControlService {
 	private readonly _delegator: DurableMissionDelegator;
 	private readonly _evidenceArchive?: EvidenceArchive;
 	private readonly _sessionDir?: string;
+	private readonly _assignmentStore?: AssignmentStore;
 	private readonly _now: () => number;
 	private readonly _coordinatorOptions: DurableMissionCoordinatorOptions;
 	private readonly _active = new Map<string, MissionControlActiveExecution>();
@@ -106,6 +111,7 @@ export class MissionControlService {
 			});
 		this._evidenceArchive = options.evidenceArchive;
 		this._sessionDir = options.sessionDir;
+		this._assignmentStore = options.assignmentStore;
 		this._now = options.now ?? (() => Date.now());
 		this._coordinatorOptions = {
 			now: options.now,
@@ -152,10 +158,27 @@ export class MissionControlService {
 			}
 		}
 
+		// One bulk assignment read so listing never becomes O(assignments × missions).
+		let currentAssignments: Map<string, AssignmentRecord> | undefined;
+		if (this._assignmentStore) {
+			currentAssignments = new Map<string, AssignmentRecord>();
+			const { records: assignmentRecords } = await this._assignmentStore.listRecords();
+			for (const assignment of assignmentRecords) {
+				if (assignment.current) currentAssignments.set(assignment.missionId, assignment);
+			}
+		}
+
 		const now = this._now();
 		let entries: MissionSummary[] = [];
 		for (const record of records.values()) {
-			entries.push(this._toSummary(record, childCount.get(record.missionId) ?? 0, now));
+			entries.push(
+				this._toSummary(
+					record,
+					childCount.get(record.missionId) ?? 0,
+					now,
+					currentAssignments?.get(record.missionId),
+				),
+			);
 		}
 
 		const filter = options.filter;
@@ -193,8 +216,9 @@ export class MissionControlService {
 		const now = this._now();
 		const children = await this._store.listChildren(missionId);
 		const ownership = this._toOwnership(record, now);
+		const currentAssignment = await this._currentAssignmentFor(missionId);
 		return {
-			summary: this._toSummary(record, children.length, now),
+			summary: this._toSummary(record, children.length, now, currentAssignment),
 			request: this._toRequestView(record),
 			currentAttempt: this._currentAttemptView(record),
 			ownership,
@@ -209,6 +233,7 @@ export class MissionControlService {
 			evidenceRefs: await this._evidenceRefs(record),
 			children,
 			resumability: this._toResumability(record, now),
+			assignment: currentAssignment ? toAssignmentSummary(currentAssignment) : undefined,
 		};
 	}
 
@@ -438,7 +463,12 @@ export class MissionControlService {
 		return loaded.record;
 	}
 
-	private _toSummary(record: DurableMissionRecord, childCount: number, now: number): MissionSummary {
+	private _toSummary(
+		record: DurableMissionRecord,
+		childCount: number,
+		now: number,
+		assignment?: AssignmentRecord,
+	): MissionSummary {
 		const resumability = this._toResumability(record, now);
 		const ownership = this._toOwnership(record, now);
 		return {
@@ -461,7 +491,24 @@ export class MissionControlService {
 			interrupted: record.state === "INTERRUPTED",
 			resumable: resumability.resumable,
 			childCount,
+			assigned: assignment !== undefined,
+			currentAssignmentId: assignment?.assignmentId,
+			assignedExecutorId: assignment?.executorId,
 		};
+	}
+
+	private async _currentAssignmentFor(missionId: string): Promise<AssignmentRecord | undefined> {
+		if (!this._assignmentStore) return undefined;
+		const { records } = await this._assignmentStore.listRecords();
+		const current = records.filter((record) => record.missionId === missionId && record.current);
+		if (current.length > 1) {
+			throw new MissionControlError(
+				"MISSION_TREE_CORRUPT",
+				`Mission ${missionId} has multiple current assignments`,
+				{ missionId, assignmentIds: current.map((record) => record.assignmentId) },
+			);
+		}
+		return current[0];
 	}
 
 	private _toRequestView(record: DurableMissionRecord): MissionRequestView {

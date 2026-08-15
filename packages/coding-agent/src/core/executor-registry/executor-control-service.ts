@@ -11,6 +11,8 @@
  */
 
 import { randomUUID } from "node:crypto";
+import type { AssignmentStore } from "../assignment/assignment-store.js";
+import { toAssignmentSummary } from "../assignment/assignment-types.js";
 import { createExecutorRecord, type ExecutorMutation, type ExecutorRegistryStore } from "./executor-registry-store.js";
 import {
 	type ActivateExecutorInput,
@@ -39,6 +41,8 @@ export interface ExecutorControlServiceOptions {
 	now?: () => number;
 	/** Default runtime heartbeat expiry window. */
 	expiryMs?: number;
+	/** Optional assignment store for surfacing real current-assignment views. */
+	assignmentStore?: AssignmentStore;
 	/** Runtime instance id factory (default: UUID, never a PID). */
 	runtimeInstanceIdFactory?: () => string;
 	ownerIdFactory?: () => string;
@@ -50,6 +54,7 @@ export class ExecutorControlService {
 	private readonly _store: ExecutorRegistryStore;
 	private readonly _now: () => number;
 	private readonly _expiryMs: number;
+	private readonly _assignmentStore?: AssignmentStore;
 	private readonly _runtimeInstanceIdFactory: () => string;
 	private readonly _ownerIdFactory: () => string;
 
@@ -57,6 +62,7 @@ export class ExecutorControlService {
 		this._store = options.store;
 		this._now = options.now ?? (() => Date.now());
 		this._expiryMs = options.expiryMs ?? DEFAULT_EXECUTOR_HEARTBEAT_EXPIRY_MS;
+		this._assignmentStore = options.assignmentStore;
 		this._runtimeInstanceIdFactory = options.runtimeInstanceIdFactory ?? (() => `runtime_${randomUUID()}`);
 		this._ownerIdFactory = options.ownerIdFactory ?? (() => newRuntimeOwnerId());
 	}
@@ -119,6 +125,19 @@ export class ExecutorControlService {
 	async getExecutor(executorId: string): Promise<ExecutorDetail> {
 		const record = await this._requireRecord(executorId);
 		const now = this._now();
+		let currentAssignments: ExecutorDetail["currentAssignments"];
+		if (this._assignmentStore) {
+			const { records } = await this._assignmentStore.listRecords();
+			const assignments = records
+				.filter((assignment) => assignment.executorId === executorId && assignment.current)
+				.map((assignment) => toAssignmentSummary(assignment));
+			currentAssignments = { status: "available", assignments };
+		} else {
+			currentAssignments = {
+				status: "unavailable",
+				reason: "assignment store is not wired into this control plane",
+			};
+		}
 		return {
 			executorId: record.executorId,
 			displayName: record.displayName,
@@ -131,10 +150,7 @@ export class ExecutorControlService {
 			runtimeEpoch: record.runtimeEpoch,
 			runtime: record.runtime ? { ...record.runtime } : undefined,
 			liveness: this._toLiveness(record, now),
-			currentAssignments: {
-				status: "unavailable",
-				reason: "mission ownerId <-> executor runtime correlation is deferred to the assignment slice",
-			},
+			currentAssignments,
 		};
 	}
 
