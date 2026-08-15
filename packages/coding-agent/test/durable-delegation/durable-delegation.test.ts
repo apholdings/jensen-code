@@ -156,6 +156,7 @@ function runningRecord(request: MissionRequest, executionId: string, now: number
 			{ seq: 2, from: "LAUNCHING", to: "RUNNING", atMs: now, executionId },
 		],
 		attempts: [{ attemptId: "attempt_E1", executionId, startedAtMs: now }],
+		fencingToken: 0,
 		revision: 4,
 	};
 }

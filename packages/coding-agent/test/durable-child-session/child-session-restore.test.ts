@@ -93,6 +93,7 @@ function interruptedRecord(request: MissionRequest, now: number): DurableMission
 				recovery: { reason: "control_plane_restart: executor ownership lost", recoveredAtMs: now },
 			},
 		],
+		fencingToken: 0,
 		revision: 4,
 	};
 }

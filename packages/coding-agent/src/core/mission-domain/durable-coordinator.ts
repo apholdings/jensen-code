@@ -1,17 +1,27 @@
 /**
- * Durable Mission Coordinator (2.4.0).
+ * Durable Mission Coordinator (2.4.0, ownership 2.7.0).
  *
  * Composes the canonical mission lifecycle with a DurableMissionStore at the
  * mission execution boundary. The parent/domain layer never remembers to write
  * files; it talks to this coordinator, and the coordinator persists every
  * authoritative lifecycle transition before and after the executor runs.
  *
+ * Execution ownership:
+ *   - Resume is explicit and always allocates a NEW execution attempt.
+ *   - Before any executor work begins, the coordinator atomically acquires a
+ *     first-class execution lease with a monotonically increasing fencing
+ *     token. Two processes racing to resume the same mission therefore have
+ *     exactly one winner; the loser receives a structured MISSION_OWNED error.
+ *   - Every execution-authoritative mutation carries lease proof
+ *     (`leaseId` + `fencingToken`); the store rejects a fenced owner.
+ *   - Terminal transition clears the lease atomically in the same write, so a
+ *     completed mission can never be modified by its former owner.
+ *
  * Design constraints:
  *   - The coordinator depends only on the injected `DurableMissionStore` port
  *     and a `MissionExecutor` seam — never on process/provider/CLI/UI code.
  *   - Opening/recovering the store NEVER auto-runs mission work.
- *   - Resume is explicit and always allocates a NEW execution attempt; it never
- *     fabricates continuity with a previous process.
+ *   - Recovery revokes only expired (dead) leases; it never steals a live lease.
  */
 
 import { randomUUID } from "node:crypto";
@@ -19,9 +29,18 @@ import {
 	createDurableMissionRecord,
 	type DurableExecutionAttempt,
 	type DurableExecutionAttemptEndReason,
+	type DurableMissionMutateResult,
 	type DurableMissionRecord,
 	type DurableMissionStore,
 } from "./durable-store.js";
+import {
+	DEFAULT_EXECUTION_LEASE_DURATION_MS,
+	type ExecutionLease,
+	type ExecutionLeaseProof,
+	ExecutionOwnershipError,
+	isExecutionLeaseActive,
+	newExecutorOwnerId,
+} from "./execution-lease.js";
 import type { MissionExecutor, MissionLaunchOptions } from "./mission-executor.js";
 import type { MissionHandle } from "./mission-handle.js";
 import type { MissionRequest } from "./mission-request.js";
@@ -36,6 +55,16 @@ export interface DurableMissionCoordinatorOptions {
 	 * coordinator-scoped and distinct from the executor's `executionId`.
 	 */
 	attemptIdFactory?: () => string;
+	/**
+	 * Executor owner identity. Defaults to a fresh host+UUID identity per
+	 * coordinator instance (never PID-derived). Pass one stable value per
+	 * executor/process lifetime for diagnostics.
+	 */
+	ownerId?: string;
+	/** Execution lease lifetime. Defaults to a conservative 30 minutes. */
+	leaseDurationMs?: number;
+	/** Lease identity factory (tests). */
+	leaseIdFactory?: () => string;
 }
 
 export interface DurableRecoveryReport {
@@ -61,6 +90,24 @@ const ACTIVE_NONTERMINAL_STATES: ReadonlySet<MissionState> = new Set<MissionStat
 	"RETRYING",
 ]);
 
+type AcquireOutcome =
+	| { status: "not_resumable"; state: MissionState }
+	| { status: "owned"; lease: ExecutionLease }
+	| { status: "acquired"; lease: ExecutionLease; record: DurableMissionRecord };
+
+type RenewOutcome =
+	| { status: "lease_not_found" }
+	| { status: "stale_owner"; lease: ExecutionLease }
+	| { status: "lease_expired"; lease: ExecutionLease }
+	| { status: "renewed"; lease: ExecutionLease; record: DurableMissionRecord };
+
+type ReleaseOutcome =
+	| { status: "lease_not_found" }
+	| { status: "stale_owner"; lease: ExecutionLease }
+	| { status: "released"; record: DurableMissionRecord };
+
+type RevokeOutcome = { status: "unchanged" } | { status: "reconciled"; previousState: MissionState };
+
 /**
  * Map a terminal MissionResult's executor-level outcome to an attempt end
  * reason. `MissionExecutionOutcome` is a strict subset of
@@ -70,17 +117,29 @@ function attemptEndReason(result: MissionResult): DurableExecutionAttemptEndReas
 	return result.executionOutcome;
 }
 
+/** The authoritative lease acquired for one mission, plus the record after acquisition. */
+export interface AcquiredExecutionOwnership {
+	record: DurableMissionRecord;
+	lease: ExecutionLease;
+}
+
 export class DurableMissionCoordinator {
 	private readonly _store: DurableMissionStore;
 	private readonly _executor: MissionExecutor;
 	private readonly _now: () => number;
 	private readonly _attemptIdFactory: () => string;
+	private readonly _ownerId: string;
+	private readonly _leaseDurationMs: number;
+	private readonly _leaseIdFactory: () => string;
 
 	constructor(store: DurableMissionStore, executor: MissionExecutor, options: DurableMissionCoordinatorOptions = {}) {
 		this._store = store;
 		this._executor = executor;
 		this._now = options.now ?? (() => Date.now());
 		this._attemptIdFactory = options.attemptIdFactory ?? (() => `attempt_${randomUUID()}`);
+		this._ownerId = options.ownerId ?? newExecutorOwnerId();
+		this._leaseDurationMs = options.leaseDurationMs ?? DEFAULT_EXECUTION_LEASE_DURATION_MS;
+		this._leaseIdFactory = options.leaseIdFactory ?? (() => `lease_${randomUUID()}`);
 	}
 
 	/** The underlying persistence port (exposed for tests and load paths). */
@@ -90,6 +149,11 @@ export class DurableMissionCoordinator {
 
 	get executor(): MissionExecutor {
 		return this._executor;
+	}
+
+	/** Stable executor owner identity used for lease acquisition. */
+	get ownerId(): string {
+		return this._ownerId;
 	}
 
 	// =========================================================================
@@ -140,16 +204,170 @@ export class DurableMissionCoordinator {
 	}
 
 	// =========================================================================
+	// Execution ownership (acquire / renew / release)
+	// =========================================================================
+
+	/**
+	 * Atomically acquire execution ownership for a CREATED or INTERRUPTED
+	 * mission. Transitions the mission to QUEUED and persists a new execution
+	 * lease with a strictly greater fencing token. Exactly one of any set of
+	 * racing cross-process callers wins; losers get structured errors.
+	 *
+	 * Does NOT invoke the executor.
+	 */
+	async acquireOwnership(missionId: string): Promise<AcquiredExecutionOwnership> {
+		const now = this._now();
+		const leaseId = this._leaseIdFactory();
+
+		const result = await this._store.mutate<AcquireOutcome>(missionId, (current) => {
+			if (isTerminalMissionState(current.state)) {
+				return { kind: "noop", value: { status: "not_resumable" as const, state: current.state } };
+			}
+			// A live owner exists regardless of which active non-terminal state it
+			// has reached. This is the authoritative "owned" signal.
+			if (current.lease && isExecutionLeaseActive(current.lease, now)) {
+				return { kind: "noop", value: { status: "owned" as const, lease: current.lease } };
+			}
+			if (current.state !== "CREATED" && current.state !== "INTERRUPTED") {
+				return { kind: "noop", value: { status: "not_resumable" as const, state: current.state } };
+			}
+
+			const fencingToken = current.fencingToken + 1;
+			const lease: ExecutionLease = {
+				ownerId: this._ownerId,
+				leaseId,
+				fencingToken,
+				acquiredAtMs: now,
+				renewedAtMs: now,
+				expiresAtMs: now + this._leaseDurationMs,
+			};
+			const next: DurableMissionRecord = {
+				...this._withTransition(current, "QUEUED", {
+					reason: current.state === "INTERRUPTED" ? "explicit resume (new execution attempt)" : "initial launch",
+					atMs: now,
+				}),
+				fencingToken,
+				lease,
+			};
+			return { kind: "write", next, value: { status: "acquired" as const, lease, record: next } };
+		});
+
+		if (result.status === "missing") throw new Error(`Mission not found: ${missionId}`);
+		if (result.status === "corrupt") throw new Error(`Mission ${missionId} is corrupt: ${result.diagnostic}`);
+
+		const value = result.value;
+		if (value.status === "acquired") return { record: value.record, lease: value.lease };
+		if (value.status === "owned") {
+			throw new ExecutionOwnershipError(
+				"MISSION_OWNED",
+				`Mission ${missionId} already has an active execution owner`,
+				{
+					missionId,
+					ownerId: value.lease.ownerId,
+					leaseId: value.lease.leaseId,
+					fencingToken: value.lease.fencingToken,
+				},
+			);
+		}
+		if (isTerminalMissionState(value.state)) {
+			throw new Error(`Cannot resume terminal mission ${missionId} (${value.state})`);
+		}
+		throw new Error(`Cannot resume mission ${missionId} from state ${value.state}; reconcile (recover) first`);
+	}
+
+	/**
+	 * Renew a live lease. Requires current lease proof and does NOT change the
+	 * fencing token (renewal is a heartbeat, not a takeover).
+	 */
+	async renewOwnership(
+		missionId: string,
+		proof: ExecutionLeaseProof,
+		options: { now?: number } = {},
+	): Promise<{ lease: ExecutionLease; record: DurableMissionRecord }> {
+		const now = options.now ?? this._now();
+
+		const result = await this._store.mutate<RenewOutcome>(missionId, (current) => {
+			const lease = current.lease;
+			if (!lease) return { kind: "noop", value: { status: "lease_not_found" as const } };
+			if (lease.leaseId !== proof.leaseId || lease.fencingToken !== proof.fencingToken) {
+				return { kind: "noop", value: { status: "stale_owner" as const, lease } };
+			}
+			if (!isExecutionLeaseActive(lease, now)) {
+				return { kind: "noop", value: { status: "lease_expired" as const, lease } };
+			}
+			const renewed: ExecutionLease = { ...lease, renewedAtMs: now, expiresAtMs: now + this._leaseDurationMs };
+			const next: DurableMissionRecord = {
+				...current,
+				lease: renewed,
+				updatedAtMs: now,
+				revision: current.revision + 1,
+			};
+			return { kind: "write", next, value: { status: "renewed" as const, lease: renewed, record: next } };
+		});
+
+		return this._mapRenewResult(missionId, result);
+	}
+
+	/**
+	 * Release a live lease without reaching a terminal state. This is a clean
+	 * non-terminal stop: any active non-terminal state moves to INTERRUPTED
+	 * (recoverable) and ownership is cleared atomically. Terminal completion
+	 * should instead clear the lease as part of the terminal write.
+	 */
+	async releaseOwnership(
+		missionId: string,
+		proof: ExecutionLeaseProof,
+		options: { now?: number } = {},
+	): Promise<DurableMissionRecord> {
+		const now = options.now ?? this._now();
+
+		const result = await this._store.mutate<ReleaseOutcome>(missionId, (current) => {
+			const lease = current.lease;
+			if (!lease) return { kind: "noop", value: { status: "lease_not_found" as const } };
+			if (lease.leaseId !== proof.leaseId || lease.fencingToken !== proof.fencingToken) {
+				return { kind: "noop", value: { status: "stale_owner" as const, lease } };
+			}
+
+			let next: DurableMissionRecord;
+			if (isTerminalMissionState(current.state) || current.state === "CREATED" || current.state === "INTERRUPTED") {
+				next = { ...current, lease: undefined, updatedAtMs: now, revision: current.revision + 1 };
+			} else {
+				next = this._withTransition(current, "INTERRUPTED", {
+					reason: "owner released without terminal result",
+					atMs: now,
+				});
+				next = { ...next, lease: undefined, currentAttemptId: undefined, currentExecutionId: undefined };
+			}
+			return { kind: "write", next, value: { status: "released" as const, record: next } };
+		});
+
+		if (result.status === "missing")
+			throw new ExecutionOwnershipError("LEASE_NOT_FOUND", `Mission ${missionId} not found`);
+		if (result.status === "corrupt") throw new Error(`Mission ${missionId} is corrupt: ${result.diagnostic}`);
+		const value = result.value;
+		if (value.status === "released") return value.record;
+		if (value.status === "lease_not_found") {
+			throw new ExecutionOwnershipError("LEASE_NOT_FOUND", `Mission ${missionId} has no execution lease`);
+		}
+		throw new ExecutionOwnershipError(
+			"STALE_EXECUTION_OWNER",
+			`Mission ${missionId} lease no longer belongs to this owner`,
+			{ missionId, leaseId: value.lease.leaseId, fencingToken: value.lease.fencingToken },
+		);
+	}
+
+	// =========================================================================
 	// Restart reconciliation (no auto re-execution)
 	// =========================================================================
 
 	/**
 	 * Inspect every persisted non-terminal mission and reconcile lost executor
 	 * ownership. Persisted active states (QUEUED/RUNNING/WAITING/BLOCKED/
-	 * RETRYING) are never blindly trusted across a restart: they transition to
-	 * INTERRUPTED with a `control_plane_restart` recovery reason. Terminal
-	 * missions stay terminal; CREATED missions stay CREATED; already-interrupted
-	 * missions are left alone. Nothing is executed.
+	 * RETRYING) are never blindly trusted across a restart: when they have no
+	 * live lease they transition to INTERRUPTED with a recovery reason. A live
+	 * (non-expired) lease is never stolen. Terminal missions stay terminal;
+	 * CREATED missions stay CREATED; already-interrupted missions are left
+	 * alone. Nothing is executed.
 	 */
 	async recover(options: { now?: number } = {}): Promise<DurableRecoveryReport> {
 		const now = options.now ?? this._now();
@@ -191,6 +409,13 @@ export class DurableMissionCoordinator {
 				continue;
 			}
 
+			// A live owner must not be stolen by ordinary recovery.
+			if (record.lease && isExecutionLeaseActive(record.lease, now)) {
+				report.unchanged.push(id);
+				report.actions.push(`mission '${id}' has a live lease (owner ${record.lease.ownerId}); left unchanged`);
+				continue;
+			}
+
 			// Honest per-state recovery reason. QUEUED has no attempt and no
 			// ownership (launch was never initiated); LAUNCHING has a durable
 			// attempt but ownership was never confirmed; RUNNING/WAITING/BLOCKED/
@@ -202,24 +427,17 @@ export class DurableMissionCoordinator {
 						? "control_plane_restart: queued but never launched"
 						: "control_plane_restart: executor ownership lost";
 
-			let next = this._withTransition(record, "INTERRUPTED", { reason, atMs: now });
-
-			const attempts = [...record.attempts];
-			if (record.currentAttemptId) {
-				const index = attempts.findIndex((a) => a.attemptId === record.currentAttemptId);
-				if (index >= 0) {
-					attempts[index] = {
-						...attempts[index],
-						endReason: "INTERRUPTED",
-						recovery: { reason, recoveredAtMs: now },
-					};
-				}
+			const revoked = await this._revokeInterrupted(id, now, reason);
+			if (revoked.status === "reconciled") {
+				report.reconciled.push(id);
+				report.actions.push(`mission '${id}' reconciled ${revoked.previousState} → INTERRUPTED`);
+			} else if (revoked.status === "corrupt") {
+				report.corrupt.push({ missionId: id, diagnostic: revoked.diagnostic });
+				report.actions.push(`mission '${id}' became corrupt during recovery; surfaced, not recovered`);
+			} else {
+				report.unchanged.push(id);
+				report.actions.push(`mission '${id}' left unchanged after atomic re-check`);
 			}
-			next = { ...next, currentAttemptId: undefined, currentExecutionId: undefined, attempts };
-
-			await this._commit(record, next);
-			report.reconciled.push(id);
-			report.actions.push(`mission '${id}' reconciled ${record.state} → INTERRUPTED`);
 		}
 
 		return report;
@@ -238,29 +456,8 @@ export class DurableMissionCoordinator {
 	 * in `attempts` for auditability and is never overwritten.
 	 */
 	async resume(missionId: string, options: MissionLaunchOptions = {}): Promise<DurableMissionRecord> {
-		const loaded = await this._store.load(missionId);
-		if (loaded.status === "missing") {
-			throw new Error(`Mission not found: ${missionId}`);
-		}
-		if (loaded.status === "corrupt") {
-			throw new Error(`Mission ${missionId} is corrupt: ${loaded.diagnostic}`);
-		}
-
-		let record = loaded.record;
-		if (isTerminalMissionState(record.state)) {
-			throw new Error(`Cannot resume terminal mission ${missionId} (${record.state})`);
-		}
-		if (record.state !== "CREATED" && record.state !== "INTERRUPTED") {
-			throw new Error(`Cannot resume mission ${missionId} from state ${record.state}; reconcile (recover) first`);
-		}
-
-		const resuming = record.state === "INTERRUPTED";
-		record = await this._commit(
-			record,
-			this._withTransition(record, "QUEUED", {
-				reason: resuming ? "explicit resume (new execution attempt)" : "initial launch",
-			}),
-		);
+		const { record: queued, lease } = await this.acquireOwnership(missionId);
+		let record = queued;
 
 		// Allocate the durable attempt identity and persist LAUNCHING BEFORE
 		// invoking the executor. If Jensen crashes immediately after the executor
@@ -279,7 +476,7 @@ export class DurableMissionCoordinator {
 			startedAtMs: record.startedAtMs ?? launchAtMs,
 			attempts: [...record.attempts, { attemptId, startedAtMs: launchAtMs }],
 		};
-		record = await this._commit(record, next);
+		record = await this._commitFenced(record, next, lease);
 
 		const executor = this._executor;
 		let handle: MissionHandle;
@@ -287,7 +484,7 @@ export class DurableMissionCoordinator {
 			handle = await executor.launch(record.request, { signal: options.signal });
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			return this._commit(record, this._failLaunch(record, attemptId, message, launchAtMs));
+			return this._commitFenced(record, this._failLaunch(record, attemptId, message, launchAtMs), lease);
 		}
 
 		const executionId = handle.executionId;
@@ -303,7 +500,7 @@ export class DurableMissionCoordinator {
 			startedAtMs: record.startedAtMs ?? launchAtMs,
 			attempts: next.attempts.map((a, i) => (i === launchAttemptIndex ? { ...a, executionId } : a)),
 		};
-		record = await this._commit(record, next);
+		record = await this._commitFenced(record, next, lease);
 
 		const result = await executor.awaitResult(handle, { signal: options.signal });
 
@@ -325,16 +522,18 @@ export class DurableMissionCoordinator {
 			finishedAtMs: result.finishedAtMs,
 			currentAttemptId: undefined,
 			currentExecutionId: undefined,
+			lease: undefined,
 			attempts: [...next.attempts.slice(0, attemptIndex), completedAttempt],
 		};
 
-		return this._commit(record, next);
+		return this._commitFenced(record, next, lease);
 	}
 
 	/**
 	 * Build a terminal FAILED record for an executor that rejected `launch`.
 	 * No execution id was ever established, so `resultExecutionId` stays unset;
-	 * the attempt remains auditable with `endReason: CRASHED`.
+	 * the attempt remains auditable with `endReason: CRASHED`. The lease is
+	 * cleared atomically with the terminal transition.
 	 */
 	private _failLaunch(
 		record: DurableMissionRecord,
@@ -371,6 +570,7 @@ export class DurableMissionCoordinator {
 			finishedAtMs: atMs,
 			currentAttemptId: undefined,
 			currentExecutionId: undefined,
+			lease: undefined,
 			attempts: [...next.attempts.slice(0, index), failedAttempt],
 		};
 		return next;
@@ -404,13 +604,117 @@ export class DurableMissionCoordinator {
 		};
 	}
 
-	private async _commit(previous: DurableMissionRecord, next: DurableMissionRecord): Promise<DurableMissionRecord> {
-		const result = await this._store.save(next, { expectedRevision: previous.revision });
+	private async _commitFenced(
+		previous: DurableMissionRecord,
+		next: DurableMissionRecord,
+		proof: ExecutionLeaseProof,
+	): Promise<DurableMissionRecord> {
+		const result = await this._store.save(next, { expectedRevision: previous.revision, leaseProof: proof });
+		if (result.status === "saved") return next;
 		if (result.status === "stale") {
-			throw new Error(
+			throw new ExecutionOwnershipError(
+				"STALE_REVISION",
 				`Stale revision for mission ${next.missionId}: expected ${result.expectedRevision}, found ${result.actualRevision}`,
+				{
+					missionId: next.missionId,
+					expectedRevision: result.expectedRevision,
+					actualRevision: result.actualRevision,
+				},
 			);
 		}
-		return next;
+		if (result.status === "stale_owner") {
+			throw new ExecutionOwnershipError(
+				"STALE_EXECUTION_OWNER",
+				`Stale execution owner for mission ${next.missionId}: lease no longer authoritative`,
+				{ missionId: next.missionId, leaseId: result.leaseId, fencingToken: result.fencingToken },
+			);
+		}
+		if (result.status === "lease_not_found") {
+			throw new ExecutionOwnershipError("LEASE_NOT_FOUND", `Mission ${next.missionId} has no execution lease`);
+		}
+		throw new ExecutionOwnershipError("LEASE_CONFLICT", `Unexpected lease conflict for mission ${next.missionId}`);
+	}
+
+	private _mapRenewResult(
+		missionId: string,
+		result: DurableMissionMutateResult<RenewOutcome>,
+	): { lease: ExecutionLease; record: DurableMissionRecord } {
+		if (result.status === "missing") {
+			throw new ExecutionOwnershipError("LEASE_NOT_FOUND", `Mission ${missionId} not found`);
+		}
+		if (result.status === "corrupt") {
+			throw new Error(`Mission ${missionId} is corrupt: ${result.diagnostic}`);
+		}
+		const value = result.value;
+		if (value.status === "renewed") return { lease: value.lease, record: value.record };
+		if (value.status === "lease_not_found") {
+			throw new ExecutionOwnershipError("LEASE_NOT_FOUND", `Mission ${missionId} has no execution lease`);
+		}
+		if (value.status === "stale_owner") {
+			throw new ExecutionOwnershipError(
+				"STALE_EXECUTION_OWNER",
+				`Mission ${missionId} lease no longer belongs to this owner`,
+				{ missionId, leaseId: value.lease.leaseId, fencingToken: value.lease.fencingToken },
+			);
+		}
+		throw new ExecutionOwnershipError("LEASE_EXPIRED", `Execution lease for mission ${missionId} has expired`, {
+			missionId,
+			leaseId: value.lease.leaseId,
+			fencingToken: value.lease.fencingToken,
+			expiresAtMs: value.lease.expiresAtMs,
+		});
+	}
+
+	private async _revokeInterrupted(
+		missionId: string,
+		now: number,
+		reason: string,
+	): Promise<
+		| { status: "reconciled"; previousState: MissionState }
+		| { status: "unchanged" }
+		| { status: "corrupt"; diagnostic: string }
+	> {
+		const result = await this._store.mutate<RevokeOutcome>(missionId, (current) => {
+			if (isTerminalMissionState(current.state) || current.state === "CREATED" || current.state === "INTERRUPTED") {
+				return { kind: "noop", value: { status: "unchanged" as const } };
+			}
+			if (!ACTIVE_NONTERMINAL_STATES.has(current.state)) {
+				return { kind: "noop", value: { status: "unchanged" as const } };
+			}
+			if (current.lease && isExecutionLeaseActive(current.lease, now)) {
+				return { kind: "noop", value: { status: "unchanged" as const } };
+			}
+
+			const previousState = current.state;
+			// Revoking an expired lease fenced the dead owner: bump the epoch so a
+			// late wake-up with the old fence can never write again.
+			const fencingToken = current.lease ? current.fencingToken + 1 : current.fencingToken;
+			let next = this._withTransition(current, "INTERRUPTED", { reason, atMs: now });
+
+			const attempts = [...current.attempts];
+			if (current.currentAttemptId) {
+				const index = attempts.findIndex((a) => a.attemptId === current.currentAttemptId);
+				if (index >= 0) {
+					attempts[index] = {
+						...attempts[index],
+						endReason: "INTERRUPTED",
+						recovery: { reason, recoveredAtMs: now },
+					};
+				}
+			}
+			next = {
+				...next,
+				fencingToken,
+				lease: undefined,
+				currentAttemptId: undefined,
+				currentExecutionId: undefined,
+				attempts,
+			};
+			return { kind: "write", next, value: { status: "reconciled" as const, previousState } };
+		});
+
+		if (result.status === "missing") return { status: "unchanged" };
+		if (result.status === "corrupt") return { status: "corrupt", diagnostic: result.diagnostic };
+		return result.value;
 	}
 }

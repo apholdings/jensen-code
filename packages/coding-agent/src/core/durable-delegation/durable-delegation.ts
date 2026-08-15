@@ -24,6 +24,11 @@ import {
 	type DurableRecoveryReport,
 } from "../mission-domain/durable-coordinator.js";
 import type { DurableMissionRecord, DurableMissionStore } from "../mission-domain/durable-store.js";
+import {
+	type ExecutionLease,
+	type ExecutionLeaseProof,
+	newExecutorOwnerId,
+} from "../mission-domain/execution-lease.js";
 import type { MissionExecutor } from "../mission-domain/mission-executor.js";
 import { createMissionRequest, type MissionRequest } from "../mission-domain/mission-request.js";
 import type { MissionResult } from "../mission-domain/mission-result.js";
@@ -47,6 +52,8 @@ export interface DurableDelegationChildOutcome {
 	attemptId: string;
 	/** Executor execution identity attached after launch (when launch succeeded). */
 	executionId?: string;
+	/** Fencing epoch of the winning execution (ownership authority epoch). */
+	fencingToken: number;
 }
 
 export interface DurableMissionDelegatorOptions {
@@ -55,6 +62,12 @@ export interface DurableMissionDelegatorOptions {
 	now?: () => number;
 	/** Attempt identity factory (tests). */
 	attemptIdFactory?: () => string;
+	/** Executor owner identity (defaults to a fresh host+UUID identity). */
+	ownerId?: string;
+	/** Execution lease lifetime override. */
+	leaseDurationMs?: number;
+	/** Lease identity factory (tests). */
+	leaseIdFactory?: () => string;
 }
 
 /**
@@ -90,15 +103,28 @@ const NOOP_EXECUTOR: MissionExecutor = {
 export class DurableMissionDelegator {
 	private readonly _store: DurableMissionStore;
 	private readonly _coordinatorOptions: DurableMissionCoordinatorOptions;
+	private readonly _ownerId: string;
 
 	constructor(options: DurableMissionDelegatorOptions) {
 		this._store = options.store;
-		this._coordinatorOptions = { now: options.now, attemptIdFactory: options.attemptIdFactory };
+		this._ownerId = options.ownerId ?? newExecutorOwnerId();
+		this._coordinatorOptions = {
+			now: options.now,
+			attemptIdFactory: options.attemptIdFactory,
+			ownerId: this._ownerId,
+			leaseDurationMs: options.leaseDurationMs,
+			leaseIdFactory: options.leaseIdFactory,
+		};
 	}
 
 	/** The underlying persistence port (tests/load paths). */
 	get store(): DurableMissionStore {
 		return this._store;
+	}
+
+	/** Stable executor owner identity used for lease acquisition. */
+	get ownerId(): string {
+		return this._ownerId;
 	}
 
 	/** Build a coordinator bound to one child's execution mechanism. */
@@ -180,6 +206,7 @@ export class DurableMissionDelegator {
 			result,
 			attemptId: lastAttempt?.attemptId ?? "",
 			executionId: terminal.resultExecutionId ?? lastAttempt?.executionId,
+			fencingToken: terminal.fencingToken,
 		};
 	}
 
@@ -210,5 +237,32 @@ export class DurableMissionDelegator {
 	 */
 	async recover(options: { now?: number } = {}): Promise<DurableRecoveryReport> {
 		return this.coordinator(NOOP_EXECUTOR).recover(options);
+	}
+
+	// =========================================================================
+	// Ownership control (no executor work)
+	// =========================================================================
+
+	/** Atomically acquire execution ownership without invoking the executor. */
+	async acquireOwnership(missionId: string): Promise<{ record: DurableMissionRecord; lease: ExecutionLease }> {
+		return this.coordinator(NOOP_EXECUTOR).acquireOwnership(missionId);
+	}
+
+	/** Renew a live lease (heartbeat). Does not change the fencing token. */
+	async renewOwnership(
+		missionId: string,
+		proof: ExecutionLeaseProof,
+		options: { now?: number } = {},
+	): Promise<{ lease: ExecutionLease; record: DurableMissionRecord }> {
+		return this.coordinator(NOOP_EXECUTOR).renewOwnership(missionId, proof, options);
+	}
+
+	/** Release a live lease without reaching a terminal state. */
+	async releaseOwnership(
+		missionId: string,
+		proof: ExecutionLeaseProof,
+		options: { now?: number } = {},
+	): Promise<DurableMissionRecord> {
+		return this.coordinator(NOOP_EXECUTOR).releaseOwnership(missionId, proof, options);
 	}
 }

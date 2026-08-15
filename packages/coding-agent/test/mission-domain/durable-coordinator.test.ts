@@ -21,6 +21,8 @@ import {
 	createMissionRequest,
 	createMissionResult,
 	DurableMissionCoordinator,
+	type DurableMissionMutateResult,
+	type DurableMissionMutation,
 	type DurableMissionRecord,
 	type DurableMissionSaveOptions,
 	type DurableMissionSaveResult,
@@ -117,6 +119,7 @@ function runningRecord(request: MissionRequest, executionId: string, now: number
 			{ seq: 2, from: "LAUNCHING", to: "RUNNING", atMs: now, executionId },
 		],
 		attempts: [{ attemptId: "attempt_E1", executionId, startedAtMs: now }],
+		fencingToken: 0,
 		revision: 4,
 	};
 }
@@ -368,6 +371,13 @@ class CrashAfterLaunchStore implements DurableMissionStore {
 		return this.inner.save(record, options);
 	}
 
+	mutate<T>(
+		missionId: string,
+		mutation: (current: DurableMissionRecord) => DurableMissionMutation<T>,
+	): Promise<DurableMissionMutateResult<T>> {
+		return this.inner.mutate(missionId, mutation);
+	}
+
 	listMissions() {
 		return this.inner.listMissions();
 	}
@@ -388,6 +398,7 @@ async function leaveUncertainLaunch(root: string): Promise<void> {
 	const coordinator = new DurableMissionCoordinator(new CrashAfterLaunchStore(inner), executor, {
 		now: () => 2000,
 		attemptIdFactory: () => "attempt_uncertain",
+		leaseDurationMs: 500,
 	});
 	await coordinator.createMission(request("mission_launch_gap"));
 	await expect(coordinator.resume("mission_launch_gap")).rejects.toThrow(/simulated crash/u);

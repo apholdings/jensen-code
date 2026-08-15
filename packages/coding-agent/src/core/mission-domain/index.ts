@@ -8,6 +8,7 @@
  */
 
 export {
+	type AcquiredExecutionOwnership,
 	DurableMissionCoordinator,
 	type DurableMissionCoordinatorOptions,
 	type DurableRecoveryReport,
@@ -21,6 +22,8 @@ export {
 	type DurableExecutionAttemptEndReason,
 	type DurableMissionCreateResult,
 	type DurableMissionLoadResult,
+	type DurableMissionMutateResult,
+	type DurableMissionMutation,
 	type DurableMissionParseResult,
 	type DurableMissionRecord,
 	type DurableMissionSaveOptions,
@@ -32,6 +35,16 @@ export {
 	parseDurableMissionRecord,
 	stableStringify,
 } from "./durable-store.js";
+// Execution lease + fencing (2.7.0)
+export {
+	DEFAULT_EXECUTION_LEASE_DURATION_MS,
+	type ExecutionLease,
+	type ExecutionLeaseProof,
+	ExecutionOwnershipError,
+	type ExecutionOwnershipErrorCode,
+	isExecutionLeaseActive,
+	newExecutorOwnerId,
+} from "./execution-lease.js";
 export {
 	MissionExecutionService,
 	type MissionExecutor,

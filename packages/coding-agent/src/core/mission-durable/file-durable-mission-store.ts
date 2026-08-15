@@ -10,16 +10,19 @@
  * File naming is derived only from the stable `missionId` (a safe path
  * component), never from untrusted objective text.
  *
- * Concurrency model (single process):
+ * Concurrency model (cross-process):
  *   - Each write uses a per-write unique temp path (never shared), so two
  *     writers cannot truncate/rename one another's temp file.
- *   - The optimistic `revision` compare-and-save is serialized by an in-process,
- *     per-(root, missionId) mutex, so two store instances in the SAME process
- *     cannot interleave a stale write; the stale writer receives a structural
- *     `{ status: "stale" }` result.
- *   - Cross-process (multiple OS processes) compare-and-save is NOT atomic in
- *     this slice. Concurrent cross-process writers can still last-write-win.
- *     Do not assume cross-process safety.
+ *   - Every mutation (`create`, `save`, `mutate`) is serialized by a
+ *     per-(root, missionId) cross-process file lock (proper-lockfile, atomic
+ *     exclusive lock-directory creation). Two independent OS processes cannot
+ *     interleave a read-check-write critical section.
+ *   - The optimistic `revision` compare-and-save therefore is atomic across
+ *     processes: exactly one writer wins, the stale writer receives a
+ *     structural `{ status: "stale" }`.
+ *   - Execution-authoritative saves may additionally carry a `leaseProof`;
+ *     the store verifies the current durable lease under the same critical
+ *     section and rejects stale owners (see `ExecutionLease`).
  *
  * Durability policy:
  *   - The temp file is fsynced, then atomically renamed over the target.
@@ -36,9 +39,12 @@ import { randomUUID } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import lockfile from "proper-lockfile";
 import {
 	type DurableMissionCreateResult,
 	type DurableMissionLoadResult,
+	type DurableMissionMutateResult,
+	type DurableMissionMutation,
 	type DurableMissionRecord,
 	type DurableMissionSaveOptions,
 	type DurableMissionSaveResult,
@@ -47,57 +53,32 @@ import {
 	missionRequestsEqual,
 	parseDurableMissionRecord,
 } from "../mission-domain/durable-store.js";
+import { ExecutionOwnershipError } from "../mission-domain/execution-lease.js";
 import { isTerminalMissionState } from "../mission-domain/mission-state.js";
 
 const RECORD_SUFFIX = ".mission.json";
 const ATOMIC_SUFFIX = ".tmp";
 
 /**
- * In-process, per-record mutual exclusion.
- *
- * The optimistic `revision` compare-and-save is a read-check-write spanning
- * multiple awaited filesystem operations; it is not atomic across concurrent
- * callers on its own. This mutex serializes those critical sections per
- * (store root, missionId) so two store instances in the SAME process cannot
- * interleave a stale write. It is deliberately NOT a cross-process lock.
+ * Default cross-process mutation lock tuning. The lock is held only for a short
+ * read-validate-write critical section (milliseconds), never across model
+ * inference or execution. A crashed lock holder is recovered via proper-lockfile
+ * staleness after `lockStaleMs`.
  */
-type Release = () => void;
-
-const inProcessLocks = new Map<string, Promise<void>>();
-
-function withRecordLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
-	const previous = inProcessLocks.get(key) ?? Promise.resolve();
-	let release: Release = () => {};
-	const gate = new Promise<void>((resolve) => {
-		release = resolve;
-	});
-	const tail = previous.catch(() => {}).then(() => gate);
-	inProcessLocks.set(key, tail);
-
-	return previous
-		.catch(() => {})
-		.then(async () => {
-			let released = false;
-			const unlock = () => {
-				if (released) return;
-				released = true;
-				release();
-			};
-			try {
-				return await fn();
-			} finally {
-				unlock();
-				void tail.finally(() => {
-					if (inProcessLocks.get(key) === tail) inProcessLocks.delete(key);
-				});
-			}
-		});
-}
+const DEFAULT_LOCK_STALE_MS = 30_000;
+const DEFAULT_LOCK_RETRIES = 8;
+const DEFAULT_LOCK_MIN_TIMEOUT_MS = 20;
+const DEFAULT_LOCK_MAX_TIMEOUT_MS = 250;
 
 export interface FileDurableMissionStoreOptions {
 	root: string;
 	/** Store identity (defaults to "file"). */
 	storeId?: string;
+	/** Cross-process mutation lock staleness window. */
+	lockStaleMs?: number;
+	lockRetries?: number;
+	lockMinTimeoutMs?: number;
+	lockMaxTimeoutMs?: number;
 }
 
 export function defaultDurableMissionRoot(): string {
@@ -109,10 +90,18 @@ export function defaultDurableMissionRoot(): string {
 export class FileDurableMissionStore implements DurableMissionStore {
 	readonly storeId: string;
 	private readonly root: string;
+	private readonly lockStaleMs: number;
+	private readonly lockRetries: number;
+	private readonly lockMinTimeoutMs: number;
+	private readonly lockMaxTimeoutMs: number;
 
 	constructor(options: FileDurableMissionStoreOptions) {
 		this.root = path.resolve(options.root);
 		this.storeId = options.storeId ?? "file";
+		this.lockStaleMs = options.lockStaleMs ?? DEFAULT_LOCK_STALE_MS;
+		this.lockRetries = options.lockRetries ?? DEFAULT_LOCK_RETRIES;
+		this.lockMinTimeoutMs = options.lockMinTimeoutMs ?? DEFAULT_LOCK_MIN_TIMEOUT_MS;
+		this.lockMaxTimeoutMs = options.lockMaxTimeoutMs ?? DEFAULT_LOCK_MAX_TIMEOUT_MS;
 	}
 
 	private resolve(missionId: string): string {
@@ -123,10 +112,6 @@ export class FileDurableMissionStore implements DurableMissionStore {
 		if (!isSafeMissionId(missionId)) {
 			throw new Error(`Unsafe mission id for durable file store: ${missionId}`);
 		}
-	}
-
-	private lockKey(missionId: string): string {
-		return `${this.root}\0${missionId}`;
 	}
 
 	private async writeAtomic(target: string, content: string): Promise<void> {
@@ -154,6 +139,99 @@ export class FileDurableMissionStore implements DurableMissionStore {
 		}
 	}
 
+	/**
+	 * Acquire the per-mission cross-process mutation lock, run `fn`, release.
+	 *
+	 * The lock protects only the short read-validate-write critical section. It
+	 * is never held across executor/model work. Lock acquisition has bounded
+	 * retries/backoff; exhaustion is a structured LOCK_TIMEOUT, and a
+	 * compromised lock is CORRUPT_LOCK_METADATA.
+	 */
+	private async withFileLock<T>(missionId: string, fn: () => Promise<T>): Promise<T> {
+		this.assertMissionId(missionId);
+		await fsp.mkdir(this.root, { recursive: true });
+		const target = this.resolve(missionId);
+
+		let compromised = false;
+		let release: (() => Promise<void>) | undefined;
+		try {
+			release = await lockfile.lock(target, {
+				realpath: false,
+				stale: this.lockStaleMs,
+				retries: {
+					retries: this.lockRetries,
+					factor: 2,
+					minTimeout: this.lockMinTimeoutMs,
+					maxTimeout: this.lockMaxTimeoutMs,
+					randomize: true,
+				},
+				onCompromised: () => {
+					compromised = true;
+				},
+			});
+		} catch (error) {
+			const code =
+				typeof error === "object" && error !== null && "code" in error
+					? (error as { code?: unknown }).code
+					: undefined;
+			if (code === "ELOCKED") {
+				throw new ExecutionOwnershipError(
+					"LOCK_TIMEOUT",
+					`Timed out acquiring mutation lock for mission ${missionId}`,
+					{ missionId },
+				);
+			}
+			// A non-empty lock directory is corrupt lock metadata (proper-lockfile
+			// can only remove an empty lock dir during stale recovery). Surface it
+			// structurally rather than fabricating ownership; the operator/test may
+			// remove the corrupt `.lock` directory and retry.
+			if (code === "ENOTEMPTY" || code === "ENOTDIR") {
+				throw new ExecutionOwnershipError(
+					"CORRUPT_LOCK_METADATA",
+					`Corrupt mutation lock metadata for mission ${missionId}`,
+					{ missionId },
+				);
+			}
+			throw error;
+		}
+
+		try {
+			if (compromised) {
+				throw new ExecutionOwnershipError(
+					"CORRUPT_LOCK_METADATA",
+					`Mutation lock for mission ${missionId} was compromised`,
+					{ missionId },
+				);
+			}
+			return await fn();
+		} finally {
+			if (release) {
+				try {
+					await release();
+				} catch {
+					// A compromised/recovered lock may already be invalid; releasing
+					// is best-effort and never turns a successful mutation into an error.
+				}
+			}
+		}
+	}
+
+	private async readParsed(
+		missionId: string,
+	): Promise<{ status: "ok"; record: DurableMissionRecord } | { status: "missing" } | { status: "corrupt" }> {
+		const raw = await this.readRaw(missionId);
+		if (raw === undefined) return { status: "missing" };
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(raw);
+		} catch {
+			return { status: "corrupt" };
+		}
+		const result = parseDurableMissionRecord(parsed);
+		if (!result.ok) return { status: "corrupt" };
+		return { status: "ok", record: result.record };
+	}
+
 	// =========================================================================
 	// DurableMissionStore
 	// =========================================================================
@@ -161,7 +239,7 @@ export class FileDurableMissionStore implements DurableMissionStore {
 	async create(record: DurableMissionRecord): Promise<DurableMissionCreateResult> {
 		this.assertMissionId(record.missionId);
 
-		return withRecordLock(this.lockKey(record.missionId), async () => {
+		return this.withFileLock(record.missionId, async () => {
 			const existing = await this.load(record.missionId);
 			if (existing.status === "ok") {
 				if (missionRequestsEqual(existing.record.request, record.request)) {
@@ -209,33 +287,67 @@ export class FileDurableMissionStore implements DurableMissionStore {
 	): Promise<DurableMissionSaveResult> {
 		this.assertMissionId(record.missionId);
 
-		return withRecordLock(this.lockKey(record.missionId), async () => {
-			if (options.expectedRevision !== undefined) {
-				const raw = await this.readRaw(record.missionId);
-				if (raw === undefined) {
-					return { status: "stale", expectedRevision: options.expectedRevision, actualRevision: undefined };
+		return this.withFileLock(record.missionId, async () => {
+			if (options.expectedRevision !== undefined || options.leaseProof !== undefined) {
+				const current = await this.readParsed(record.missionId);
+				if (current.status !== "ok") {
+					return {
+						status: "stale",
+						expectedRevision: options.expectedRevision ?? 0,
+						actualRevision: undefined,
+					};
 				}
-				let existing: unknown;
-				try {
-					existing = JSON.parse(raw);
-				} catch {
-					return { status: "stale", expectedRevision: options.expectedRevision, actualRevision: undefined };
-				}
-				const parsed = parseDurableMissionRecord(existing);
-				if (!parsed.ok) {
-					return { status: "stale", expectedRevision: options.expectedRevision, actualRevision: undefined };
-				}
-				if (parsed.record.revision !== options.expectedRevision) {
+
+				if (options.expectedRevision !== undefined && current.record.revision !== options.expectedRevision) {
 					return {
 						status: "stale",
 						expectedRevision: options.expectedRevision,
-						actualRevision: parsed.record.revision,
+						actualRevision: current.record.revision,
 					};
+				}
+
+				if (options.leaseProof !== undefined) {
+					const lease = current.record.lease;
+					if (!lease) return { status: "lease_not_found" };
+					if (
+						lease.leaseId !== options.leaseProof.leaseId ||
+						lease.fencingToken !== options.leaseProof.fencingToken
+					) {
+						return { status: "stale_owner", leaseId: lease.leaseId, fencingToken: lease.fencingToken };
+					}
 				}
 			}
 
 			await this.writeAtomic(this.resolve(record.missionId), JSON.stringify(record, null, 2));
 			return { status: "saved" };
+		});
+	}
+
+	async mutate<T>(
+		missionId: string,
+		mutation: (current: DurableMissionRecord) => DurableMissionMutation<T>,
+	): Promise<DurableMissionMutateResult<T>> {
+		this.assertMissionId(missionId);
+
+		return this.withFileLock(missionId, async () => {
+			const current = await this.readParsed(missionId);
+			if (current.status === "missing") return { status: "missing" };
+			if (current.status === "corrupt") {
+				return { status: "corrupt", missionId, diagnostic: "record is not valid or schema-invalid" };
+			}
+
+			const output = mutation(current.record);
+			if (output.kind === "noop") return { status: "ok", value: output.value };
+
+			// Defense in depth: never persist a mutation result that does not
+			// round-trip through the canonical schema validator.
+			const nextValidation = parseDurableMissionRecord(output.next);
+			if (!nextValidation.ok) {
+				throw new Error(`Mutation produced an invalid record for ${missionId}: ${nextValidation.diagnostic}`);
+			}
+
+			await this.writeAtomic(this.resolve(missionId), JSON.stringify(output.next, null, 2));
+			return { status: "ok", value: output.value };
 		});
 	}
 
@@ -249,7 +361,8 @@ export class FileDurableMissionStore implements DurableMissionStore {
 		const ids: string[] = [];
 		for (const entry of entries) {
 			// Skip incomplete temp files from a crash mid-write; the authoritative
-			// target (if any) is what matters.
+			// target (if any) is what matters. Lock directories also never end in
+			// the record suffix, so they are naturally excluded.
 			if (entry.endsWith(ATOMIC_SUFFIX)) continue;
 			if (!entry.endsWith(RECORD_SUFFIX)) continue;
 			const id = entry.slice(0, -RECORD_SUFFIX.length);

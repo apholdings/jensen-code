@@ -14,6 +14,7 @@
  *     verified, never inferred from exit code / output text / normal shutdown.
  */
 
+import type { ExecutionLease, ExecutionLeaseProof } from "./execution-lease.js";
 import type { MissionRequest } from "./mission-request.js";
 import { validateMissionRequest } from "./mission-request.js";
 import type { MissionResult } from "./mission-result.js";
@@ -103,6 +104,18 @@ export interface DurableMissionRecord {
 	transitions: DurableMissionTransition[];
 	/** Prior execution attempts, oldest first. */
 	attempts: DurableExecutionAttempt[];
+	/**
+	 * Monotonic ownership epoch. Incremented on every execution-lease
+	 * acquisition and every recovery revocation of an expired lease. It is kept
+	 * on the record (not only inside `lease`) so it survives lease clearing and
+	 * can never move backward.
+	 */
+	fencingToken: number;
+	/**
+	 * Current execution-ownership lease. Absent when no valid owner exists.
+	 * Terminal records must never carry a lease (ownership is released).
+	 */
+	lease?: ExecutionLease;
 	/** Monotonic generation for stale-update detection. */
 	revision: number;
 }
@@ -123,12 +136,36 @@ export type DurableMissionLoadResult =
 
 export type DurableMissionSaveResult =
 	| { status: "saved" }
-	| { status: "stale"; expectedRevision: number; actualRevision: number | undefined };
+	| { status: "stale"; expectedRevision: number; actualRevision: number | undefined }
+	| { status: "stale_owner"; leaseId: string; fencingToken: number }
+	| { status: "lease_not_found" };
 
 export interface DurableMissionSaveOptions {
 	/** Optional optimistic-concurrency guard: reject if on-disk revision differs. */
 	expectedRevision?: number;
+	/**
+	 * Execution-authoritative mutation proof. When present the store verifies,
+	 * inside the cross-process critical section, that the current on-disk lease
+	 * still matches this proof (leaseId + fencingToken) and is not expired.
+	 */
+	leaseProof?: ExecutionLeaseProof;
 }
+
+/**
+ * A store-level atomic read-modify-write mutation.
+ *
+ * The callback receives the currently-persisted record and must be synchronous
+ * (pure record → next record / value) so the cross-process critical section is
+ * never held across model inference or other slow work.
+ */
+export type DurableMissionMutation<T> =
+	| { kind: "write"; next: DurableMissionRecord; value: T }
+	| { kind: "noop"; value: T };
+
+export type DurableMissionMutateResult<T> =
+	| { status: "ok"; value: T }
+	| { status: "missing" }
+	| { status: "corrupt"; missionId: string; diagnostic: string };
 
 /**
  * Canonical mission persistence port. Implementations must be crash-conscious
@@ -144,6 +181,16 @@ export interface DurableMissionStore {
 	load(missionId: string): Promise<DurableMissionLoadResult>;
 
 	save(record: DurableMissionRecord, options?: DurableMissionSaveOptions): Promise<DurableMissionSaveResult>;
+
+	/**
+	 * Atomically mutate a persisted record across processes. The mutation
+	 * callback is invoked only when a valid record exists; missing and corrupt
+	 * states are surfaced structurally and never passed to the callback.
+	 */
+	mutate<T>(
+		missionId: string,
+		mutation: (current: DurableMissionRecord) => DurableMissionMutation<T>,
+	): Promise<DurableMissionMutateResult<T>>;
 
 	listMissions(): Promise<string[]>;
 
@@ -355,11 +402,52 @@ export function parseDurableMissionRecord(value: unknown): DurableMissionParseRe
 	)
 		return invalid("currentExecutionId must be a string when present");
 
+	// Fencing epoch + lease. `fencingToken` defaults to 0 for records written
+	// before ownership landed (backward compatible on load); when present it must
+	// be a non-negative safe integer. A lease is optional and must be structurally
+	// sound; it can never fabricate a newer fence than the record itself.
+	const fencingToken = doc.fencingToken === undefined ? 0 : (doc.fencingToken as number);
+	if (!isSafeInteger(fencingToken) || fencingToken < 0) return invalid("fencingToken must be a non-negative integer");
+
+	let lease: ExecutionLease | undefined;
+	if (doc.lease !== undefined) {
+		if (typeof doc.lease !== "object" || doc.lease === null || Array.isArray(doc.lease)) {
+			return invalid("lease must be an object");
+		}
+		const l = doc.lease as Record<string, unknown>;
+		if (typeof l.ownerId !== "string" || l.ownerId.length === 0)
+			return invalid("lease.ownerId must be a non-empty string");
+		if (typeof l.leaseId !== "string" || l.leaseId.length === 0)
+			return invalid("lease.leaseId must be a non-empty string");
+		if (!isSafeInteger(l.fencingToken) || (l.fencingToken as number) < 0)
+			return invalid("lease.fencingToken must be a non-negative integer");
+		if (!isSafeInteger(l.acquiredAtMs) || !isSafeInteger(l.renewedAtMs) || !isSafeInteger(l.expiresAtMs))
+			return invalid("lease timestamps must be safe integers");
+		if ((l.renewedAtMs as number) < (l.acquiredAtMs as number))
+			return invalid("lease.renewedAtMs must be >= acquiredAtMs");
+		if ((l.expiresAtMs as number) < (l.renewedAtMs as number))
+			return invalid("lease.expiresAtMs must be >= renewedAtMs");
+		if ((l.fencingToken as number) !== fencingToken)
+			return invalid("lease.fencingToken must equal record.fencingToken");
+		lease = {
+			ownerId: l.ownerId as string,
+			leaseId: l.leaseId as string,
+			fencingToken: l.fencingToken as number,
+			acquiredAtMs: l.acquiredAtMs as number,
+			renewedAtMs: l.renewedAtMs as number,
+			expiresAtMs: l.expiresAtMs as number,
+		};
+	}
+
 	// Terminal/result consistency: a terminal record must carry a matching
-	// result; a non-terminal record must not carry a result.
+	// result; a non-terminal record must not carry a result. Terminal records
+	// also must not carry a lease (ownership is always released on terminal).
 	if (isTerminalMissionState(state)) {
 		if (doc.currentAttemptId !== undefined || doc.currentExecutionId !== undefined) {
 			return invalid("terminal record must not carry a current attempt");
+		}
+		if (lease !== undefined) {
+			return invalid("terminal record must not carry an execution lease");
 		}
 		const resultError = validateResult(doc.result, missionId, state);
 		if (resultError) return invalid(resultError);
@@ -387,6 +475,8 @@ export function parseDurableMissionRecord(value: unknown): DurableMissionParseRe
 		resultExecutionId: doc.resultExecutionId as string | undefined,
 		transitions,
 		attempts,
+		fencingToken,
+		lease,
 		revision: doc.revision as number,
 	};
 
@@ -421,6 +511,7 @@ export function createDurableMissionRecord(input: CreateDurableMissionRecordInpu
 		updatedAtMs: now,
 		transitions: [],
 		attempts: [],
+		fencingToken: 0,
 		revision: 1,
 	};
 }

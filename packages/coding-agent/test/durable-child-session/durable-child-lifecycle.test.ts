@@ -122,6 +122,7 @@ async function interruptMission(
 			{ seq: 2, from: "LAUNCHING", to: "RUNNING", atMs: now - 1000, executionId: "exec_first" },
 		],
 		attempts: [{ attemptId: "attempt_first", executionId: "exec_first", startedAtMs: now - 1000 }],
+		fencingToken: 0,
 		revision: 3,
 	};
 	await store.create(running);
@@ -322,6 +323,7 @@ describe("durable child lifecycle", () => {
 			startedAtMs: now - 10,
 			transitions: [{ seq: 0, from: "CREATED", to: "RUNNING", atMs: now - 10, executionId: "exec_e1" }],
 			attempts: [{ attemptId: "attempt_e1", executionId: "exec_e1", startedAtMs: now - 10 }],
+			fencingToken: 0,
 			revision: 3,
 		};
 		await store.create(running);
