@@ -201,6 +201,8 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} config                   Open TUI to enable/disable package resources
   ${APP_NAME} <command> --help         Show help for install/remove/update/list
   ${APP_NAME} run|evidence|doctor|mcp  Inspect durable state and diagnostics
+  ${APP_NAME} mission ...            Inspect/resume durable missions (Mission Control)
+  ${APP_NAME} executor ...           Inspect/register/heartbeat executor runtimes
 
 ${chalk.bold("Options:")}
   --provider <name>              Provider name (default: google)

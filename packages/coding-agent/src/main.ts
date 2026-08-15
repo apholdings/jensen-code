@@ -21,6 +21,7 @@ import { handleBenchmarkCommand } from "./core/benchmark/index.js";
 import { checkTodoHealth } from "./core/doctor.js";
 import { bindChildSession, defaultChildSessionDir } from "./core/durable-child-session/index.js";
 import { handleEvaluationCommand } from "./core/evaluation/cli.js";
+import { handleExecutorCommand } from "./core/executor-registry/cli.js";
 import { exportFromFile } from "./core/export-html/index.js";
 import type { LoadExtensionsResult } from "./core/extensions/index.js";
 import { KeybindingsManager } from "./core/keybindings.js";
@@ -908,6 +909,10 @@ export async function main(args: string[]) {
 	}
 
 	if (await handleAdaptiveCommand(args)) {
+		return;
+	}
+
+	if (await handleExecutorCommand(args)) {
 		return;
 	}
 
