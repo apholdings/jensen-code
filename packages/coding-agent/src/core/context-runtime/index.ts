@@ -20,15 +20,23 @@ export {
 	type ContextGovernorDiagnostics,
 	type ContextGovernorOptions,
 	type ContextGovernorResult,
+	type ContextGovernorTelemetry,
 	type GovernorAction,
+	type ProviderOverflowContext,
 	rehydrateEvidence,
+	type ToolVirtualizationRecord,
 } from "./context-governor.js";
 export {
 	type ContextAssembly,
+	type ContextRegionCosts,
 	estimateAssemblyInputTokens,
+	estimateContextRegionCosts,
+	estimateMessageTokens,
 	estimateMessageTokensFor,
 	estimateStablePrefixTokens,
 	estimateTextTokens,
+	type TokenAccounting,
+	type TokenAccountingMode,
 } from "./context-token.js";
 export {
 	buildEvidenceRecord,
@@ -64,3 +72,12 @@ export {
 	parseMissionContextCheckpoint,
 	type TestState,
 } from "./mission-checkpoint.js";
+export {
+	analyzeText,
+	type ContentClass,
+	estimateTextTokens as estimateContentTokens,
+	MAX_CALIBRATED_MULTIPLIER,
+	resolveAccountingMode,
+	type TextTokenAnalysis,
+	type TokenAccountingOptions,
+} from "./token-accounting.js";

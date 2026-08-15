@@ -19,8 +19,10 @@
 export interface ContextCapabilitySource {
 	/** Physical native window reported by the model/API (may be 0/unknown). */
 	modelContextWindow: number;
-	/** Maximum output tokens the model can produce. */
+	/** Maximum output tokens the model can produce (total, incl. reasoning). */
 	modelMaxTokens: number;
+	/** True when the model emits reasoning/thinking content out of the output budget. */
+	reasoning?: boolean;
 }
 
 export interface ContextCapabilityOverrides {
@@ -43,6 +45,8 @@ export interface ContextCapability {
 	physicalContextWindow: number;
 	configuredContextWindow: number;
 	maximumOutputTokens: number;
+	/** True when reasoning content is emitted out of the output budget. */
+	reasoning: boolean;
 	reservedOutputTokens: number;
 	safetyReserveTokens: number;
 	safeInputBudget: number;
@@ -83,6 +87,7 @@ export function resolveContextCapability(
 ): ContextCapability {
 	const physicalContextWindow = Math.max(1, Math.floor(source.modelContextWindow || 0));
 	const configuredContextWindow = Math.max(1, Math.floor(overrides.configuredContextWindow ?? physicalContextWindow));
+	const reasoning = source.reasoning ?? false;
 
 	const maximumOutputTokens = Math.max(1, Math.floor(source.modelMaxTokens || 8192));
 	const reservedOutputTokens = clamp(
@@ -114,6 +119,7 @@ export function resolveContextCapability(
 		physicalContextWindow,
 		configuredContextWindow,
 		maximumOutputTokens,
+		reasoning,
 		reservedOutputTokens,
 		safetyReserveTokens,
 		safeInputBudget,

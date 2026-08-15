@@ -52,6 +52,7 @@ import {
 	shouldCompact,
 } from "./compaction/index.js";
 import {
+	type ContextGovernor,
 	createMissionContextCheckpoint,
 	type EvidenceArchive,
 	type FindingRecord,
@@ -244,6 +245,8 @@ export interface AgentSessionConfig {
 	baseToolsOverride?: Record<string, AgentTool>;
 	/** Cold evidence archive for the model-facing retrieve_evidence capability. */
 	evidenceArchive?: EvidenceArchive;
+	/** Context Governor for provider-overflow recovery wiring. */
+	contextGovernor?: ContextGovernor;
 	/** Enable brief-only output contract for this session. Default: false */
 	briefOnly?: boolean;
 	/** Enable Caveman output compression for this session. Default: "off" */
@@ -426,6 +429,7 @@ export class AgentSession {
 	private _extensionShutdownHandler?: ShutdownHandler;
 	private _extensionErrorListener?: ExtensionErrorListener;
 	private _extensionErrorUnsubscriber?: () => void;
+	private _contextGovernor?: ContextGovernor;
 
 	// Model registry for API key resolution
 	private _modelRegistry: ModelRegistry;
@@ -457,6 +461,7 @@ export class AgentSession {
 		this._cavemanLevel = config.cavemanLevel ?? "off";
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._evidenceArchive = config.evidenceArchive;
+		this._contextGovernor = config.contextGovernor;
 
 		// Reliability Kernel (2.2.0): initialize before tool hooks so the bridge is
 		// authoritative for every tool call and turn end. Restores a persisted
@@ -845,6 +850,18 @@ export class AgentSession {
 				const assistantMsg = event.message as AssistantMessage;
 				if (assistantMsg.stopReason !== "error") {
 					this._overflowRecoveryCount = 0;
+
+					// Feed authoritative provider usage back into the governor for
+					// deterministic conservative calibration (only ever raises the
+					// estimate, never lowers it).
+					const governor = this._contextGovernor;
+					const diagnostics = governor?.lastDiagnostics;
+					if (governor && diagnostics && assistantMsg.usage) {
+						const observed = assistantMsg.usage.input + assistantMsg.usage.cacheRead;
+						if (observed > 0 && diagnostics.inputTokensAfter > 0) {
+							governor.observeProviderUsage(diagnostics.inputTokensAfter, observed);
+						}
+					}
 				}
 
 				// Reset retry counter immediately on successful assistant response
@@ -2916,6 +2933,28 @@ export class AgentSession {
 						"The working set still exceeds the provider's effective context. Reduce tools, shrink the system prompt, or configure a larger context window.",
 				});
 				return;
+			}
+
+			// Wire the provider disagreement into the Context Governor's adaptive
+			// safety: the next preflight govern applies a stricter budget and a
+			// deterministic forced reduction, so the retry is genuinely smaller.
+			const governor = this._contextGovernor;
+			const diagnostics = governor?.lastDiagnostics;
+			if (governor) {
+				governor.recordOverflow({
+					configuredContextWindow: contextWindow,
+					estimatedInputTokens:
+						diagnostics?.inputTokensAfter ?? estimateContextTokens(this.agent.state.messages).tokens,
+					reservedOutputTokens: diagnostics?.capability.reservedOutputTokens ?? 0,
+					safetyReserveTokens: diagnostics?.capability.safetyReserveTokens ?? 0,
+					accountingMode: governor.getTokenAccountingMode(),
+					providerError: assistantMessage.errorMessage,
+					observedInputTokens:
+						assistantMessage.usage && assistantMessage.usage.input + assistantMessage.usage.cacheRead > 0
+							? assistantMessage.usage.input + assistantMessage.usage.cacheRead
+							: undefined,
+					observedContextWindow: contextWindow,
+				});
 			}
 
 			this._overflowRecoveryCount += 1;

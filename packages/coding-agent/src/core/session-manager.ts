@@ -48,6 +48,8 @@ export const CURRENT_SESSION_VERSION = 3;
 export const SESSION_CHILD_BINDING_CUSTOM_TYPE = "child_mission_binding";
 /** Custom entry type for persisted cold-evidence references (2.6.0). */
 export const SESSION_EVIDENCE_REFS_CUSTOM_TYPE = "session_evidence_refs";
+/** Custom entry type for the durable tool-result virtualization ledger (2.6.0). */
+export const SESSION_TOOL_VIRTUALIZATIONS_CUSTOM_TYPE = "session_tool_virtualizations";
 
 /**
  * Durable identity binding between a child AgentSession and its logical
@@ -1260,6 +1262,26 @@ export class SessionManager {
 				return (entry.data as Array<{ evidenceId?: unknown; summary?: unknown }>)
 					.filter((r) => typeof r?.evidenceId === "string" && typeof r?.summary === "string")
 					.map((r) => ({ evidenceId: r.evidenceId as string, summary: r.summary as string }));
+			}
+		}
+		return [];
+	}
+
+	/** Persist the durable tool-result virtualization ledger (full snapshot). */
+	appendSessionToolVirtualizations(records: unknown[]): string {
+		return this.appendCustomEntry(SESSION_TOOL_VIRTUALIZATIONS_CUSTOM_TYPE, records);
+	}
+
+	/** Latest durable tool-result virtualization ledger on the current branch, if any. */
+	getLatestSessionToolVirtualizations(): Array<Record<string, unknown>> {
+		const entries = this.getBranch();
+		for (let i = entries.length - 1; i >= 0; i--) {
+			const entry = entries[i];
+			if (entry.type === "custom" && entry.customType === SESSION_TOOL_VIRTUALIZATIONS_CUSTOM_TYPE) {
+				if (!Array.isArray(entry.data)) return [];
+				return (entry.data as unknown[]).filter(
+					(r): r is Record<string, unknown> => typeof r === "object" && r !== null,
+				);
 			}
 		}
 		return [];

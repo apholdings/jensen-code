@@ -14,6 +14,7 @@ import {
 	ContextGovernor,
 	EvidenceFileStore,
 	resolveContextCapability,
+	type ToolVirtualizationRecord,
 } from "./context-runtime/index.js";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
 import type { ExtensionRunner, LoadExtensionsResult, ToolDefinition } from "./extensions/index.js";
@@ -50,6 +51,32 @@ import {
 	type ToolName,
 	writeTool,
 } from "./tools/index.js";
+
+/** Coerce a persisted virtualization record into its typed form, failing safe. */
+function coerceToolVirtualizationRecord(value: unknown): ToolVirtualizationRecord | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const r = value as Record<string, unknown>;
+	if (
+		typeof r.toolCallId !== "string" ||
+		typeof r.evidenceId !== "string" ||
+		typeof r.contentHash !== "string" ||
+		typeof r.source !== "string" ||
+		typeof r.synopsis !== "string" ||
+		typeof r.contentBytes !== "number" ||
+		typeof r.virtualizedAtMs !== "number"
+	) {
+		return undefined;
+	}
+	return {
+		toolCallId: r.toolCallId,
+		evidenceId: r.evidenceId,
+		contentHash: r.contentHash,
+		source: r.source,
+		synopsis: r.synopsis,
+		contentBytes: r.contentBytes,
+		virtualizedAtMs: r.virtualizedAtMs,
+	};
+}
 
 export interface CreateAgentSessionOptions {
 	/** Working directory for project-local discovery. Default: process.cwd() */
@@ -343,7 +370,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const contextGovernor = governorSettings.enabled
 		? new ContextGovernor({
 				capability: resolveContextCapability(
-					{ modelContextWindow: model?.contextWindow ?? 0, modelMaxTokens: model?.maxTokens ?? 8192 },
+					{
+						modelContextWindow: model?.contextWindow ?? 0,
+						modelMaxTokens: model?.maxTokens ?? 8192,
+						reasoning: model?.reasoning,
+					},
 					contextCapabilityOverrides,
 				),
 				archive: evidenceArchive,
@@ -351,12 +382,32 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 					const currentModel = agent.state.model;
 					if (!currentModel?.contextWindow) return undefined as never;
 					return resolveContextCapability(
-						{ modelContextWindow: currentModel.contextWindow, modelMaxTokens: currentModel.maxTokens ?? 8192 },
+						{
+							modelContextWindow: currentModel.contextWindow,
+							modelMaxTokens: currentModel.maxTokens ?? 8192,
+							reasoning: currentModel.reasoning,
+						},
 						contextCapabilityOverrides,
 					);
 				},
 				keepRecentTokens: governorSettings.keepRecentTokens,
 				toolResultVirtualizeThreshold: governorSettings.toolResultVirtualizeThreshold,
+				// Durable virtualization provenance: tool results that were already
+				// archived stay virtualized across requests, session resume, process
+				// restart, and durable child resume.
+				initialVirtualizations: sessionManager
+					.getLatestSessionToolVirtualizations()
+					.map(coerceToolVirtualizationRecord)
+					.filter((r): r is NonNullable<typeof r> => r !== undefined),
+				initialEvidenceRefs: sessionManager.getLatestSessionEvidenceRefs(),
+				virtualizationProvider: () =>
+					sessionManager
+						.getLatestSessionToolVirtualizations()
+						.map(coerceToolVirtualizationRecord)
+						.filter((r): r is NonNullable<typeof r> => r !== undefined),
+				virtualizationSink: (records) => {
+					sessionManager.appendSessionToolVirtualizations(records);
+				},
 			})
 		: undefined;
 
@@ -458,6 +509,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		initialActiveToolNames,
 		extensionRunnerRef,
 		evidenceArchive,
+		contextGovernor,
 	});
 	const extensionsResult = resourceLoader.getExtensions();
 
