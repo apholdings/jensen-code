@@ -88,6 +88,18 @@ function usage(): string {
 		"  mission replay <id>                replay the event log (zero effects)",
 		"  mission reconcile --preview <id>   show post-reboot reconciliation actions (no mutation)",
 		"  doctor mission                     health-check the mission store",
+		"",
+		"Durable mission control plane (2.9.0)",
+		"  mission list [--json]              list durable missions",
+		"  mission show <id> [--json]         inspect one durable mission",
+		"  mission tree <id> [--json]         traverse a durable mission tree",
+		"  mission attempts <id> [--json]     attempt/execution history",
+		"  mission ownership <id> [--json]    lease/fencing ownership",
+		"  mission result <id> [--json]       canonical terminal result",
+		"  mission evidence <id> [--json]     evidence references",
+		"  mission resume <id> [--json]       explicit durable-child resume",
+		"  mission cancel <id> [--json]       cancel a locally-owned execution",
+		"  mission recover [--json]           conservative restart reconciliation",
 	].join("\n");
 }
 

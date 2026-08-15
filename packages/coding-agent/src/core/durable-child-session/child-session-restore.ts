@@ -27,7 +27,11 @@ import {
 import type { DurableMissionDelegator } from "../durable-delegation/durable-delegation.js";
 import type { DurableMissionRecord, DurableMissionStore } from "../mission-domain/durable-store.js";
 import { isResumableMissionState, isTerminalMissionState } from "../mission-domain/mission-state.js";
-import { ProcessMissionExecutor, type ProcessMissionLaunch } from "../mission-domain/process-mission-executor.js";
+import {
+	ProcessMissionExecutor,
+	type ProcessMissionLaunch,
+	type ProcessMissionVerifier,
+} from "../mission-domain/process-mission-executor.js";
 import {
 	type ChildMissionBinding,
 	getLatestCompactionEntry,
@@ -294,9 +298,41 @@ export interface ResumeChildMissionOptions {
 	}) => ProcessMissionLaunch;
 	/** Executor identity (tests). */
 	executorId?: string;
+	/** Optional verifier that can promote a clean exit-0 child to SUCCEEDED. */
+	verifier?: ProcessMissionVerifier;
 	/** Attempt identity factory (tests). */
 	attemptIdFactory?: () => string;
 	now?: () => number;
+}
+
+export interface BuiltChildResume {
+	childSessionId: string;
+	resumePrompt: string;
+	executor: ProcessMissionExecutor;
+}
+
+/**
+ * Build the continue-not-replay child executor from a resolved session. This is
+ * the single executor-construction path shared by the direct resume helper and
+ * the Mission Control plane, so the two can never drift in how a resume launch
+ * is produced.
+ */
+export function buildChildResumeExecutor(options: {
+	record: DurableMissionRecord;
+	sessionManager: SessionManager;
+	childSessionId: string;
+	buildResumeLaunch: ResumeChildMissionOptions["buildResumeLaunch"];
+	executorId?: string;
+	verifier?: ProcessMissionVerifier;
+}): BuiltChildResume {
+	const { record, sessionManager, childSessionId } = options;
+	const resumePrompt = buildChildResumePrompt(record, sessionManager);
+	const executor = new ProcessMissionExecutor({
+		executorId: options.executorId ?? "subagent-process-resume",
+		verifier: options.verifier,
+		buildLaunch: (request) => options.buildResumeLaunch({ request, resumePrompt, childSessionId }),
+	});
+	return { childSessionId, resumePrompt, executor };
 }
 
 /**
@@ -315,13 +351,14 @@ export async function resumeChildMission(
 		missionId: options.missionId,
 		sessionDir: options.sessionDir,
 	});
-	const resumePrompt = buildChildResumePrompt(resolved.record, resolved.sessionManager);
-	const childSessionId = resolved.childSessionId;
-
-	const executor = new ProcessMissionExecutor({
-		executorId: options.executorId ?? "subagent-process-resume",
-		buildLaunch: (request) => options.buildResumeLaunch({ request, resumePrompt, childSessionId }),
+	const built = buildChildResumeExecutor({
+		record: resolved.record,
+		sessionManager: resolved.sessionManager,
+		childSessionId: resolved.childSessionId,
+		buildResumeLaunch: options.buildResumeLaunch,
+		executorId: options.executorId,
+		verifier: options.verifier,
 	});
 
-	return delegator.resumeMission(options.missionId, executor);
+	return delegator.resumeMission(options.missionId, built.executor);
 }

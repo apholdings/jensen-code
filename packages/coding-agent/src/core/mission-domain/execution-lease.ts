@@ -61,6 +61,8 @@ export function newExecutorOwnerId(hostname: string = os.hostname()): string {
 
 export type ExecutionOwnershipErrorCode =
 	| "MISSION_OWNED"
+	| "MISSION_TERMINAL"
+	| "MISSION_NOT_RESUMABLE"
 	| "STALE_REVISION"
 	| "STALE_EXECUTION_OWNER"
 	| "LEASE_EXPIRED"

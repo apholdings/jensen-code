@@ -284,6 +284,37 @@ export {
 	type StructuredSnapshotSelectorIssue,
 } from "./core/memory-snapshot-contract.js";
 export { convertToLlm } from "./core/messages.js";
+// Mission Control Plane (2.9.0)
+export {
+	type AttemptHistoryView,
+	type AttemptView,
+	type BuildResumeLaunch,
+	type BuildResumeLaunchInput,
+	type LeaseStatus,
+	type MissionCancellationStatus,
+	type MissionCancellationView,
+	type MissionCheckpointSummary,
+	type MissionControlActiveExecution,
+	MissionControlError,
+	type MissionControlErrorCode,
+	type MissionControlResumeOutcome,
+	MissionControlService,
+	type MissionControlServiceOptions,
+	type MissionDetail,
+	type MissionEvidenceRef,
+	type MissionListDirection,
+	type MissionListFilter,
+	type MissionListOptions,
+	type MissionListResult,
+	type MissionListSort,
+	type MissionOwnershipView,
+	type MissionRequestView,
+	type MissionResultView,
+	type MissionSummary,
+	type MissionTreeNode,
+	type Resumability,
+	type ResumabilityReasonCode,
+} from "./core/mission-control/index.js";
 // First-Class Mission domain primitives (2.3.0) + Durable Missions (2.4.0)
 export {
 	aggregateMissionResults,

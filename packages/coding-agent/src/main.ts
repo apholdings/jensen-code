@@ -19,14 +19,15 @@ import { APP_NAME, getAgentDir, getModelsPath, VERSION } from "./config.js";
 import { AuthStorage } from "./core/auth-storage.js";
 import { handleBenchmarkCommand } from "./core/benchmark/index.js";
 import { checkTodoHealth } from "./core/doctor.js";
-import { bindChildSession, defaultChildSessionDir, resumeChildMission } from "./core/durable-child-session/index.js";
-import { DurableMissionDelegator } from "./core/durable-delegation/index.js";
+import { bindChildSession, defaultChildSessionDir } from "./core/durable-child-session/index.js";
 import { handleEvaluationCommand } from "./core/evaluation/cli.js";
 import { exportFromFile } from "./core/export-html/index.js";
 import type { LoadExtensionsResult } from "./core/extensions/index.js";
 import { KeybindingsManager } from "./core/keybindings.js";
 import { handleAdaptiveCommand } from "./core/long-horizon/adaptive/cli.js";
 import { handleMissionCommand } from "./core/mission/cli.js";
+import { handleMissionControlCommand } from "./core/mission-control/cli.js";
+import { MissionControlService } from "./core/mission-control/index.js";
 import { createFileDurableMissionStore } from "./core/mission-durable/index.js";
 import { ModelRegistry } from "./core/model-registry.js";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
@@ -435,17 +436,14 @@ async function handleResumeChildCommand(args: string[]): Promise<boolean> {
 	const agentDir = getAgentDir();
 	const sessionDir = defaultChildSessionDir(agentDir);
 	const store = createFileDurableMissionStore();
-	const delegator = new DurableMissionDelegator({ store });
+	const control = new MissionControlService({ store, sessionDir });
 
 	const cliEntry = process.argv[1];
 	const command = process.execPath;
 	const prefixArgs = [...process.execArgv, cliEntry];
 
 	try {
-		const outcome = await resumeChildMission(delegator, {
-			store,
-			missionId,
-			sessionDir,
+		const outcome = await control.resumeMission(missionId, {
 			buildResumeLaunch: ({ request, resumePrompt, childSessionId }) => {
 				const launchArgs = [
 					...prefixArgs,
@@ -479,11 +477,11 @@ async function handleResumeChildCommand(args: string[]): Promise<boolean> {
 				{
 					missionId: outcome.missionId,
 					parentMissionId: outcome.parentMissionId,
-					childSessionId: outcome.record.request.childSessionId,
+					childSessionId: outcome.childSessionId,
 					attemptId: outcome.attemptId,
 					executionId: outcome.executionId,
-					missionState: outcome.result.state,
-					success: outcome.result.success,
+					missionState: outcome.missionState,
+					success: outcome.success,
 				},
 				null,
 				2,
@@ -910,6 +908,10 @@ export async function main(args: string[]) {
 	}
 
 	if (await handleAdaptiveCommand(args)) {
+		return;
+	}
+
+	if (await handleMissionControlCommand(args)) {
 		return;
 	}
 

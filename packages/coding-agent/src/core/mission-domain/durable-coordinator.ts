@@ -124,6 +124,12 @@ type ReleaseOutcome =
 
 type RevokeOutcome = { status: "unchanged" } | { status: "reconciled"; previousState: MissionState };
 
+/** Local live execution retained for operator cancellation. */
+interface ActiveExecution {
+	cancelController: AbortController;
+	handle?: MissionHandle;
+}
+
 /**
  * Map a terminal MissionResult's executor-level outcome to an attempt end
  * reason. `MissionExecutionOutcome` is a strict subset of
@@ -150,6 +156,7 @@ export class DurableMissionCoordinator {
 	private readonly _heartbeatTiming: ResolvedHeartbeatTiming;
 	private readonly _heartbeatScheduler: HeartbeatScheduler;
 	private readonly _heartbeats = new Map<string, ExecutionHeartbeat>();
+	private readonly _activeExecutions = new Map<string, ActiveExecution>();
 
 	constructor(store: DurableMissionStore, executor: MissionExecutor, options: DurableMissionCoordinatorOptions = {}) {
 		this._store = store;
@@ -189,6 +196,22 @@ export class DurableMissionCoordinator {
 	 */
 	heartbeatTelemetry(missionId: string): HeartbeatTelemetry | undefined {
 		return this._heartbeats.get(missionId)?.telemetry();
+	}
+
+	/**
+	 * Request cancellation of a locally-active execution. This aborts the same
+	 * combined signal the executor received, so the normal fenced terminal path
+	 * persists CANCELLED. It never signals a remote/other-process owner and
+	 * never bypasses fencing.
+	 */
+	async requestCancellation(
+		missionId: string,
+		reason?: string,
+	): Promise<{ status: "cancel_requested" | "not_running"; missionId: string }> {
+		const active = this._activeExecutions.get(missionId);
+		if (!active) return { status: "not_running", missionId };
+		active.cancelController.abort(reason ?? "mission cancelled by operator");
+		return { status: "cancel_requested", missionId };
 	}
 
 	// =========================================================================
@@ -305,9 +328,17 @@ export class DurableMissionCoordinator {
 			);
 		}
 		if (isTerminalMissionState(value.state)) {
-			throw new Error(`Cannot resume terminal mission ${missionId} (${value.state})`);
+			throw new ExecutionOwnershipError(
+				"MISSION_TERMINAL",
+				`Cannot resume terminal mission ${missionId} (${value.state})`,
+				{ missionId, state: value.state },
+			);
 		}
-		throw new Error(`Cannot resume mission ${missionId} from state ${value.state}; reconcile (recover) first`);
+		throw new ExecutionOwnershipError(
+			"MISSION_NOT_RESUMABLE",
+			`Cannot resume mission ${missionId} from state ${value.state}; reconcile (recover) first`,
+			{ missionId, state: value.state },
+		);
 	}
 
 	/**
@@ -496,10 +527,14 @@ export class DurableMissionCoordinator {
 		let record = queued;
 
 		// Combine the caller's cancellation signal with the authority-loss signal
-		// produced by the heartbeat. Both abort the executor through the same
+		// produced by the heartbeat and the operator-cancellation signal produced
+		// by `requestCancellation`. All three abort the executor through the same
 		// AbortSignal path, but authority loss keeps a distinct diagnostic reason.
 		const authorityLost = new AbortController();
-		const signal = options.signal ? AbortSignal.any([options.signal, authorityLost.signal]) : authorityLost.signal;
+		const cancelController = new AbortController();
+		const combinedSignals = [cancelController.signal, authorityLost.signal];
+		if (options.signal) combinedSignals.push(options.signal);
+		const signal = AbortSignal.any(combinedSignals);
 		let authorityLostInfo: HeartbeatAuthorityLossInfo | undefined;
 
 		const heartbeat = this._buildHeartbeat(missionId, proof, (info) => {
@@ -507,6 +542,9 @@ export class DurableMissionCoordinator {
 			authorityLost.abort(info);
 		});
 		this._heartbeats.set(missionId, heartbeat);
+
+		const activeExecution: ActiveExecution = { cancelController };
+		this._activeExecutions.set(missionId, activeExecution);
 
 		let handle: MissionHandle | undefined;
 		let completed = false;
@@ -534,6 +572,7 @@ export class DurableMissionCoordinator {
 			const executor = this._executor;
 			try {
 				handle = await executor.launch(record.request, { signal });
+				activeExecution.handle = handle;
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				const failed = await this._commitFenced(
@@ -600,6 +639,7 @@ export class DurableMissionCoordinator {
 			return terminal;
 		} finally {
 			heartbeat.stop();
+			this._activeExecutions.delete(missionId);
 			if (!completed && handle) {
 				// Abnormal exit (authority lost, commit failure, or executor
 				// error): do not leave the child process running.

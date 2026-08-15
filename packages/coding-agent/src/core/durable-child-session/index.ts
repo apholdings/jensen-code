@@ -3,8 +3,10 @@
  */
 
 export {
+	type BuiltChildResume,
 	bindChildSession,
 	buildChildResumeCheckpoint,
+	buildChildResumeExecutor,
 	buildChildResumePrompt,
 	ChildSessionRestoreError,
 	type ChildSessionRestoreErrorCode,
