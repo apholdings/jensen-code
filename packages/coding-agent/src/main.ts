@@ -27,6 +27,7 @@ import { exportFromFile } from "./core/export-html/index.js";
 import type { LoadExtensionsResult } from "./core/extensions/index.js";
 import { KeybindingsManager } from "./core/keybindings.js";
 import { handleAdaptiveCommand } from "./core/long-horizon/adaptive/cli.js";
+import { handleMcpCommand } from "./core/mcp-foundation/cli.js";
 import { handleMissionCommand } from "./core/mission/cli.js";
 import { handleMissionControlCommand } from "./core/mission-control/cli.js";
 import { MissionControlService } from "./core/mission-control/index.js";
@@ -899,6 +900,10 @@ export async function main(args: string[]) {
 	}
 
 	if (await handleRoutingCommand(args)) {
+		return;
+	}
+
+	if (await handleMcpCommand(args)) {
 		return;
 	}
 

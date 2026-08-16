@@ -49,6 +49,7 @@
     "@apholdings/jensen-ai": "2.1.0",
     "@apholdings/jensen-tui": "2.1.0",
     "@mariozechner/jiti": "^2.6.2",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@mozilla/readability": "^0.6.0",
     "@silvia-odwyer/photon-node": "^0.3.4",
     "chalk": "^5.5.0",
