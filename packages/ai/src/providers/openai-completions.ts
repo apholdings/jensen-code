@@ -56,6 +56,11 @@ function hasToolHistory(messages: Message[]): boolean {
 export interface OpenAICompletionsOptions extends StreamOptions {
 	toolChoice?: "auto" | "none" | "required" | { type: "function"; function: { name: string } };
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+	topP?: number;
+	topK?: number;
+	minP?: number;
+	presencePenalty?: number;
+	repetitionPenalty?: number;
 }
 
 export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenAICompletionsOptions> = (
@@ -416,6 +421,38 @@ export function buildOpenAICompletionsParams(
 
 	if (options?.temperature !== undefined) {
 		params.temperature = options.temperature;
+	} else if (compat.samplingDefaults?.temperature !== undefined) {
+		params.temperature = compat.samplingDefaults.temperature;
+	}
+
+	if (options?.topP !== undefined) {
+		(params as any).top_p = options.topP;
+	} else if (compat.samplingDefaults?.topP !== undefined) {
+		(params as any).top_p = compat.samplingDefaults.topP;
+	}
+
+	if (options?.topK !== undefined) {
+		(params as any).top_k = options.topK;
+	} else if (compat.samplingDefaults?.topK !== undefined) {
+		(params as any).top_k = compat.samplingDefaults.topK;
+	}
+
+	if (options?.minP !== undefined) {
+		(params as any).min_p = options.minP;
+	} else if (compat.samplingDefaults?.minP !== undefined) {
+		(params as any).min_p = compat.samplingDefaults.minP;
+	}
+
+	if (options?.presencePenalty !== undefined) {
+		(params as any).presence_penalty = options.presencePenalty;
+	} else if (compat.samplingDefaults?.presencePenalty !== undefined) {
+		(params as any).presence_penalty = compat.samplingDefaults.presencePenalty;
+	}
+
+	if (options?.repetitionPenalty !== undefined) {
+		(params as any).repetition_penalty = options.repetitionPenalty;
+	} else if (compat.samplingDefaults?.repetitionPenalty !== undefined) {
+		(params as any).repetition_penalty = compat.samplingDefaults.repetitionPenalty;
 	}
 
 	if (context.tools) {
@@ -434,7 +471,18 @@ export function buildOpenAICompletionsParams(
 	} else if (compat.thinkingFormat === "qwen" && model.reasoning) {
 		(params as any).enable_thinking = !!options?.reasoningEffort;
 	} else if (compat.thinkingFormat === "qwen-chat-template" && model.reasoning) {
-		(params as any).chat_template_kwargs = { enable_thinking: !!options?.reasoningEffort };
+		// Qwen3.x llama.cpp template contract. The template reads these from
+		// chat_template_kwargs (top-level reasoning_effort is ignored except "none").
+		// Native effort vocabulary is xhigh/medium/low (no "high").
+		const thinkingEnabled = !!options?.reasoningEffort;
+		const kwargs: Record<string, unknown> = { enable_thinking: thinkingEnabled };
+		if (thinkingEnabled) {
+			kwargs.reasoning_effort = mapReasoningEffort(options.reasoningEffort!, compat.reasoningEffortMap);
+			if (compat.preserveThinking) {
+				kwargs.preserve_thinking = true;
+			}
+		}
+		(params as any).chat_template_kwargs = kwargs;
 	} else if (compat.thinkingFormat === "openrouter" && options?.reasoningEffort && model.reasoning) {
 		// OpenRouter normalizes reasoning across providers via a nested reasoning object.
 		const openRouterParams = params as typeof params & { reasoning?: { effort?: string } };
@@ -861,6 +909,7 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 		supportsStore: !isNonStandard,
 		supportsDeveloperRole: !isNonStandard,
 		supportsReasoningEffort: !isGrok && !isZai,
+		supportsXhigh: false,
 		reasoningEffortMap,
 		supportsUsageInStreaming: true,
 		maxTokensField: useMaxTokens ? "max_tokens" : "max_completion_tokens",
@@ -872,6 +921,8 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 			: provider === "openrouter" || baseUrl.includes("openrouter.ai")
 				? "openrouter"
 				: "openai",
+		preserveThinking: false,
+		samplingDefaults: {},
 		openRouterRouting: {},
 		vercelGatewayRouting: {},
 		supportsStrictMode: true,
@@ -890,6 +941,7 @@ function getCompat(model: Model<"openai-completions">): Required<OpenAICompletio
 		supportsStore: model.compat.supportsStore ?? detected.supportsStore,
 		supportsDeveloperRole: model.compat.supportsDeveloperRole ?? detected.supportsDeveloperRole,
 		supportsReasoningEffort: model.compat.supportsReasoningEffort ?? detected.supportsReasoningEffort,
+		supportsXhigh: model.compat.supportsXhigh ?? detected.supportsXhigh,
 		reasoningEffortMap: model.compat.reasoningEffortMap ?? detected.reasoningEffortMap,
 		supportsUsageInStreaming: model.compat.supportsUsageInStreaming ?? detected.supportsUsageInStreaming,
 		maxTokensField: model.compat.maxTokensField ?? detected.maxTokensField,
@@ -898,6 +950,8 @@ function getCompat(model: Model<"openai-completions">): Required<OpenAICompletio
 			model.compat.requiresAssistantAfterToolResult ?? detected.requiresAssistantAfterToolResult,
 		requiresThinkingAsText: model.compat.requiresThinkingAsText ?? detected.requiresThinkingAsText,
 		thinkingFormat: model.compat.thinkingFormat ?? detected.thinkingFormat,
+		preserveThinking: model.compat.preserveThinking ?? detected.preserveThinking,
+		samplingDefaults: model.compat.samplingDefaults ?? detected.samplingDefaults,
 		openRouterRouting: model.compat.openRouterRouting ?? {},
 		vercelGatewayRouting: model.compat.vercelGatewayRouting ?? detected.vercelGatewayRouting,
 		supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,

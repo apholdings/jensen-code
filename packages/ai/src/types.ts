@@ -266,6 +266,14 @@ export interface OpenAICompletionsCompat {
 	supportsDeveloperRole?: boolean;
 	/** Whether the provider supports `reasoning_effort`. Default: auto-detected from URL. */
 	supportsReasoningEffort?: boolean;
+	/**
+	 * Whether the model natively supports the `xhigh` reasoning effort level.
+	 * When set, this overrides the built-in provider/model detection used by
+	 * `supportsXhigh`. Declare `true` for models whose native effort vocabulary
+	 * includes `xhigh` (e.g. Qwen3.8); declare `false` to force the generic
+	 * `xhigh -> high` clamp even when built-in detection would otherwise match.
+	 */
+	supportsXhigh?: boolean;
 	/** Optional mapping from pi-ai reasoning levels to provider/model-specific `reasoning_effort` values. */
 	reasoningEffortMap?: Partial<Record<ThinkingLevel, string>>;
 	/** Whether the provider supports `stream_options: { include_usage: true }` for token usage in streaming responses. Default: true. */
@@ -278,8 +286,39 @@ export interface OpenAICompletionsCompat {
 	requiresAssistantAfterToolResult?: boolean;
 	/** Whether thinking blocks must be converted to text blocks with <thinking> delimiters. Default: auto-detected from URL. */
 	requiresThinkingAsText?: boolean;
-	/** Format for reasoning/thinking parameter. "openai" uses reasoning_effort, "openrouter" uses reasoning: { effort }, "zai" uses top-level enable_thinking: boolean, "qwen" uses top-level enable_thinking: boolean, and "qwen-chat-template" uses chat_template_kwargs.enable_thinking. Default: "openai". */
+	/**
+	 * Format for reasoning/thinking parameter.
+	 * - "openai": top-level `reasoning_effort`.
+	 * - "openrouter": nested `reasoning: { effort }`.
+	 * - "zai": top-level `enable_thinking: boolean`.
+	 * - "qwen": top-level `enable_thinking: boolean`.
+	 * - "qwen-chat-template": `chat_template_kwargs` with `enable_thinking`,
+	 *   `preserve_thinking`, and (when reasoning is requested) `reasoning_effort`.
+	 *   This matches the Qwen3.x llama.cpp template contract where the native
+	 *   effort vocabulary is `xhigh`/`medium`/`low` (no `high`).
+	 * Default: "openai".
+	 */
 	thinkingFormat?: "openai" | "openrouter" | "zai" | "qwen" | "qwen-chat-template";
+	/**
+	 * Whether to request thinking preservation across multi-turn tool loops.
+	 * Only applies to `thinkingFormat: "qwen-chat-template"`. When `true`, the
+	 * provider sends `chat_template_kwargs.preserve_thinking: true` so prior
+	 * `reasoning_content` is retained on the next completion request.
+	 */
+	preserveThinking?: boolean;
+	/**
+	 * Capability-aware sampling defaults for this model/provider.
+	 * Applied only for sampling parameters the caller did not explicitly set.
+	 * Precedence: explicit operator value > `samplingDefaults` > server default.
+	 */
+	samplingDefaults?: {
+		temperature?: number;
+		topP?: number;
+		topK?: number;
+		minP?: number;
+		presencePenalty?: number;
+		repetitionPenalty?: number;
+	};
 	/** OpenRouter-specific routing preferences. Only used when baseUrl points to OpenRouter. */
 	openRouterRouting?: OpenRouterRouting;
 	/** Vercel AI Gateway routing preferences. Only used when baseUrl points to Vercel AI Gateway. */

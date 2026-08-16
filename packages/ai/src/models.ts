@@ -110,11 +110,20 @@ export function calculateCost<TApi extends Api>(model: Model<TApi>, usage: Usage
 /**
  * Check if a model supports xhigh thinking level.
  *
- * Supported today:
+ * Resolution order:
+ * 1. Explicit `model.compat.supportsXhigh` capability declaration (authoritative).
+ * 2. Built-in detection for known model families (legacy fallback).
+ *
+ * Supported by built-in detection today:
  * - GPT-5.2 / GPT-5.3 / GPT-5.4 model families
  * - Opus 4.6 models (xhigh maps to adaptive effort "max" on Anthropic-compatible providers)
  */
 export function supportsXhigh<TApi extends Api>(model: Model<TApi>): boolean {
+	const declared = (model.compat as { supportsXhigh?: boolean } | undefined)?.supportsXhigh;
+	if (declared !== undefined) {
+		return declared;
+	}
+
 	if (model.id.includes("gpt-5.2") || model.id.includes("gpt-5.3") || model.id.includes("gpt-5.4")) {
 		return true;
 	}
