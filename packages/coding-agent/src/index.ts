@@ -879,6 +879,21 @@ export {
 	type WriteToolOptions,
 	writeTool,
 } from "./core/tools/index.js";
+export {
+	buildUnityMcpServerDefinition,
+	handleUnityCommand,
+	inspectUnity,
+	LOTG_UNITY_TARGET,
+	readOnlyUnityTools,
+	runUnitySchedulerProof,
+	UNITY_EXECUTOR_CAPABILITIES,
+	UNITY_EXECUTOR_ID,
+	UNITY_MISSION_REQUIREMENTS,
+	type UnityInspectionResult,
+	type UnityObservation,
+	type UnityServerTarget,
+	type UnityToolObservation,
+} from "./core/unity-mcp/index.js";
 // Working context surface
 export {
 	buildWorkingContext,

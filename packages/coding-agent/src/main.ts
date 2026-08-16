@@ -47,6 +47,7 @@ import { handleSubagentCommand } from "./core/subagent-cli.js";
 import { printTimings, time } from "./core/timings.js";
 import { buildTodoStatusReport, formatTodoStatus, type TodoDiagnosticInput } from "./core/todo/todo-cli.js";
 import { allTools } from "./core/tools/index.js";
+import { handleUnityCommand } from "./core/unity-mcp/cli.js";
 import { handleWorkspaceRetrievalCommand } from "./core/workspace-cli.js";
 import { runMigrations, showDeprecationWarnings } from "./migrations.js";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.js";
@@ -904,6 +905,10 @@ export async function main(args: string[]) {
 	}
 
 	if (await handleMcpCommand(args)) {
+		return;
+	}
+
+	if (await handleUnityCommand(args)) {
 		return;
 	}
 
