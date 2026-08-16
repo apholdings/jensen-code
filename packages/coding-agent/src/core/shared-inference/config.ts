@@ -1,15 +1,23 @@
 /**
- * Shared inference runtime resolution (3.0.0 foundation).
+ * Shared inference runtime resolution (3.0.0 cross-host bridge).
  *
- * Activation is configuration-driven (never on by default): it turns on when
- * `JENSEN_SHARED_INFERENCE` is truthy or a resources list is present. When
- * active, every local Jensen process routes configured shared resources through
- * the cross-process scheduler before touching the provider.
+ * Activation is configuration-driven and now DEFAULT-ON for configured shared
+ * resources: a model that resolves to a configured `SharedInferenceResource`
+ * automatically uses admission scheduling (no per-caller env flag). Cloud /
+ * non-shared providers pass through unchanged. Explicit opt-out for diagnostic
+ * direct access: `JENSEN_SHARED_INFERENCE=0`.
+ *
+ * Local processes run the scheduler in-process over the durable cross-process
+ * ledger. Remote runtimes (when `JENSEN_SHARED_INFERENCE_ADMISSION_URL` is set)
+ * use a `RemoteSchedulerAdmissionClient` that delegates to the central admission
+ * service — never a second scheduler, never direct backend fallback.
  */
 
 import type { StreamFn } from "@apholdings/jensen-agent-core";
+import { LocalSchedulerAdmissionClient, type SharedInferenceAdmissionPort } from "./admission-port.js";
 import { createFileInferenceQueueStore } from "./file-inference-queue-store.js";
 import { createFileLogicalAgentStore } from "./file-logical-agent-store.js";
+import { RemoteSchedulerAdmissionClient } from "./remote-admission-client.js";
 import { LocalSubagentRuntime } from "./runtime.js";
 import { SharedInferenceScheduler } from "./scheduler.js";
 import { createScheduledStreamFn } from "./stream-fn.js";
@@ -29,8 +37,8 @@ export const DEFAULT_SHARED_INFERENCE_RESOURCES: readonly SharedInferenceResourc
 ];
 
 export interface SharedInferenceRuntime {
-	scheduler: SharedInferenceScheduler;
-	runtime: LocalSubagentRuntime;
+	admission: SharedInferenceAdmissionPort;
+	runtime?: LocalSubagentRuntime;
 	streamFn: StreamFn;
 	resources: SharedInferenceResource[];
 }
@@ -69,8 +77,28 @@ export function sharedInferenceResources(): SharedInferenceResource[] {
 	return parseResourcesFromEnv() ?? [...DEFAULT_SHARED_INFERENCE_RESOURCES];
 }
 
+export interface SharedInferenceAdmissionEndpoint {
+	url?: string;
+	token?: string;
+	executionId?: string;
+}
+
+/** Remote admission endpoint propagated into the runtime environment (never argv). */
+export function resolveAdmissionEndpoint(): SharedInferenceAdmissionEndpoint {
+	return {
+		url: process.env.JENSEN_SHARED_INFERENCE_ADMISSION_URL,
+		token: process.env.JENSEN_SHARED_INFERENCE_TOKEN,
+		executionId: process.env.JENSEN_SHARED_INFERENCE_EXECUTION_ID,
+	};
+}
+
 export function isSharedInferenceEnabled(): boolean {
-	return isTruthy(process.env.JENSEN_SHARED_INFERENCE) || parseResourcesFromEnv() !== undefined;
+	// Remote runtime with a propagated admission endpoint is always scheduled.
+	if (resolveAdmissionEndpoint().url) return true;
+	const explicit = process.env.JENSEN_SHARED_INFERENCE;
+	if (explicit !== undefined) return isTruthy(explicit);
+	// Default-on: a configured shared resource implies scheduling.
+	return sharedInferenceResources().length > 0;
 }
 
 export interface ResolveSharedInferenceRuntimeOptions {
@@ -85,28 +113,46 @@ export interface ResolveSharedInferenceRuntimeOptions {
 }
 
 /**
- * Build the shared scheduler + logical-agent runtime + provider seam. Returns
- * `undefined` when shared inference is not configured (normal cloud/local
- * providers are unchanged).
+ * Build the shared admission + logical-agent runtime + provider seam.
+ *
+ * - Remote runtime (`JENSEN_SHARED_INFERENCE_ADMISSION_URL`): a remote admission
+ *   client delegating to the central service (fail-closed, no direct backend).
+ * - Local runtime: the in-process scheduler over the shared durable ledger.
+ *
+ * Returns `undefined` when shared inference is disabled.
  */
 export function resolveSharedInferenceRuntime(
 	options: ResolveSharedInferenceRuntimeOptions = {},
 ): SharedInferenceRuntime | undefined {
 	if (!isSharedInferenceEnabled()) return undefined;
 
-	const queueStore = createFileInferenceQueueStore(options.queueDir);
-	const agentStore = createFileLogicalAgentStore(options.agentDir);
-	const scheduler = new SharedInferenceScheduler({ store: queueStore, ownerId: options.ownerId, now: options.now });
-	const runtime = new LocalSubagentRuntime({ store: agentStore, now: options.now });
-
 	const resources = sharedInferenceResources();
-	void Promise.all(resources.map((resource) => scheduler.registerResource(resource))).catch(() => {
-		// Ledger registration is idempotent; a corrupt pre-existing ledger is
-		// surfaced structurally by later acquire/status calls, never masked here.
-	});
+	const endpoint = resolveAdmissionEndpoint();
+
+	let admission: SharedInferenceAdmissionPort;
+	let runtime: LocalSubagentRuntime;
+
+	if (endpoint.url) {
+		admission = new RemoteSchedulerAdmissionClient({
+			baseUrl: endpoint.url,
+			token: endpoint.token ?? "",
+			executionId: endpoint.executionId ?? options.executionId ?? "unknown",
+			resources,
+		});
+		runtime = new LocalSubagentRuntime({ store: createFileLogicalAgentStore(options.agentDir) });
+	} else {
+		const queueStore = createFileInferenceQueueStore(options.queueDir);
+		const scheduler = new SharedInferenceScheduler({ store: queueStore, ownerId: options.ownerId, now: options.now });
+		void Promise.all(resources.map((resource) => scheduler.registerResource(resource))).catch(() => {
+			// Ledger registration is idempotent; a corrupt pre-existing ledger is
+			// surfaced structurally by later acquire/status calls, never masked here.
+		});
+		admission = new LocalSchedulerAdmissionClient(scheduler);
+		runtime = new LocalSubagentRuntime({ store: createFileLogicalAgentStore(options.agentDir) });
+	}
 
 	const streamFn = createScheduledStreamFn({
-		scheduler,
+		admission,
 		runtime,
 		getCorrelation: () => ({
 			logicalAgentId: options.sessionId ?? process.env.JENSEN_SESSION_ID ?? "unknown",
@@ -116,5 +162,5 @@ export function resolveSharedInferenceRuntime(
 		}),
 	});
 
-	return { scheduler, runtime, streamFn, resources };
+	return { admission, runtime, streamFn, resources };
 }

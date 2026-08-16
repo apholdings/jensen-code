@@ -68,6 +68,18 @@ export interface RemoteMissionExecutorOptions {
 	evidenceFiles?: string[];
 	/** Optional verifier override (defaults to remote acceptance-criteria). */
 	verifier?: ProcessMissionVerifier;
+	/**
+	 * Optional shared-inference admission wiring. When set, the remote child
+	 * routes its shared-resource inference through the central scheduler via a
+	 * reverse tunnel that lives exactly as long as this execution's SSH session.
+	 * `tokenIssuer` is called with the concrete executionId so the token is
+	 * execution-scoped (never persisted, never placed in argv).
+	 */
+	admission?: {
+		localPort: number;
+		remotePort: number;
+		tokenIssuer: (executionId: string) => { token: string } | Promise<{ token: string }>;
+	};
 	executionIdFactory?: (request: MissionRequest) => string;
 	launchIdFactory?: () => string;
 	timeoutMs?: number;
@@ -106,6 +118,11 @@ export class RemoteMissionExecutor implements MissionExecutor {
 	private readonly _remoteTempRoot: string;
 	private readonly _evidenceFiles?: string[];
 	private readonly _verifier?: ProcessMissionVerifier;
+	private readonly _admission?: {
+		localPort: number;
+		remotePort: number;
+		tokenIssuer: (executionId: string) => { token: string } | Promise<{ token: string }>;
+	};
 	private readonly _executionIdFactory: (request: MissionRequest) => string;
 	private readonly _launchIdFactory: () => string;
 	private readonly _timeoutMs?: number;
@@ -126,6 +143,7 @@ export class RemoteMissionExecutor implements MissionExecutor {
 		this._remoteTempRoot = options.remoteTempRoot;
 		this._evidenceFiles = options.evidenceFiles;
 		this._verifier = options.verifier;
+		this._admission = options.admission;
 		this._executionIdFactory = options.executionIdFactory ?? (() => `exec_${randomUUID()}`);
 		this._launchIdFactory = options.launchIdFactory ?? (() => `launch_${randomUUID()}`);
 		this._timeoutMs = options.timeoutMs;
@@ -166,6 +184,19 @@ export class RemoteMissionExecutor implements MissionExecutor {
 		tracker.transition("RUNNING");
 
 		const remoteLaunch = this._buildRemoteLaunch({ request, workspaceDir, agentDir, sessionDir });
+
+		// Shared-inference admission: issue an execution-scoped token and inject
+		// the admission endpoint into the remote child env (never argv).
+		let admissionEnv: Record<string, string> = {};
+		if (this._admission) {
+			const { token } = await this._admission.tokenIssuer(executionId);
+			admissionEnv = {
+				JENSEN_SHARED_INFERENCE_ADMISSION_URL: `http://127.0.0.1:${this._admission.remotePort}`,
+				JENSEN_SHARED_INFERENCE_TOKEN: token,
+				JENSEN_SHARED_INFERENCE_EXECUTION_ID: executionId,
+			};
+		}
+
 		const workspaceFiles = (this._workspaceFiles?.(request) ?? []).map((file) => ({
 			path: file.path,
 			contentB64: Buffer.from(file.content, "utf8").toString("base64"),
@@ -183,10 +214,17 @@ export class RemoteMissionExecutor implements MissionExecutor {
 				childSessionId: this._childSessionId,
 				sessionFileContent: this._sessionFileContent,
 				workspaceFiles,
-				launch: { ...remoteLaunch, cwd: workspaceDir },
+				launch: {
+					...remoteLaunch,
+					cwd: workspaceDir,
+					env: { ...(remoteLaunch.env ?? {}), ...admissionEnv },
+				},
 				heartbeatMs: this._heartbeatMs,
 				timeoutMs: this._timeoutMs,
 				evidenceFiles: this._evidenceFiles,
+				admissionTunnel: this._admission
+					? { localPort: this._admission.localPort, remotePort: this._admission.remotePort }
+					: undefined,
 			},
 			{ signal: controller.signal },
 		);

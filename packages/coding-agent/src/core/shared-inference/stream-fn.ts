@@ -28,6 +28,7 @@ import {
 	type Model,
 	streamSimple,
 } from "@apholdings/jensen-ai";
+import { LocalSchedulerAdmissionClient, type SharedInferenceAdmissionPort } from "./admission-port.js";
 import type { LocalSubagentRuntime } from "./runtime.js";
 import type { SharedInferenceScheduler } from "./scheduler.js";
 
@@ -39,7 +40,10 @@ export interface ScheduledStreamCorrelation {
 }
 
 export interface ScheduledStreamFnOptions {
-	scheduler: SharedInferenceScheduler;
+	/** Admission authority (local or remote). When omitted, a local scheduler is wrapped. */
+	admission?: SharedInferenceAdmissionPort;
+	/** Backward-compatible local scheduler (wrapped into a local admission client). */
+	scheduler?: SharedInferenceScheduler;
 	runtime?: LocalSubagentRuntime;
 	/** Provider delegate (default streamSimple). */
 	delegate?: typeof streamSimple;
@@ -106,9 +110,14 @@ function errorStream(model: Model<any>, message: string): AssistantMessageEventS
 
 export function createScheduledStreamFn(options: ScheduledStreamFnOptions): StreamFn {
 	const delegate = options.delegate ?? streamSimple;
+	const admission =
+		options.admission ?? (options.scheduler ? new LocalSchedulerAdmissionClient(options.scheduler) : undefined);
+	if (!admission) {
+		throw new Error("createScheduledStreamFn requires an admission port or a local scheduler");
+	}
 
 	return async (model, context, streamOptions) => {
-		const resource = options.scheduler.resourceFor(model);
+		const resource = admission.resourceFor(model);
 		if (!resource) {
 			// Non-shared provider: unchanged behavior.
 			return delegate(model, context, streamOptions);
@@ -125,7 +134,7 @@ export function createScheduledStreamFn(options: ScheduledStreamFnOptions): Stre
 			pendingInferenceRequestId: inferenceRequestId,
 		});
 
-		const acquired = await options.scheduler.acquire({
+		const acquired = await admission.acquire({
 			logicalAgentId,
 			resource,
 			model,
@@ -154,40 +163,71 @@ export function createScheduledStreamFn(options: ScheduledStreamFnOptions): Stre
 			pendingInferenceRequestId: acquired.admitted.inferenceRequestId,
 		});
 
-		const stream = delegate(model, context, streamOptions);
+		const delegateStream = delegate(model, context, streamOptions);
 
-		void stream
-			.result()
-			.then(
-				async (message) => {
-					try {
-						await options.scheduler.release(acquired.admitted, {
-							state: "COMPLETED",
-							usage: { input: message.usage?.input, output: message.usage?.output },
-						});
-						await options.runtime?.resume(logicalAgentId);
-					} catch {
-						// Best-effort; recovery reconciles a corrupt ledger honestly.
+		// Wrap the delegate stream so the scheduler release happens BEFORE the
+		// terminal event / `result()` resolves. A fire-and-forget release is lost
+		// when a CLI process exits immediately after the final message.
+		const stream = createAssistantMessageEventStream();
+		let released = false;
+		const syntheticFailure = (errorMessage: string): AssistantMessage => ({
+			role: "assistant",
+			content: [],
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: { ...ZERO_USAGE },
+			stopReason: "error",
+			errorMessage,
+			timestamp: Date.now(),
+		});
+
+		const releaseOnce = async (message: AssistantMessage, failed: boolean): Promise<void> => {
+			if (released) return;
+			released = true;
+			try {
+				await admission.release(acquired.admitted, {
+					state: failed ? "FAILED" : "COMPLETED",
+					usage: failed ? undefined : { input: message.usage?.input, output: message.usage?.output },
+					errorMessage: failed ? message.errorMessage : undefined,
+				});
+				if (failed) {
+					await options.runtime?.transition(logicalAgentId, "RUNNABLE", {
+						waitingReason: undefined,
+						pendingInferenceRequestId: undefined,
+					});
+				} else {
+					await options.runtime?.resume(logicalAgentId);
+				}
+			} catch {
+				// Best-effort; recovery reconciles a corrupt ledger honestly.
+			}
+		};
+
+		void (async () => {
+			try {
+				for await (const event of delegateStream) {
+					if (event.type === "done") {
+						await releaseOnce(event.message, false);
+						stream.push(event);
+						return;
 					}
-				},
-				async (error) => {
-					try {
-						await options.scheduler.release(acquired.admitted, {
-							state: "FAILED",
-							errorMessage: error instanceof Error ? error.message : String(error),
-						});
-						await options.runtime?.transition(logicalAgentId, "RUNNABLE", {
-							waitingReason: undefined,
-							pendingInferenceRequestId: undefined,
-						});
-					} catch {
-						// Best-effort; recovery reconciles a corrupt ledger honestly.
+					if (event.type === "error") {
+						await releaseOnce(event.error, true);
+						stream.push(event);
+						return;
 					}
-				},
-			)
-			.catch(() => {
-				// Never surface a release failure as an unhandled rejection.
-			});
+					stream.push(event);
+				}
+				// Delegate ended without a terminal event: release honestly, never
+				// fabricate a completion.
+				await releaseOnce(syntheticFailure("provider stream ended without a terminal event"), true);
+				stream.end();
+			} catch (error) {
+				await releaseOnce(syntheticFailure(error instanceof Error ? error.message : String(error)), true);
+				stream.end();
+			}
+		})();
 
 		return stream;
 	};

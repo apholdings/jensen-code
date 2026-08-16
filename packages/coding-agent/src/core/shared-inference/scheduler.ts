@@ -22,6 +22,8 @@ import type { InferenceQueueStore, InferenceResourceLedger } from "./inference-q
 import type {
 	AcquireInferenceOutcome,
 	AdmittedInference,
+	EnqueueInferenceOutcome,
+	InferenceAdmissionStatus,
 	InferencePriority,
 	InferenceRecoveryReport,
 	InferenceRequestDependency,
@@ -29,6 +31,7 @@ import type {
 	InferenceRequestRecord,
 	InferenceRequestStatus,
 	ReleaseInferenceOutcome,
+	RenewInferenceOutcome,
 	SharedInferenceResource,
 	SharedInferenceResourceStatus,
 	SharedInferenceSchedulerStatus,
@@ -189,6 +192,98 @@ export class SharedInferenceScheduler {
 	// =========================================================================
 
 	/**
+	 * Non-blocking enqueue (or immediate admit) of an inference request. This is
+	 * the single authority for turning a request into either an admitted lease or
+	 * a durable queued entry; `acquire` composes it with a bounded wait loop.
+	 * The admission service uses `enqueue` + `admissionStatus` to expose a
+	 * request/wait protocol to remote clients without duplicating the algorithm.
+	 */
+	async enqueue(input: {
+		logicalAgentId: string;
+		resource: SharedInferenceResource;
+		model: { provider: string; id: string };
+		inferenceRequestId?: string;
+		missionId?: string;
+		assignmentId?: string;
+		executionId?: string;
+		priority?: InferencePriority;
+		dependency?: InferenceRequestDependency;
+		estimatedInputTokens?: number;
+		maxOutputTokens?: number;
+	}): Promise<EnqueueInferenceOutcome> {
+		const request = this._buildRequest(input);
+		const result = await this._enqueueOrAdmit(request.resourceId, request);
+		if (result.status === "admitted") return { status: "admitted", admitted: result.admitted };
+		if (result.status === "queued")
+			return { status: "queued", inferenceRequestId: result.inferenceRequestId, position: result.position };
+		// The enqueue path can only produce admitted/queued; anything else is a
+		// structural defect surfaced loudly rather than coerced.
+		throw new Error(`Unexpected enqueue outcome: ${(result as { status: string }).status}`);
+	}
+
+	/** Pollable admission state for a request owned by this scheduler instance. */
+	async admissionStatus(
+		inferenceRequestId: string,
+		options: { ownerId?: string } = {},
+	): Promise<InferenceAdmissionStatus> {
+		const ownerId = options.ownerId ?? this._ownerId;
+		for (const resourceId of await this._store.listResources()) {
+			const loaded = await this._store.load(resourceId);
+			if (loaded.status !== "ok") continue;
+			const ledger = loaded.ledger;
+			const running = ledger.running.find(
+				(r) => r.inferenceRequestId === inferenceRequestId && r.lease?.ownerId === ownerId,
+			);
+			if (running?.lease) return { status: "admitted", admitted: this._toAdmitted(running) };
+			const queuedIndex = ledger.queue.findIndex((r) => r.inferenceRequestId === inferenceRequestId);
+			if (queuedIndex >= 0) {
+				return { status: "queued", inferenceRequestId, position: queuedIndex + 1 };
+			}
+			const summary = ledger.history.find((r) => r.inferenceRequestId === inferenceRequestId);
+			if (summary) return { status: "terminal", inferenceRequestId, state: summary.state };
+		}
+		return { status: "unknown", inferenceRequestId };
+	}
+
+	/** Renew an active lease (keeps long-running generations from expiring mid-stream). */
+	async renew(admitted: AdmittedInference, options: { now?: number } = {}): Promise<RenewInferenceOutcome> {
+		const now = options.now ?? this._now();
+		const result = await this._store.mutate<RenewInferenceOutcome>(admitted.resourceId, (ledger) => {
+			const index = ledger.running.findIndex((r) => r.inferenceRequestId === admitted.inferenceRequestId);
+			if (index < 0)
+				return { kind: "noop", value: { status: "not_found", inferenceRequestId: admitted.inferenceRequestId } };
+			const running = ledger.running[index];
+			if (
+				!running.lease ||
+				running.lease.leaseId !== admitted.lease.leaseId ||
+				running.lease.ownerId !== this._ownerId
+			) {
+				return { kind: "noop", value: { status: "not_found", inferenceRequestId: admitted.inferenceRequestId } };
+			}
+			const expiresAtMs = now + this._leaseDurationMs;
+			const next: InferenceResourceLedger = {
+				...ledger,
+				running: ledger.running.map((r, i) => (i === index ? { ...r, lease: { ...r.lease!, expiresAtMs } } : r)),
+				updatedAtMs: now,
+				revision: ledger.revision + 1,
+			};
+			return {
+				kind: "write",
+				next,
+				value: {
+					status: "renewed",
+					admitted: this._toAdmitted({ ...running, lease: { ...running.lease!, expiresAtMs } }),
+					expiresAtMs,
+				},
+			};
+		});
+		if (result.status === "missing") return { status: "not_found", inferenceRequestId: admitted.inferenceRequestId };
+		if (result.status === "corrupt")
+			throw new Error(`Inference queue for ${admitted.resourceId} is corrupt: ${result.diagnostic}`);
+		return result.value;
+	}
+
+	/**
 	 * Request an inference slot. If capacity is available the request is admitted
 	 * immediately; otherwise it is durably queued and the caller waits (bounded
 	 * poll, abortable, queue-timeout aware) until admission, cancellation, or
@@ -209,10 +304,55 @@ export class SharedInferenceScheduler {
 		signal?: AbortSignal;
 		queueWaitTimeoutMs?: number;
 	}): Promise<AcquireInferenceOutcome> {
-		const resource = input.resource;
+		const inferenceRequestId = input.inferenceRequestId ?? this._requestIdFactory();
+
+		const first = await this.enqueue({
+			...input,
+			inferenceRequestId,
+		});
+		if (first.status === "admitted") return { status: "admitted", admitted: first.admitted };
+
+		const enqueuedAtMs = this._now();
+		const timeoutMs = input.queueWaitTimeoutMs ?? this._queueWaitTimeoutMs;
+		while (true) {
+			if (input.signal?.aborted) {
+				await this.cancel(inferenceRequestId);
+				return { status: "cancelled", inferenceRequestId, reason: "aborted" };
+			}
+			const waitedMs = this._now() - enqueuedAtMs;
+			if (timeoutMs > 0 && waitedMs >= timeoutMs) {
+				await this.cancel(inferenceRequestId);
+				return { status: "queue_timeout", inferenceRequestId, waitedMs };
+			}
+
+			const state = await this.admissionStatus(inferenceRequestId);
+			if (state.status === "admitted") return { status: "admitted", admitted: state.admitted };
+			if (state.status === "terminal")
+				return { status: "cancelled", inferenceRequestId, reason: `terminal:${state.state}` };
+			if (state.status === "unknown") {
+				return { status: "cancelled", inferenceRequestId, reason: "removed_from_queue" };
+			}
+
+			await this._sleep(this._waitPollMs);
+		}
+	}
+
+	private _buildRequest(input: {
+		logicalAgentId: string;
+		resource: SharedInferenceResource;
+		model: { provider: string; id: string };
+		inferenceRequestId?: string;
+		missionId?: string;
+		assignmentId?: string;
+		executionId?: string;
+		priority?: InferencePriority;
+		dependency?: InferenceRequestDependency;
+		estimatedInputTokens?: number;
+		maxOutputTokens?: number;
+	}): InferenceRequestRecord {
 		const now = this._now();
 		const requestId = input.inferenceRequestId ?? this._requestIdFactory();
-		const request: InferenceRequestRecord = {
+		return {
 			schemaVersion: 1,
 			inferenceRequestId: requestId,
 			logicalAgentId: input.logicalAgentId,
@@ -220,7 +360,7 @@ export class SharedInferenceScheduler {
 			missionId: input.missionId,
 			assignmentId: input.assignmentId,
 			executionId: input.executionId,
-			resourceId: resource.resourceId,
+			resourceId: input.resource.resourceId,
 			provider: input.model.provider,
 			model: input.model.id,
 			requestedAtMs: now,
@@ -231,51 +371,6 @@ export class SharedInferenceScheduler {
 			maxOutputTokens: input.maxOutputTokens,
 			state: "QUEUED",
 		};
-
-		const first = await this._enqueueOrAdmit(resource.resourceId, request);
-		if (first.status === "admitted") return first;
-
-		const timeoutMs = input.queueWaitTimeoutMs ?? this._queueWaitTimeoutMs;
-		while (true) {
-			if (input.signal?.aborted) {
-				await this.cancel(requestId);
-				return { status: "cancelled", inferenceRequestId: requestId, reason: "aborted" };
-			}
-			const waitedMs = this._now() - request.enqueuedAtMs;
-			if (timeoutMs > 0 && waitedMs >= timeoutMs) {
-				await this.cancel(requestId);
-				return { status: "queue_timeout", inferenceRequestId: requestId, waitedMs };
-			}
-
-			const loaded = await this._store.load(resource.resourceId);
-			if (loaded.status === "ok") {
-				const running = loaded.ledger.running.find(
-					(r) => r.inferenceRequestId === requestId && r.lease?.ownerId === this._ownerId,
-				);
-				if (running?.lease) {
-					return {
-						status: "admitted",
-						admitted: {
-							inferenceRequestId: requestId,
-							resourceId: resource.resourceId,
-							logicalAgentId: input.logicalAgentId,
-							slot: running.lease.slot,
-							lease: running.lease,
-						},
-					};
-				}
-				const queued = loaded.ledger.queue.find((r) => r.inferenceRequestId === requestId);
-				if (!queued) {
-					// Removed from queue (cancel/recover): no longer waiting.
-					return { status: "cancelled", inferenceRequestId: requestId, reason: "removed_from_queue" };
-				}
-			} else if (loaded.status === "corrupt") {
-				await this.cancel(requestId);
-				return { status: "cancelled", inferenceRequestId: requestId, reason: `corrupt_queue:${loaded.diagnostic}` };
-			}
-
-			await this._sleep(this._waitPollMs);
-		}
 	}
 
 	private async _enqueueOrAdmit(

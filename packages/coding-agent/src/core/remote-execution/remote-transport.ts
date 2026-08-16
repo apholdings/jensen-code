@@ -55,6 +55,14 @@ export interface RemoteLaunchSpec {
 	callbacks?: {
 		onFrame?: (frame: { type: string; payload: unknown }) => void;
 	};
+	/**
+	 * Optional reverse port-forward for the duration of the remote child
+	 * execution: the remote child reaches `127.0.0.1:<remotePort>` and it is
+	 * tunnelled back to `127.0.0.1:<localPort>` on the control host (the central
+	 * shared-inference admission service). The tunnel lives exactly as long as
+	 * this SSH session, so it closes when the remote child exits.
+	 */
+	admissionTunnel?: { localPort: number; remotePort: number };
 }
 
 // =============================================================================

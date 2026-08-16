@@ -195,6 +195,22 @@ export type AcquireInferenceOutcome =
 	| { status: "cancelled"; inferenceRequestId: string; reason: string }
 	| { status: "queue_timeout"; inferenceRequestId: string; waitedMs: number };
 
+/** Non-blocking enqueue/admit result (used by the admission service seam). */
+export type EnqueueInferenceOutcome =
+	| { status: "admitted"; admitted: AdmittedInference }
+	| { status: "queued"; inferenceRequestId: string; position: number };
+
+/** Pollable admission state (used by remote admission clients + the service). */
+export type InferenceAdmissionStatus =
+	| { status: "queued"; inferenceRequestId: string; position: number }
+	| { status: "admitted"; admitted: AdmittedInference }
+	| { status: "terminal"; inferenceRequestId: string; state: InferenceRequestState }
+	| { status: "unknown"; inferenceRequestId: string };
+
+export type RenewInferenceOutcome =
+	| { status: "renewed"; admitted: AdmittedInference; expiresAtMs: number }
+	| { status: "not_found"; inferenceRequestId: string };
+
 export type ReleaseInferenceOutcome = { status: "released"; inferenceRequestId: string } | { status: "not_found" };
 
 // =============================================================================

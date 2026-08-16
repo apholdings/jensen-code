@@ -1,27 +1,27 @@
 /**
- * Remote Execution — remote resume builder (2.14.0).
+ * Remote Execution — remote resume builder (2.14.0 → 3.0.0 bridge).
  *
  * Builds a `RemoteMissionExecutor` for a resolved durable child session, mirroring
  * `buildChildResumeExecutor` but with a remote transport instead of local spawn.
- * The same `resumePrompt` + child session identity are reused, and the session
- * file is materialised onto the target so the remote child continues the SAME
- * logical execution rather than starting an unrelated one.
+ * With the synchronised modern runtime, the remote child uses the durable
+ * `--child-mission` / `--session-id` path: the SAME child session file is
+ * materialised onto the target and the child continues the SAME logical mission
+ * (continue-not-replay), never an unrelated subordinate session.
  */
 
+import { readFileSync } from "node:fs";
 import type { BuildAssignedExecutor } from "../assignment/assignment-control-service.js";
-import type { BuiltChildResume } from "../durable-child-session/child-session-restore.js";
+import { type BuiltChildResume, buildChildResumePrompt } from "../durable-child-session/child-session-restore.js";
 import type { DurableMissionRecord } from "../mission-domain/durable-store.js";
 import type { ProcessMissionVerifier } from "../mission-domain/process-mission-executor.js";
-import { RemoteMissionExecutor } from "./remote-mission-executor.js";
+import type { SessionManager } from "../session-manager.js";
+import { RemoteMissionExecutor, type RemoteMissionExecutorOptions } from "./remote-mission-executor.js";
 import type { RemoteExecutionTarget } from "./remote-target-types.js";
 import type { RemoteChildLaunch, RemoteCommandRunner, RemoteExecutionTransport } from "./remote-transport.js";
 
 /**
- * Build the prompt the remote child receives. The remote published runtime may
- * not support the local durable `--child-mission` resume flags, so the remote
- * substrate runs a temporary subordinate session driven by the immutable
- * objective + acceptance criteria. The central mission identity remains the
- * authority; this prompt is a projection, not a new mission.
+ * Legacy projection prompt (kept for the explicitly-flagged temporary mode only;
+ * never used by ordinary orchestration once a synchronised runtime is present).
  */
 export function buildRemoteTaskPrompt(record: DurableMissionRecord): string {
 	const criteria = record.request.acceptanceCriteria
@@ -46,6 +46,10 @@ export interface BuildRemoteChildResumeOptions {
 	childSessionId: string;
 	target: RemoteExecutionTarget;
 	transport: RemoteExecutionTransport & RemoteCommandRunner;
+	/** Resolved session manager (enables the modern durable child-session path). */
+	sessionManager?: SessionManager;
+	/** Override the materialised child session file content (else read from the session manager). */
+	sessionFileContent?: string;
 	/** Concrete remote child launch (remote jensen CLI command). */
 	buildRemoteLaunch: (input: {
 		request: DurableMissionRecord["request"];
@@ -65,16 +69,28 @@ export interface BuildRemoteChildResumeOptions {
 	workspaceFiles?: (request: DurableMissionRecord["request"]) => { path: string; content: string }[];
 	executorId?: string;
 	verifier?: ProcessMissionVerifier;
+	/** Shared-inference admission wiring (reverse tunnel + token issuer). */
+	admission?: RemoteMissionExecutorOptions["admission"];
+	/** Remote execution timeout (ms). */
+	timeoutMs?: number;
 }
 
 /**
- * Build the continue-not-replay remote executor from a resolved session. The
- * returned shape matches `BuiltChildResume`, so the assignment control plane
- * treats remote and local executors identically downstream.
+ * Build the continue-not-replay remote executor from a resolved session. When a
+ * `sessionManager` is supplied, the remote child resumes the SAME durable
+ * child session via `--child-mission` / `--session-id`.
  */
 export function buildRemoteChildResumeExecutor(options: BuildRemoteChildResumeOptions): BuiltChildResume {
 	const { record, childSessionId } = options;
-	const resumePrompt = buildRemoteTaskPrompt(record);
+	const resumePrompt = options.sessionManager
+		? buildChildResumePrompt(record, options.sessionManager)
+		: buildRemoteTaskPrompt(record);
+
+	let sessionFileContent = options.sessionFileContent;
+	if (sessionFileContent === undefined && options.sessionManager) {
+		const sessionFile = options.sessionManager.getSessionFile();
+		if (sessionFile) sessionFileContent = readFileSync(sessionFile, "utf8");
+	}
 
 	const executor = new RemoteMissionExecutor({
 		executorId: options.executorId ?? "remote-child-resume",
@@ -84,9 +100,13 @@ export function buildRemoteChildResumeExecutor(options: BuildRemoteChildResumeOp
 			options.buildRemoteLaunch({ request, resumePrompt, childSessionId, workspaceDir, agentDir, sessionDir }),
 		workspaceFiles: options.workspaceFiles,
 		modelsJson: options.modelsJson,
+		childSessionId,
+		sessionFileContent,
 		remoteTempRoot: options.remoteTempRoot,
 		evidenceFiles: options.evidenceFiles,
 		verifier: options.verifier,
+		admission: options.admission,
+		timeoutMs: options.timeoutMs,
 	});
 
 	return { childSessionId, resumePrompt, executor };
@@ -100,7 +120,7 @@ export interface BuildRemoteAssignedExecutorOptions {
 	executorId: string;
 	target: RemoteExecutionTarget;
 	transport: RemoteExecutionTransport & RemoteCommandRunner;
-	/** Absolute path to the remote Jensen CLI JS entry (e.g. the global install). */
+	/** Absolute path to the synchronised remote Jensen CLI JS entry. */
 	remoteCliEntry: string;
 	/** Materialised remote models.json content (ephemeral protected config). */
 	modelsJson: string;
@@ -111,18 +131,24 @@ export interface BuildRemoteAssignedExecutorOptions {
 	/** Initial workspace files to materialise on the target (remote-relative). */
 	workspaceFiles?: (request: DurableMissionRecord["request"]) => { path: string; content: string }[];
 	verifier?: ProcessMissionVerifier;
+	/** Shared-inference admission wiring (reverse tunnel + token issuer). */
+	admission?: RemoteMissionExecutorOptions["admission"];
+	/** Remote execution timeout (ms). */
+	timeoutMs?: number;
 }
 
 /**
  * Build the worker's remote executor factory for a remote-bound executor. The
  * returned `BuildAssignedExecutor` produces a `RemoteMissionExecutor` that runs
- * the real Jensen CLI on the target with the materialised agent dir.
+ * the synchronised current Jensen CLI on the target with the materialised agent
+ * dir and the durable child-session path.
  */
 export function buildRemoteAssignedExecutor(options: BuildRemoteAssignedExecutorOptions): BuildAssignedExecutor {
-	return ({ record, childSessionId }) => {
+	return ({ record, sessionManager, childSessionId }) => {
 		return buildRemoteChildResumeExecutor({
 			record,
 			childSessionId,
+			sessionManager,
 			target: options.target,
 			transport: options.transport,
 			modelsJson: options.modelsJson,
@@ -131,10 +157,32 @@ export function buildRemoteAssignedExecutor(options: BuildRemoteAssignedExecutor
 			workspaceFiles: options.workspaceFiles,
 			executorId: options.executorId,
 			verifier: options.verifier,
-			buildRemoteLaunch: ({ request, resumePrompt, sessionDir, agentDir }): RemoteChildLaunch => {
-				const args: string[] = [options.remoteCliEntry, "--mode", "json", "-p", "--session-dir", sessionDir];
+			admission: options.admission,
+			timeoutMs: options.timeoutMs,
+			buildRemoteLaunch: ({
+				request,
+				resumePrompt,
+				childSessionId: sessionId,
+				sessionDir,
+				agentDir,
+			}): RemoteChildLaunch => {
+				const args: string[] = [
+					options.remoteCliEntry,
+					"--mode",
+					"json",
+					"-p",
+					"--child-mission",
+					record.missionId,
+					"--session-id",
+					sessionId,
+					"--session-dir",
+					sessionDir,
+				];
 				if (request.modelPolicy) {
 					args.push("--provider", request.modelPolicy.provider, "--model", request.modelPolicy.model);
+				}
+				if (request.capabilities && request.capabilities.length > 0) {
+					args.push("--tools", request.capabilities.join(","));
 				}
 				args.push(resumePrompt);
 				return {

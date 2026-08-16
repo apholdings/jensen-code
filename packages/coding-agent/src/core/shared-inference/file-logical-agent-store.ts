@@ -59,9 +59,9 @@ export class FileLogicalAgentStore implements LogicalAgentStore {
 	private async writeAtomic(target: string, content: string): Promise<void> {
 		await fsp.mkdir(this.root, { recursive: true });
 		const tmp = `${target}.${randomUUID()}${ATOMIC_SUFFIX}`;
-		await fsp.writeFile(tmp, content, "utf8");
-		const fh = await fsp.open(tmp, "r");
+		const fh = await fsp.open(tmp, "w");
 		try {
+			await fh.writeFile(content, "utf8");
 			await fh.sync();
 		} finally {
 			await fh.close();

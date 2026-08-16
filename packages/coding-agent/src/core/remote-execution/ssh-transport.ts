@@ -43,8 +43,8 @@ export interface SshCommandResult {
 export type SshCommandRunner = (
 	target: RemoteExecutionTarget,
 	args: readonly string[],
-	input: string | undefined,
-	options: { timeoutMs?: number; signal?: AbortSignal },
+	input: string | Buffer | undefined,
+	options: { timeoutMs?: number; signal?: AbortSignal; sshOptions?: readonly string[] },
 ) => Promise<SshCommandResult>;
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
@@ -55,8 +55,8 @@ const DEFAULT_EXECUTION_TIMEOUT_MS = 600_000;
 function defaultSshCommandRunner(
 	target: RemoteExecutionTarget,
 	args: readonly string[],
-	input: string | undefined,
-	options: { timeoutMs?: number; signal?: AbortSignal },
+	input: string | Buffer | undefined,
+	options: { timeoutMs?: number; signal?: AbortSignal; sshOptions?: readonly string[] },
 ): Promise<SshCommandResult> {
 	const connectTimeoutMs = target.connection?.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
 	const commandArgs = [
@@ -65,6 +65,7 @@ function defaultSshCommandRunner(
 		"BatchMode=yes",
 		"-o",
 		`ConnectTimeout=${Math.max(1, Math.floor(connectTimeoutMs / 1000))}`,
+		...(options.sshOptions ?? []),
 		`${target.user}@${target.host}`,
 		...args,
 	];
@@ -169,6 +170,11 @@ function defaultSshCommandRunner(
 export function encodePowerShellCommand(script: string): string {
 	const utf16le = Buffer.from(script, "utf16le");
 	return utf16le.toString("base64");
+}
+
+/** Build a PowerShell single-quoted literal (escapes embedded single quotes). */
+export function psLiteral(value: string): string {
+	return `'${value.replace(/'/g, "''")}'`;
 }
 
 /** Build the ssh argv for running a PowerShell encoded command. */
@@ -355,6 +361,111 @@ export class SshRemoteExecutionTransport implements RemoteExecutionTransport, Re
 		};
 	}
 
+	/**
+	 * Run an arbitrary encoded PowerShell script with no stdin. Used for
+	 * runtime-sync operations (hash, directory checks, atomic swap) that are not
+	 * mission child launches.
+	 */
+	async runPowerShell(
+		target: RemoteExecutionTarget,
+		script: string,
+		options: { timeoutMs?: number; signal?: AbortSignal } = {},
+	): Promise<{ exitCode: number | null; stdout: string; stderr: string; timedOut?: boolean; launchError?: string }> {
+		const result = await this._runner(
+			target,
+			sshPowerShellArgs(encodePowerShellCommand(`$ProgressPreference = 'SilentlyContinue'\r\n${script}`)),
+			undefined,
+			{
+				timeoutMs: options.timeoutMs ?? this._executionTimeoutMs,
+				signal: options.signal,
+			},
+		);
+		return {
+			exitCode: result.exitCode,
+			stdout: result.stdout,
+			stderr: result.stderr,
+			timedOut: result.timedOut,
+			launchError: result.launchError,
+		};
+	}
+
+	/**
+	 * Save binary bytes to a remote file. Reads raw stdin (never JSON), so the
+	 * payload is byte-exact; used to transfer the runtime bundle tarball.
+	 */
+	async saveFile(
+		target: RemoteExecutionTarget,
+		remotePath: string,
+		bytes: Buffer,
+		options: { timeoutMs?: number } = {},
+	): Promise<{ exitCode: number | null; stdout: string; stderr: string; launchError?: string }> {
+		const script = [
+			"$ErrorActionPreference = 'Stop'",
+			"$ProgressPreference = 'SilentlyContinue'",
+			"[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()",
+			`$path = ${psLiteral(remotePath)}`,
+			"$dir = Split-Path -Parent $path",
+			"if (!(Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }",
+			"$in = [Console]::OpenStandardInput()",
+			"$out = [System.IO.File]::Create($path)",
+			"try { $in.CopyTo($out) } finally { $out.Close() }",
+			"Write-Output 'JENSEN_FILE_SAVED'",
+		].join("\r\n");
+
+		const result = await this._runner(target, sshPowerShellArgs(encodePowerShellCommand(script)), bytes, {
+			timeoutMs: options.timeoutMs ?? this._executionTimeoutMs,
+		});
+		return {
+			exitCode: result.exitCode,
+			stdout: result.stdout,
+			stderr: result.stderr,
+			launchError: result.launchError,
+		};
+	}
+
+	/** Compute the SHA-256 of a remote file (hex). Throws on failure. */
+	async computeFileSha256(target: RemoteExecutionTarget, remotePath: string): Promise<string> {
+		const result = await this.runPowerShell(
+			target,
+			[
+				"$ErrorActionPreference = 'Stop'",
+				"[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()",
+				`(Get-FileHash -Algorithm SHA256 -LiteralPath ${psLiteral(remotePath)}).Hash.ToLowerInvariant()`,
+			].join("\r\n"),
+			{ timeoutMs: 120_000 },
+		);
+		if (result.exitCode !== 0) {
+			throw new Error(`remote hash failed: ${result.stderr || result.launchError || "unknown"}`);
+		}
+		const hash = result.stdout.trim().split(/\r?\n/).pop()?.trim() ?? "";
+		if (!/^[0-9a-f]{64}$/u.test(hash)) {
+			throw new Error(`remote hash returned unexpected output: ${result.stdout.slice(0, 200)}`);
+		}
+		return hash;
+	}
+
+	/**
+	 * Stream-extract a gzipped tarball on the target via `tar -xzf -` (binary
+	 * stdin). This is the proven reliable path for large binary transfers; tar's
+	 * gzip CRC32 + tar checksums provide integrity, and the caller verifies the
+	 * sidecar manifest identity afterwards.
+	 */
+	async extractTarballFromStdin(
+		target: RemoteExecutionTarget,
+		destDir: string,
+		bytes: Buffer,
+		options: { timeoutMs?: number } = {},
+	): Promise<{ exitCode: number | null; stdout: string; stderr: string; launchError?: string }> {
+		const args = ["cmd.exe", "/d", "/s", "/c", `tar -xzf - -C ${destDir.replace(/\\/g, "/")}`];
+		const result = await this._runner(target, args, bytes, { timeoutMs: options.timeoutMs ?? 600_000 });
+		return {
+			exitCode: result.exitCode,
+			stdout: result.stdout,
+			stderr: result.stderr,
+			launchError: result.launchError,
+		};
+	}
+
 	async launch(
 		target: RemoteExecutionTarget,
 		spec: RemoteLaunchSpec,
@@ -419,9 +530,14 @@ export class SshRemoteExecutionTransport implements RemoteExecutionTransport, Re
 		}
 
 		const start = Date.now();
+		const sshOptions = spec.admissionTunnel
+			? ["-R", `${spec.admissionTunnel.remotePort}:127.0.0.1:${spec.admissionTunnel.localPort}`]
+			: undefined;
+
 		const sshPromise = this._runner(target, sshPowerShellArgs(encoded), input, {
 			timeoutMs: spec.timeoutMs ?? this._executionTimeoutMs,
 			signal: controller.signal,
+			sshOptions,
 		});
 
 		const outcomePromise = this._consume(spec, sshPromise, start);
