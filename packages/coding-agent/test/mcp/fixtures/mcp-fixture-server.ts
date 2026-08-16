@@ -1,15 +1,15 @@
 /**
- * MCP Client Foundation — deterministic stdio fixture server (2.13.0).
+ * MCP Client Foundation — deterministic LEGACY stdio fixture server (2.13.0).
  *
- * A real MCP server run as a child process over stdio. It exposes deterministic
- * behaviors for connect, discovery, structured invocation, tool error, delay,
- * timeout, stderr isolation, unexpected exit, tool-list change, and clean
- * shutdown. Spawned by tests via the official SDK client (command = node,
- * args = [tsx, this file]).
+ * A real MCP server run as a child process over stdio, wired the 2025-era way:
+ * `server.connect(new StdioServerTransport())` performs the `initialize`
+ * handshake only — it does NOT implement the modern `server/discover`
+ * advertisement. This makes it a genuine legacy peer for the automatic-fallback
+ * acceptance tests (LEGACY-A/B) and for the existing MCP Foundation regression.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio";
+import { McpServer } from "@modelcontextprotocol/server";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 
 // Early diagnostic proves stderr is captured before the handshake completes.
@@ -28,8 +28,8 @@ server.registerTool(
 	{
 		title: "Echo",
 		description: "Echo structured text back with an optional count.",
-		inputSchema: { text: z.string(), n: z.number().int().positive().optional() },
-		outputSchema: { echoed: z.string() },
+		inputSchema: z.object({ text: z.string(), n: z.number().int().positive().optional() }),
+		outputSchema: z.object({ echoed: z.string() }),
 		annotations: { readOnlyHint: true, idempotentHint: true },
 	},
 	async ({ text }) => {
@@ -54,7 +54,7 @@ server.registerTool(
 	{
 		title: "Delay",
 		description: "Wait the requested number of milliseconds, then succeed.",
-		inputSchema: { ms: z.number().int().nonnegative() },
+		inputSchema: z.object({ ms: z.number().int().nonnegative() }),
 	},
 	async ({ ms }) => {
 		await new Promise((resolve) => setTimeout(resolve, ms));
@@ -100,7 +100,7 @@ server.registerTool(
 			{
 				title: "Late Tool",
 				description: "Registered after the initial discovery.",
-				inputSchema: { value: z.string() },
+				inputSchema: z.object({ value: z.string() }),
 			},
 			async ({ value }) => ({
 				content: [{ type: "text", text: `late: ${value}` }],

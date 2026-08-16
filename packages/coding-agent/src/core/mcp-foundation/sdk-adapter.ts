@@ -2,18 +2,25 @@
  * MCP Client Foundation — official SDK adapter (2.13.0).
  *
  * This is the ONLY module that imports the MCP TypeScript SDK runtime and
- * transports. It owns a single stdio session: spawn, initialize, tool discovery,
- * tool invocation, cancellation/timeout, stderr isolation, and clean shutdown.
- * Everything crossing out of this file is Jensen-shaped (see mcp-types.ts).
+ * transports. It owns a single stdio session: spawn, protocol negotiation,
+ * tool discovery, tool invocation, cancellation/timeout, stderr isolation, and
+ * clean shutdown. Everything crossing out of this file is Jensen-shaped (see
+ * mcp-types.ts).
+ *
+ * Negotiation policy: `versionNegotiation: { mode: "auto" }` — probe with the
+ * modern `server/discover` advertisement first, then fall back to the legacy
+ * `initialize` handshake for 2025-era servers. The negotiated era/version are
+ * captured and surfaced as observable Jensen session metadata; Jensen domains
+ * never branch on them.
  */
 
-import { Client } from "@modelcontextprotocol/sdk/client";
-import { StdioClientTransport, type StdioServerParameters } from "@modelcontextprotocol/sdk/client/stdio.js";
-import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
+import { type CallToolResult, Client, type Tool } from "@modelcontextprotocol/client";
+import { StdioClientTransport, type StdioServerParameters } from "@modelcontextprotocol/client/stdio";
 import { APP_NAME, VERSION } from "../../config.js";
 import { classifyMcpConnectError, classifyMcpError, McpClientError } from "./mcp-error.js";
 import type {
 	McpContentItem,
+	McpProtocolEra,
 	McpServerDefinition,
 	McpServerInfo,
 	McpServerSession,
@@ -27,6 +34,14 @@ import { DEFAULT_MCP_REQUEST_TIMEOUT_MS, safeServerCommand } from "./server-conf
 /** Bounded stderr diagnostics: last N lines, each truncated. */
 const STDERR_MAX_LINES = 200;
 const STDERR_MAX_LINE_CHARS = 2_000;
+
+/**
+ * Bound for the `server/discover` probe under `mode: "auto"`. On stdio a silent
+ * server is treated as legacy, so this must be much shorter than the standard
+ * request timeout or a spawn-per-invocation CLI would stall against a legacy
+ * server that never answers unknown pre-`initialize` requests.
+ */
+const NEGOTIATION_PROBE_TIMEOUT_MS = 5_000;
 
 export interface McpSdkAdapterOptions {
 	sessionId: string;
@@ -67,6 +82,12 @@ function mapTool(tool: Tool, serverId: string): McpToolDescriptor {
 	};
 }
 
+/** Normalize the SDK era string into the stable Jensen vocabulary. */
+function normalizeEra(era: "modern" | "legacy" | undefined): McpProtocolEra {
+	if (era === "modern" || era === "legacy") return era;
+	return "unknown";
+}
+
 /** Extract a human-facing message from a tool-error result's content. */
 function toolErrorMessage(content: McpContentItem[]): string | undefined {
 	for (const item of content) {
@@ -89,6 +110,7 @@ export class McpSdkAdapter {
 	private disconnectedAtMs?: number;
 	private pid?: number;
 	private protocolVersion?: string;
+	private protocolEra?: McpProtocolEra;
 	private identity?: McpServerInfo;
 	private capabilities?: Record<string, unknown>;
 	private instructions?: string;
@@ -132,6 +154,10 @@ export class McpSdkAdapter {
 			{ name: APP_NAME, version: VERSION },
 			{
 				capabilities: {},
+				versionNegotiation: {
+					mode: "auto",
+					probe: { timeoutMs: NEGOTIATION_PROBE_TIMEOUT_MS },
+				},
 				listChanged: {
 					tools: {
 						autoRefresh: true,
@@ -141,16 +167,6 @@ export class McpSdkAdapter {
 				},
 			},
 		);
-
-		// Capture the negotiated protocol version without reimplementing the handshake.
-		// The stdio transport implements the optional `setProtocolVersion` hook from the
-		// SDK `Transport` interface, but its published .d.ts omits it, so narrow explicitly.
-		const versionedTransport = transport as unknown as { setProtocolVersion?: (version: string) => void };
-		const originalSetProtocolVersion = versionedTransport.setProtocolVersion?.bind(versionedTransport);
-		versionedTransport.setProtocolVersion = (version: string) => {
-			this.protocolVersion = version;
-			originalSetProtocolVersion?.(version);
-		};
 
 		client.onclose = () => this.onTransportClosed();
 		client.onerror = (error) => {
@@ -178,6 +194,8 @@ export class McpSdkAdapter {
 		this.pid = transport.pid ?? undefined;
 		this.connectedAtMs = this.now();
 		this.state = "CONNECTED";
+		this.protocolVersion = client.getNegotiatedProtocolVersion() ?? undefined;
+		this.protocolEra = normalizeEra(client.getProtocolEra());
 		this.identity = mapIdentity(client.getServerVersion());
 		this.capabilities = client.getServerCapabilities() as Record<string, unknown> | undefined;
 		this.instructions = client.getInstructions();
@@ -219,17 +237,11 @@ export class McpSdkAdapter {
 		this.assertConnected("listTools");
 		const client = this.client!;
 
-		const tools: Tool[] = [];
-		let cursor: string | undefined;
-		do {
-			const page = await client.listTools(cursor ? { cursor } : undefined);
-			tools.push(...page.tools);
-			cursor = page.nextCursor;
-		} while (cursor);
-
+		// v2 auto-aggregates every page when called without a cursor.
+		const page = await client.listTools();
 		this.toolListChanged = false;
 
-		const descriptors = tools.map((tool) => mapTool(tool, this.serverId));
+		const descriptors = page.tools.map((tool) => mapTool(tool, this.serverId));
 		descriptors.sort((a, b) => a.name.localeCompare(b.name) || a.serverId.localeCompare(b.serverId));
 		return descriptors;
 	}
@@ -242,15 +254,15 @@ export class McpSdkAdapter {
 		const timeoutMs = call.timeoutMs ?? definition.requestTimeoutMs ?? DEFAULT_MCP_REQUEST_TIMEOUT_MS;
 
 		try {
-			const result = await client.callTool({ name: call.toolName, arguments: { ...call.arguments } }, undefined, {
-				timeout: timeoutMs,
-				signal: call.signal,
-			});
+			const result = await client.callTool(
+				{ name: call.toolName, arguments: { ...call.arguments } },
+				{ timeout: timeoutMs, signal: call.signal },
+			);
 			const completedAtMs = this.now();
 			return this.toToolResult(call.toolName, result, invokedAtMs, completedAtMs);
 		} catch (error) {
 			const completedAtMs = this.now();
-			// The SDK wraps an explicit client abort into an McpError(RequestTimeout) on
+			// The SDK wraps an explicit client abort into a RequestTimeout-style error on
 			// its shared cancel path, so detect the user's signal directly to keep
 			// cancellation distinct from a genuine request timeout.
 			const code = call.signal?.aborted
@@ -279,6 +291,7 @@ export class McpSdkAdapter {
 			identity: this.identity,
 			capabilities: this.capabilities,
 			protocolVersion: this.protocolVersion,
+			protocolEra: this.protocolEra,
 			instructions: this.instructions,
 			connectedAtMs: this.connectedAtMs,
 			disconnectedAtMs: this.disconnectedAtMs,

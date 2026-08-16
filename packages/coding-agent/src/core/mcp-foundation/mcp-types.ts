@@ -68,6 +68,13 @@ export function isMcpSessionState(value: unknown): value is McpSessionState {
 	return typeof value === "string" && (MCP_SESSION_STATES as readonly string[]).includes(value);
 }
 
+/**
+ * Which MCP protocol generation a connection actually negotiated. Jensen domains
+ * never branch on this for correctness — it exists so diagnostics, evidence, and QA
+ * can prove which era a session used without leaking SDK implementation details.
+ */
+export type McpProtocolEra = "modern" | "legacy" | "unknown";
+
 export interface McpFailure {
 	code: string;
 	message: string;
@@ -97,7 +104,8 @@ export interface McpToolDescriptor {
 	inputSchema?: unknown;
 	outputSchema?: unknown;
 	annotations?: McpToolAnnotations;
-	execution?: { taskSupport?: "optional" | "required" | "forbidden" };
+	/** Era-dependent execution metadata, preserved verbatim (e.g. legacy taskSupport). */
+	execution?: Record<string, unknown>;
 	title?: string;
 	/** Additional MCP metadata, preserved verbatim. */
 	meta?: Record<string, unknown>;
@@ -170,6 +178,8 @@ export interface McpServerSession {
 	identity?: McpServerInfo;
 	capabilities?: McpServerCapabilities;
 	protocolVersion?: string;
+	/** Negotiated protocol generation: "modern" (2026-07-28+) or "legacy" (initialize). */
+	protocolEra?: McpProtocolEra;
 	instructions?: string;
 	connectedAtMs?: number;
 	disconnectedAtMs?: number;
@@ -195,6 +205,7 @@ export interface McpSessionHealth {
 	failure?: McpFailure;
 	capabilitiesKnown: boolean;
 	protocolVersion?: string;
+	protocolEra?: McpProtocolEra;
 }
 
 // =============================================================================
@@ -230,6 +241,7 @@ export interface McpEvidence {
 	};
 	failure?: McpFailure;
 	protocolVersion?: string;
+	protocolEra?: McpProtocolEra;
 }
 
 // =============================================================================

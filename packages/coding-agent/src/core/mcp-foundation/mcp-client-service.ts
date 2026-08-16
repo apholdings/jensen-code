@@ -114,6 +114,7 @@ export class McpClientService {
 			failure: snapshot.failure,
 			capabilitiesKnown: snapshot.capabilities !== undefined,
 			protocolVersion: snapshot.protocolVersion,
+			protocolEra: snapshot.protocolEra,
 		};
 	}
 

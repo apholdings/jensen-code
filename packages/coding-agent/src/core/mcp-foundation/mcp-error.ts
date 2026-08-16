@@ -5,9 +5,14 @@
  * `McpClientError` with a stable `code`, a useful human description, and
  * retained server/tool identity. Transport/process failures retain diagnostics;
  * secrets never leak through error serialization.
+ *
+ * SDK mapping (v2): wire/protocol errors are `ProtocolError` (numeric JSON-RPC
+ * codes); local SDK failures are `SdkError` (string `SdkErrorCode`); process
+ * spawn failures are Node `ErrnoException`s. All are normalized to the stable
+ * Jensen vocabulary below — callers never see SDK error classes.
  */
 
-import { ErrorCode, type McpError } from "@modelcontextprotocol/sdk/types.js";
+import { ProtocolError, ProtocolErrorCode, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 
 export type McpErrorCode =
 	| "MCP_SERVER_NOT_FOUND"
@@ -73,16 +78,12 @@ export class McpClientError extends Error {
 	}
 }
 
-function isMcpError(error: unknown): error is McpError {
-	return typeof error === "object" && error !== null && "code" in error && "message" in error;
-}
-
 function isAbortError(error: unknown): error is Error & { name: "AbortError" } {
 	return typeof error === "object" && error !== null && (error as { name?: unknown }).name === "AbortError";
 }
 
 function isNodeErrno(error: unknown): error is NodeJS.ErrnoException {
-	return typeof error === "object" && error !== null && "code" in error;
+	return typeof error === "object" && error !== null && "code" in error && !(error instanceof Error);
 }
 
 /**
@@ -93,21 +94,36 @@ function isNodeErrno(error: unknown): error is NodeJS.ErrnoException {
 export function classifyMcpError(error: unknown, options: { toolName?: string } = {}): McpErrorCode {
 	if (isAbortError(error)) return "MCP_REQUEST_CANCELLED";
 
-	if (isMcpError(error)) {
+	if (error instanceof SdkError) {
 		switch (error.code) {
-			case ErrorCode.ConnectionClosed:
-				return "MCP_CONNECTION_LOST";
-			case ErrorCode.RequestTimeout:
+			case SdkErrorCode.RequestTimeout:
 				return "MCP_REQUEST_TIMEOUT";
-			case ErrorCode.InvalidParams: {
+			case SdkErrorCode.ConnectionClosed:
+				return "MCP_CONNECTION_LOST";
+			case SdkErrorCode.InvalidResult:
+				return "MCP_INVALID_RESULT";
+			case SdkErrorCode.EraNegotiationFailed:
+				return "MCP_INCOMPATIBLE_SERVER";
+			case SdkErrorCode.MethodNotSupportedByProtocolVersion:
+				return "MCP_PROTOCOL_ERROR";
+			default:
+				return "MCP_PROTOCOL_ERROR";
+		}
+	}
+
+	if (error instanceof ProtocolError) {
+		switch (error.code) {
+			case ProtocolErrorCode.InvalidParams: {
 				const message = error.message ?? "";
-				if (options.toolName && /not found/i.test(message)) return "MCP_TOOL_NOT_FOUND";
-				if (/not found/i.test(message)) return "MCP_TOOL_NOT_FOUND";
+				// A peer that names an unknown tool (either era) surfaces as InvalidParams.
+				if (/not found/i.test(message) || (options.toolName && message.includes(options.toolName))) {
+					return "MCP_TOOL_NOT_FOUND";
+				}
 				return "MCP_TOOL_CALL_FAILED";
 			}
-			case ErrorCode.MethodNotFound:
+			case ProtocolErrorCode.MethodNotFound:
 				return "MCP_PROTOCOL_ERROR";
-			case ErrorCode.InternalError:
+			case ProtocolErrorCode.InternalError:
 				return "MCP_TOOL_CALL_FAILED";
 			default:
 				return "MCP_PROTOCOL_ERROR";
@@ -123,23 +139,27 @@ export function classifyMcpError(error: unknown, options: { toolName?: string } 
 }
 
 /**
- * Classify a connect/initialize failure specifically. Initialization has its
- * own vocabulary (incompatible vs failed vs lost) while still respecting the
- * underlying timeout/spawn distinctions.
+ * Classify a connect/initialize/negotiation failure specifically. Initialization
+ * has its own vocabulary (incompatible vs failed vs lost) while still respecting
+ * the underlying timeout/spawn distinctions.
  */
 export function classifyMcpConnectError(error: unknown): McpErrorCode {
 	if (isAbortError(error)) return "MCP_REQUEST_CANCELLED";
 
-	if (isMcpError(error)) {
+	if (error instanceof SdkError) {
 		switch (error.code) {
-			case ErrorCode.RequestTimeout:
+			case SdkErrorCode.RequestTimeout:
 				return "MCP_INITIALIZATION_FAILED";
-			case ErrorCode.ConnectionClosed:
+			case SdkErrorCode.ConnectionClosed:
 				return "MCP_CONNECTION_LOST";
+			case SdkErrorCode.EraNegotiationFailed:
+				return "MCP_INCOMPATIBLE_SERVER";
 			default:
 				return "MCP_INITIALIZATION_FAILED";
 		}
 	}
+
+	if (error instanceof ProtocolError) return "MCP_INITIALIZATION_FAILED";
 
 	if (isNodeErrno(error)) return "MCP_SPAWN_FAILED";
 

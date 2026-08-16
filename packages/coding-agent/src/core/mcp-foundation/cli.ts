@@ -127,6 +127,7 @@ function renderSession(session: McpServerSession): void {
 	process.stdout.write(`  state: ${session.state}\n`);
 	if (session.identity) process.stdout.write(`  identity: ${session.identity.name}@${session.identity.version}\n`);
 	if (session.protocolVersion) process.stdout.write(`  protocol: ${session.protocolVersion}\n`);
+	if (session.protocolEra) process.stdout.write(`  protocol era: ${session.protocolEra}\n`);
 	process.stdout.write(`  capabilities: ${renderCapabilityKeys(session.capabilities)}\n`);
 	if (session.pid !== undefined) process.stdout.write(`  pid: ${session.pid}\n`);
 	if (session.failure) process.stdout.write(`  failure: ${session.failure.code}: ${session.failure.message}\n`);
@@ -140,6 +141,7 @@ function renderHealth(health: McpSessionHealth): void {
 	process.stdout.write(`  connected: ${health.connected}\n`);
 	process.stdout.write(`  processAlive: ${health.processAlive}\n`);
 	if (health.protocolVersion) process.stdout.write(`  protocol: ${health.protocolVersion}\n`);
+	if (health.protocolEra) process.stdout.write(`  protocol era: ${health.protocolEra}\n`);
 	if (health.failed && health.failure)
 		process.stdout.write(`  failure: ${health.failure.code}: ${health.failure.message}\n`);
 }

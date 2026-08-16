@@ -59,6 +59,7 @@ export function buildMcpEvidence(input: BuildMcpEvidenceInput): McpEvidence {
 		completedAtMs: result.completedAtMs,
 		arguments: args,
 		protocolVersion: session.protocolVersion,
+		protocolEra: session.protocolEra,
 	};
 
 	if (successLike) {

@@ -401,6 +401,7 @@ export {
 	type McpEvidence,
 	type McpEvidenceStatus,
 	type McpFailure,
+	type McpProtocolEra,
 	type McpServerCapabilities,
 	type McpServerDefinition,
 	type McpServerInfo,

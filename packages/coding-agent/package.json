@@ -49,7 +49,7 @@
     "@apholdings/jensen-ai": "2.1.0",
     "@apholdings/jensen-tui": "2.1.0",
     "@mariozechner/jiti": "^2.6.2",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/client": "^2.0.0",
     "@mozilla/readability": "^0.6.0",
     "@silvia-odwyer/photon-node": "^0.3.4",
     "chalk": "^5.5.0",
@@ -82,6 +82,7 @@
     "@mariozechner/clipboard": "^0.3.2"
   },
   "devDependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
     "@types/diff": "^7.0.2",
     "@types/hosted-git-info": "^3.0.5",
     "@types/ms": "^2.1.0",
@@ -89,7 +90,8 @@
     "@types/proper-lockfile": "^4.1.4",
     "@types/turndown": "^5.0.6",
     "shx": "^0.4.0",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "zod": "^4.4.3"
   },
   "keywords": [
     "coding-agent",
