@@ -646,6 +646,50 @@ export class AssignmentControlService {
 		return this._unwrap(result, record.missionId);
 	}
 
+	/**
+	 * Honest interruption of a previously-EXECUTING assignment after a worker
+	 * restart reconciliation. The mission (owned by the mission domain) is
+	 * reconciled separately to INTERRUPTED; this marks the assignment's
+	 * execution attempt FAILED so it is never silently re-executed and never
+	 * reported as a fabricated completion.
+	 */
+	async interruptExecution(assignmentId: string, reason: string): Promise<AssignmentRecord> {
+		const record = await this._requireAssignment(assignmentId);
+		const now = this._now();
+
+		const result = await this._store.mutate<AssignmentRecord>(record.missionId, (index) => {
+			if (index.current?.assignmentId !== assignmentId) {
+				throw new AssignmentError("ASSIGNMENT_NOT_CURRENT", `Assignment ${assignmentId} is no longer current`, {
+					assignmentId,
+					missionId: record.missionId,
+				});
+			}
+			const current = index.current;
+			if (current.state !== "EXECUTING") {
+				throw new AssignmentError(
+					"ASSIGNMENT_NOT_CURRENT",
+					`Assignment ${assignmentId} is ${current.state}; only EXECUTING can be interrupted`,
+					{ assignmentId, state: current.state },
+				);
+			}
+			const failed: AssignmentRecord = {
+				...current,
+				state: "FAILED",
+				current: false,
+				updatedAtMs: now,
+				reason,
+				revision: current.revision + 1,
+			};
+			return {
+				kind: "write",
+				records: index.records.map((r) => (r.assignmentId === assignmentId ? failed : r)),
+				value: failed,
+			};
+		});
+
+		return this._unwrap(result, record.missionId);
+	}
+
 	// =========================================================================
 	// Internals
 	// =========================================================================

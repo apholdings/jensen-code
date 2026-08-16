@@ -509,6 +509,70 @@ export class DurableMissionCoordinator {
 		return report;
 	}
 
+	/**
+	 * Interrupt a stale worker's still-live execution ownership. Unlike
+	 * `recover()` (which only revokes EXPIRED leases), this closes the crash
+	 * window where a prior worker process died but its execution lease has not
+	 * yet expired. The caller must prove the stale owner identity (for example,
+	 * via a persisted assignment's `executionOwnerIdentity.ownerId`).
+	 *
+	 * Exactly like recovery, this NEVER auto-runs work and NEVER fabricates a
+	 * terminal result: it moves an active non-terminal mission to INTERRUPTED
+	 * (recoverable) and clears the lease for a future explicit resume.
+	 */
+	async interruptStaleExecution(
+		missionId: string,
+		options: { staleOwnerId: string; reason?: string; now?: number },
+	): Promise<{ status: "reconciled" | "unchanged" | "missing"; previousState?: MissionState }> {
+		const now = options.now ?? this._now();
+		const reason = options.reason ?? "worker restart: prior execution owner is stale";
+
+		const result = await this._store.mutate<{
+			status: "reconciled" | "unchanged";
+			previousState: MissionState;
+		}>(missionId, (current) => {
+			if (isTerminalMissionState(current.state) || current.state === "CREATED" || current.state === "INTERRUPTED") {
+				return { kind: "noop", value: { status: "unchanged" as const, previousState: current.state } };
+			}
+			if (!ACTIVE_NONTERMINAL_STATES.has(current.state)) {
+				return { kind: "noop", value: { status: "unchanged" as const, previousState: current.state } };
+			}
+			// Only revoke when the current lease belongs to the proven-stale owner.
+			if (!current.lease || current.lease.ownerId !== options.staleOwnerId) {
+				return { kind: "noop", value: { status: "unchanged" as const, previousState: current.state } };
+			}
+
+			const previousState = current.state;
+			const fencingToken = current.fencingToken + 1;
+			let next = this._withTransition(current, "INTERRUPTED", { reason, atMs: now });
+
+			const attempts = [...current.attempts];
+			if (current.currentAttemptId) {
+				const index = attempts.findIndex((a) => a.attemptId === current.currentAttemptId);
+				if (index >= 0) {
+					attempts[index] = {
+						...attempts[index],
+						endReason: "INTERRUPTED",
+						recovery: { reason, recoveredAtMs: now },
+					};
+				}
+			}
+			next = {
+				...next,
+				fencingToken,
+				lease: undefined,
+				currentAttemptId: undefined,
+				currentExecutionId: undefined,
+				attempts,
+			};
+			return { kind: "write", next, value: { status: "reconciled" as const, previousState } };
+		});
+
+		if (result.status === "missing") return { status: "missing" };
+		if (result.status === "corrupt") throw new Error(`Mission ${missionId} is corrupt: ${result.diagnostic}`);
+		return result.value;
+	}
+
 	// =========================================================================
 	// Explicit resume (new execution attempt)
 	// =========================================================================
