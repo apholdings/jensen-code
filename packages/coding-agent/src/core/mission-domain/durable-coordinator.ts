@@ -635,7 +635,10 @@ export class DurableMissionCoordinator {
 
 			const executor = this._executor;
 			try {
-				handle = await executor.launch(record.request, { signal });
+				handle = await executor.launch(record.request, {
+					signal,
+					fencing: { leaseId: lease.leaseId, fencingToken: lease.fencingToken },
+				});
 				activeExecution.handle = handle;
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);

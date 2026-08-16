@@ -36,6 +36,7 @@ import { ModelRegistry } from "./core/model-registry.js";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
 import { handleOperabilityCommand } from "./core/operability-cli.js";
 import { DefaultPackageManager } from "./core/package-manager.js";
+import { handleRemoteCommand } from "./core/remote-execution/remote-cli.js";
 import { DefaultResourceLoader } from "./core/resource-loader.js";
 import { handleRoutingCommand } from "./core/routing/cli.js";
 import { handleWorkspaceCommand } from "./core/safety/cli.js";
@@ -934,6 +935,10 @@ export async function main(args: string[]) {
 	}
 
 	if (await handleSchedulerCommand(args)) {
+		return;
+	}
+
+	if (await handleRemoteCommand(args)) {
 		return;
 	}
 

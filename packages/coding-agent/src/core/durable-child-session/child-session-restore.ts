@@ -26,6 +26,7 @@ import {
 } from "../context-runtime/index.js";
 import type { DurableMissionDelegator } from "../durable-delegation/durable-delegation.js";
 import type { DurableMissionRecord, DurableMissionStore } from "../mission-domain/durable-store.js";
+import type { MissionExecutor } from "../mission-domain/mission-executor.js";
 import { isResumableMissionState, isTerminalMissionState } from "../mission-domain/mission-state.js";
 import {
 	ProcessMissionExecutor,
@@ -308,7 +309,7 @@ export interface ResumeChildMissionOptions {
 export interface BuiltChildResume {
 	childSessionId: string;
 	resumePrompt: string;
-	executor: ProcessMissionExecutor;
+	executor: MissionExecutor;
 }
 
 /**

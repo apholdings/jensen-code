@@ -20,7 +20,11 @@
  * (RUNNING → WAITING(INFERENCE) → RUNNING) without touching worker identity.
  */
 
-import type { AssignmentControlService, BuildAssignedResumeLaunch } from "../assignment/assignment-control-service.js";
+import type {
+	AssignmentControlService,
+	BuildAssignedExecutor,
+	BuildAssignedResumeLaunch,
+} from "../assignment/assignment-control-service.js";
 import type { AssignmentRecord } from "../assignment/assignment-types.js";
 import { AssignmentError } from "../assignment/assignment-types.js";
 import { ExecutorRegistryError } from "../executor-registry/executor-registry-types.js";
@@ -97,6 +101,12 @@ export interface WorkerControlServiceOptions {
 	/** Maps a durable child mission to the concrete local child CLI launch. */
 	buildResumeLaunch: BuildAssignedResumeLaunch;
 	/**
+	 * Optional executor builder for a REMOTE executor. When set, the worker uses
+	 * it instead of the local `ProcessMissionExecutor` path. Built per-worker by
+	 * the CLI when the executor is bound to a remote target.
+	 */
+	buildExecutor?: BuildAssignedExecutor;
+	/**
 	 * Optional verifier that promotes a clean exit-0 execution to SUCCEEDED.
 	 * When omitted, the worker builds one from the mission's declared acceptance
 	 * criteria (`buildAcceptanceCriteriaVerifier`). A mission with no verifiable
@@ -127,6 +137,7 @@ export class WorkerControlService {
 	private readonly _assignments: AssignmentControlService;
 	private readonly _missions: DurableMissionStore;
 	private readonly _buildResumeLaunch: BuildAssignedResumeLaunch;
+	private readonly _buildExecutor?: BuildAssignedExecutor;
 	private readonly _verifier?: ProcessMissionVerifier;
 	private readonly _pollMs: number;
 	private readonly _heartbeatMs: number;
@@ -152,6 +163,7 @@ export class WorkerControlService {
 		this._assignments = options.assignments;
 		this._missions = options.missions;
 		this._buildResumeLaunch = options.buildResumeLaunch;
+		this._buildExecutor = options.buildExecutor;
 		this._verifier = options.verifier;
 		this._pollMs = options.pollMs ?? 1000;
 		this._heartbeatMs = options.heartbeatMs ?? 3000;
@@ -320,6 +332,7 @@ export class WorkerControlService {
 				buildResumeLaunch: this._buildResumeLaunch,
 				signal: this._currentAbort.signal,
 				verifier,
+				...(this._buildExecutor ? { buildExecutor: this._buildExecutor } : {}),
 			});
 			this._currentAbort = undefined;
 			this._lastError = undefined;

@@ -172,6 +172,12 @@ export interface ExecutorDefinition {
 	displayName?: string;
 	labels: string[];
 	configuredCapabilities: ExecutorCapabilities;
+	/**
+	 * Optional remote execution target binding. When set, this executor's work
+	 * executes on that target (transport/host), never implying that inference
+	 * runs there. Executor != target; this is explicit placement metadata.
+	 */
+	remoteTargetId?: string;
 }
 
 /** One durable executor record: stable definition + current runtime state. */
@@ -189,6 +195,8 @@ export interface ExecutorRecord {
 	runtime?: ExecutorRuntime;
 	/** Monotonic generation for stale-update detection. */
 	revision: number;
+	/** Optional remote target binding (explicit placement metadata). */
+	remoteTargetId?: string;
 }
 
 // =============================================================================
@@ -235,6 +243,8 @@ export interface ExecutorDetail {
 	updatedAtMs: number;
 	labels: string[];
 	configuredCapabilities: ExecutorCapabilities;
+	/** Optional remote target binding (explicit placement metadata). */
+	remoteTargetId?: string;
 	runtimeEpoch: number;
 	runtime?: ExecutorRuntime;
 	liveness: ExecutorLiveness;
@@ -284,6 +294,8 @@ export interface RegisterExecutorInput {
 	displayName?: string;
 	labels?: string[];
 	configuredCapabilities?: ExecutorCapabilities;
+	/** Optional remote target binding (explicit placement metadata). */
+	remoteTargetId?: string;
 }
 
 export interface ActivateExecutorInput {

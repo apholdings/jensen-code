@@ -13,6 +13,14 @@ import { type MissionResult, shouldContinueMissionChain } from "./mission-result
 
 export interface MissionLaunchOptions {
 	signal?: AbortSignal;
+	/**
+	 * Execution fencing identity (leaseId + fencingToken) carried into the
+	 * executor launch so a remote substrate can correlate its result back to the
+	 * authoritative owner. The durable coordinator remains the only authority
+	 * that accepts/rejects the terminal commit; this field is correlation, not
+	 * authorization.
+	 */
+	fencing?: { leaseId: string; fencingToken: number };
 }
 
 export interface MissionExecutor {

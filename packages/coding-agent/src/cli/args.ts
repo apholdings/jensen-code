@@ -206,6 +206,7 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} assignment ...         Designate missions to executors (Assignment Foundation)
   ${APP_NAME} scheduler ...          Deterministic scheduling intents -> assignments (Scheduler Foundation)
   ${APP_NAME} worker ...             Durable worker daemon (Worker Daemon Foundation)
+  ${APP_NAME} remote ...             Remote execution targets (Remote Execution Foundation)
   ${APP_NAME} mcp ...                Connect/call MCP servers and record evidence (MCP Client Foundation)
 
 ${chalk.bold("Options:")}

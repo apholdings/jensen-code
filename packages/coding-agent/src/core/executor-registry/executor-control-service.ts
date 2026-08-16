@@ -147,6 +147,7 @@ export class ExecutorControlService {
 			updatedAtMs: record.updatedAtMs,
 			labels: [...record.labels],
 			configuredCapabilities: { ...record.configuredCapabilities },
+			remoteTargetId: record.remoteTargetId,
 			runtimeEpoch: record.runtimeEpoch,
 			runtime: record.runtime ? { ...record.runtime } : undefined,
 			liveness: this._toLiveness(record, now),
@@ -172,6 +173,7 @@ export class ExecutorControlService {
 			displayName: input.displayName,
 			labels: input.labels,
 			configuredCapabilities: input.configuredCapabilities,
+			remoteTargetId: input.remoteTargetId,
 			now: this._now(),
 		});
 		const result = await this._store.register(record);

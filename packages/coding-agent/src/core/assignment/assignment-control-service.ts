@@ -18,6 +18,7 @@
  */
 
 import {
+	type BuiltChildResume,
 	buildChildResumeExecutor,
 	resolveChildSessionForResume,
 } from "../durable-child-session/child-session-restore.js";
@@ -31,6 +32,7 @@ import type { DurableMissionRecord, DurableMissionStore } from "../mission-domai
 import { isExecutionLeaseActive, newExecutorOwnerId } from "../mission-domain/execution-lease.js";
 import { isTerminalMissionState } from "../mission-domain/mission-state.js";
 import type { ProcessMissionVerifier } from "../mission-domain/process-mission-executor.js";
+import type { SessionManager } from "../session-manager.js";
 import type { AssignmentStore } from "./assignment-store.js";
 import { createAssignmentRecord } from "./assignment-store.js";
 import {
@@ -67,6 +69,17 @@ export type BuildAssignedResumeLaunch = (input: {
 	args: readonly string[];
 	cwd: string;
 };
+
+/**
+ * Builds the executor for a resolved durable child session. Defaults to the
+ * local `ProcessMissionExecutor`; a remote worker injects a builder that
+ * constructs a `RemoteMissionExecutor` bound to the same resolved session.
+ */
+export type BuildAssignedExecutor = (input: {
+	record: DurableMissionRecord;
+	sessionManager: SessionManager;
+	childSessionId: string;
+}) => BuiltChildResume;
 
 export interface AssignmentControlServiceOptions {
 	store: AssignmentStore;
@@ -547,6 +560,8 @@ export class AssignmentControlService {
 			buildResumeLaunch: BuildAssignedResumeLaunch;
 			signal?: AbortSignal;
 			verifier?: ProcessMissionVerifier;
+			/** Optional executor builder (remote); defaults to local ProcessMissionExecutor. */
+			buildExecutor?: BuildAssignedExecutor;
 		},
 	): Promise<StartAssignedMissionOutcome> {
 		// Preflight without mutating: resolve the durable child session BEFORE the
@@ -561,14 +576,20 @@ export class AssignmentControlService {
 			sessionDir: this._sessionDir,
 		});
 
-		const built = buildChildResumeExecutor({
-			record: resolved.record,
-			sessionManager: resolved.sessionManager,
-			childSessionId: resolved.childSessionId,
-			buildResumeLaunch: options.buildResumeLaunch,
-			executorId: record.executorId,
-			verifier: options.verifier,
-		});
+		const built = options.buildExecutor
+			? options.buildExecutor({
+					record: resolved.record,
+					sessionManager: resolved.sessionManager,
+					childSessionId: resolved.childSessionId,
+				})
+			: buildChildResumeExecutor({
+					record: resolved.record,
+					sessionManager: resolved.sessionManager,
+					childSessionId: resolved.childSessionId,
+					buildResumeLaunch: options.buildResumeLaunch,
+					executorId: record.executorId,
+					verifier: options.verifier,
+				});
 
 		const begun = await this.beginAssignedExecution(assignmentId, proof);
 		const coordinator = new DurableMissionCoordinator(this._missions, built.executor, {

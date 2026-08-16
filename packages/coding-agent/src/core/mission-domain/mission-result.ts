@@ -58,6 +58,18 @@ export interface ExecutorDiagnostics {
 	timedOut?: boolean;
 	launchError?: string;
 	stderr?: string;
+	/** Remote execution location proof (host/user/cwd/pid/platform). */
+	remoteLocation?: {
+		host: string;
+		user: string;
+		cwd: string;
+		pid: number;
+		platform: string;
+	};
+	/** Remote execution evidence items (file hashes, command exits, ...). */
+	remoteEvidence?: readonly unknown[];
+	/** Remote target id the work executed on, when remote. */
+	remoteTargetId?: string;
 }
 
 /**

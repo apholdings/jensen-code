@@ -195,12 +195,14 @@ export class FileExecutorRegistry implements ExecutorRegistryStore {
 							displayName: existing.record.displayName,
 							labels: existing.record.labels,
 							configuredCapabilities: existing.record.configuredCapabilities,
+							remoteTargetId: existing.record.remoteTargetId,
 						},
 						{
 							executorId: record.executorId,
 							displayName: record.displayName,
 							labels: record.labels,
 							configuredCapabilities: record.configuredCapabilities,
+							remoteTargetId: record.remoteTargetId,
 						},
 					)
 				) {

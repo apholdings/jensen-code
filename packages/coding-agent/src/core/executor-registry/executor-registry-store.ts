@@ -211,6 +211,13 @@ export function parseExecutorRecord(value: unknown): ExecutorRecordParseResult {
 	const capabilitiesError = validateCapabilities(doc.configuredCapabilities);
 	if (capabilitiesError) return invalid(`configuredCapabilities: ${capabilitiesError}`);
 
+	if (
+		doc.remoteTargetId !== undefined &&
+		(typeof doc.remoteTargetId !== "string" || !isSafeExecutorId(doc.remoteTargetId))
+	) {
+		return invalid("remoteTargetId must be a safe string identifier");
+	}
+
 	let runtime: ExecutorRuntime | undefined;
 	if (doc.runtime !== undefined) {
 		const runtimeError = validateRuntime(doc.runtime);
@@ -229,6 +236,7 @@ export function parseExecutorRecord(value: unknown): ExecutorRecordParseResult {
 			retired: doc.retired as boolean,
 			labels: (doc.labels as string[]).map((entry) => entry),
 			configuredCapabilities: doc.configuredCapabilities as ExecutorCapabilities,
+			remoteTargetId: doc.remoteTargetId as string | undefined,
 			runtimeEpoch: doc.runtimeEpoch as number,
 			runtime,
 			revision: doc.revision as number,
@@ -245,6 +253,7 @@ export interface CreateExecutorRecordInput {
 	displayName?: string;
 	labels?: string[];
 	configuredCapabilities?: ExecutorCapabilities;
+	remoteTargetId?: string;
 	now?: number;
 }
 
@@ -263,6 +272,7 @@ export function createExecutorRecord(input: CreateExecutorRecordInput): Executor
 		retired: false,
 		labels: input.labels ? [...new Set(input.labels)].sort() : [],
 		configuredCapabilities: input.configuredCapabilities ?? {},
+		remoteTargetId: input.remoteTargetId,
 		runtimeEpoch: 0,
 		revision: 1,
 	};
