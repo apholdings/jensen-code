@@ -204,6 +204,7 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} mission ...            Inspect/resume durable missions (Mission Control)
   ${APP_NAME} executor ...           Inspect/register/heartbeat executor runtimes
   ${APP_NAME} assignment ...         Designate missions to executors (Assignment Foundation)
+  ${APP_NAME} scheduler ...          Deterministic scheduling intents -> assignments (Scheduler Foundation)
 
 ${chalk.bold("Options:")}
   --provider <name>              Provider name (default: google)

@@ -104,7 +104,7 @@ function isStringArray(value: unknown): value is string[] {
 	return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
-function validateRequirements(value: unknown): string | undefined {
+export function validateMissionRequirements(value: unknown): string | undefined {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return "requirements must be an object";
 	const r = value as Record<string, unknown>;
 	if (r.platform !== undefined) {
@@ -224,7 +224,7 @@ export function parseAssignmentRecord(value: unknown): AssignmentParseResult {
 	if (doc.assignedBy !== undefined && typeof doc.assignedBy !== "string")
 		return invalid("assignedBy must be a string when present");
 	if (doc.requirementsSnapshot !== undefined) {
-		const err = validateRequirements(doc.requirementsSnapshot);
+		const err = validateMissionRequirements(doc.requirementsSnapshot);
 		if (err) return invalid(`requirementsSnapshot: ${err}`);
 	}
 	if (doc.compatibilitySnapshot !== undefined) {

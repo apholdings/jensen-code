@@ -20,6 +20,7 @@ export {
 	isTerminalAssignmentRecord,
 	type MissionAssignmentIndex,
 	parseAssignmentRecord,
+	validateMissionRequirements,
 } from "./assignment-store.js";
 export {
 	type AcceptAssignmentOutcome,

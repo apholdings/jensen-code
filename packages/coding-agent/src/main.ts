@@ -38,6 +38,7 @@ import { DefaultPackageManager } from "./core/package-manager.js";
 import { DefaultResourceLoader } from "./core/resource-loader.js";
 import { handleRoutingCommand } from "./core/routing/cli.js";
 import { handleWorkspaceCommand } from "./core/safety/cli.js";
+import { handleSchedulerCommand } from "./core/scheduler/cli.js";
 import { type CreateAgentSessionOptions, createAgentSession } from "./core/sdk.js";
 import { SessionManager, validateSessionFile } from "./core/session-manager.js";
 import { SettingsManager } from "./core/settings-manager.js";
@@ -918,6 +919,10 @@ export async function main(args: string[]) {
 	}
 
 	if (await handleAssignmentCommand(args)) {
+		return;
+	}
+
+	if (await handleSchedulerCommand(args)) {
 		return;
 	}
 
