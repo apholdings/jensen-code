@@ -76,12 +76,36 @@ export function newAssignmentId(): string {
 // Mission requirements (structured, deterministic, no scoring)
 // =============================================================================
 
+/**
+ * Where tool/process work physically runs. A route is `remote` when the executor
+ * is bound to a `RemoteExecutionTarget`; otherwise it is `local`. This is an
+ * execution-location constraint, deliberately distinct from the model/inference
+ * location (inference is never implied by the execution route).
+ */
+export type ExecutionRouteMode = "local" | "remote";
+
+/**
+ * Preference hints for placement ranking. Preferences never affect eligibility:
+ * a preferred-but-incompatible route remains ineligible, and a non-preferred
+ * compatible route remains eligible.
+ */
+export interface MissionRequirementPreferences {
+	/** Prefer a local or remote route. */
+	executionMode?: ExecutionRouteMode;
+	/** Prefer a specific executor. */
+	executorId?: string;
+	/** Prefer a specific remote target. */
+	remoteTargetId?: string;
+}
+
 export interface MissionRequirements {
 	/** Required platform. Both fields are optional; when present they must match exactly. */
 	platform?: {
 		os?: string;
 		arch?: string;
 	};
+	/** Required execution location. Absent means either local or remote satisfies. */
+	executionMode?: ExecutionRouteMode;
 	/** Each listed execution capability must be advertised. */
 	execution?: string[];
 	/** Any-of provider requirement: at least one must be advertised. */
@@ -99,6 +123,8 @@ export interface MissionRequirements {
 	};
 	/** Extensible exact-match constraint strings (future scheduler policies). */
 	extra?: string[];
+	/** Ranking hints only; never eligibility. */
+	preferences?: MissionRequirementPreferences;
 }
 
 // =============================================================================
@@ -260,6 +286,9 @@ export interface AssignmentRecord {
 	assignedBy?: string;
 	requirementsSnapshot?: MissionRequirements;
 	compatibilitySnapshot?: CompatibilityResult;
+	/** Execution-route provenance (local/remote + target) at designation time. */
+	executionMode?: ExecutionRouteMode;
+	remoteTargetId?: string;
 	executorRuntimeAtAssignment?: ExecutorRuntimeObservation;
 	acceptedAtMs?: number;
 	executionStartedAtMs?: number;
@@ -298,6 +327,8 @@ export interface AssignmentSummary {
 	consumedByExecutionId?: string;
 	terminalMissionState?: MissionState;
 	reason?: string;
+	executionMode?: ExecutionRouteMode;
+	remoteTargetId?: string;
 }
 
 export interface AssignmentDetail extends AssignmentSummary {
@@ -327,6 +358,8 @@ export function toAssignmentSummary(record: AssignmentRecord): AssignmentSummary
 		consumedByExecutionId: record.consumedByExecutionId,
 		terminalMissionState: record.terminalMissionState,
 		reason: record.reason,
+		executionMode: record.executionMode,
+		remoteTargetId: record.remoteTargetId,
 	};
 }
 
@@ -363,6 +396,9 @@ export interface AssignMissionInput {
 	executorId: string;
 	requirements?: MissionRequirements;
 	assignedBy?: string;
+	/** Execution-route provenance recorded on the assignment. */
+	executionMode?: ExecutionRouteMode;
+	remoteTargetId?: string;
 	/** Caller-allocated identity for deterministic tests; generated when omitted. */
 	assignmentId?: string;
 }
@@ -380,6 +416,8 @@ export interface ReassignMissionInput {
 	executorId: string;
 	requirements?: MissionRequirements;
 	assignedBy?: string;
+	executionMode?: ExecutionRouteMode;
+	remoteTargetId?: string;
 	assignmentId?: string;
 }
 

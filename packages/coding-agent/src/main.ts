@@ -19,6 +19,7 @@ import { APP_NAME, getAgentDir, getModelsPath, VERSION } from "./config.js";
 import { handleAssignmentCommand } from "./core/assignment/cli.js";
 import { AuthStorage } from "./core/auth-storage.js";
 import { handleBenchmarkCommand } from "./core/benchmark/index.js";
+import { handleRouteCommand } from "./core/capability-routing/cli.js";
 import { checkTodoHealth } from "./core/doctor.js";
 import { bindChildSession, defaultChildSessionDir } from "./core/durable-child-session/index.js";
 import { handleEvaluationCommand } from "./core/evaluation/cli.js";
@@ -931,6 +932,10 @@ export async function main(args: string[]) {
 	}
 
 	if (await handleAssignmentCommand(args)) {
+		return;
+	}
+
+	if (await handleRouteCommand(args)) {
 		return;
 	}
 

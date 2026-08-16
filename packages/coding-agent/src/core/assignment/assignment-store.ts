@@ -126,6 +126,19 @@ export function validateMissionRequirements(value: unknown): string | undefined 
 		if (labels.excluded !== undefined && !isStringArray(labels.excluded))
 			return "requirements.labels.excluded must be a string array";
 	}
+	if (r.executionMode !== undefined && r.executionMode !== "local" && r.executionMode !== "remote")
+		return "requirements.executionMode must be local|remote";
+	if (r.preferences !== undefined) {
+		if (typeof r.preferences !== "object" || r.preferences === null || Array.isArray(r.preferences))
+			return "requirements.preferences must be an object";
+		const prefs = r.preferences as Record<string, unknown>;
+		if (prefs.executionMode !== undefined && prefs.executionMode !== "local" && prefs.executionMode !== "remote")
+			return "requirements.preferences.executionMode must be local|remote";
+		if (prefs.executorId !== undefined && typeof prefs.executorId !== "string")
+			return "requirements.preferences.executorId must be a string";
+		if (prefs.remoteTargetId !== undefined && typeof prefs.remoteTargetId !== "string")
+			return "requirements.preferences.remoteTargetId must be a string";
+	}
 	return undefined;
 }
 
@@ -250,6 +263,10 @@ export function parseAssignmentRecord(value: unknown): AssignmentParseResult {
 		const err = validateOwnerIdentity(doc.executionOwnerIdentity);
 		if (err) return invalid(`executionOwnerIdentity: ${err}`);
 	}
+	if (doc.executionMode !== undefined && doc.executionMode !== "local" && doc.executionMode !== "remote")
+		return invalid("executionMode must be local|remote when present");
+	if (doc.remoteTargetId !== undefined && typeof doc.remoteTargetId !== "string")
+		return invalid("remoteTargetId must be a string when present");
 	if (doc.terminalMissionState !== undefined && !isMissionState(doc.terminalMissionState))
 		return invalid("terminalMissionState is invalid");
 	if (doc.reason !== undefined && typeof doc.reason !== "string")
@@ -269,6 +286,8 @@ export function parseAssignmentRecord(value: unknown): AssignmentParseResult {
 			assignedBy: doc.assignedBy as string | undefined,
 			requirementsSnapshot: doc.requirementsSnapshot as AssignmentRecord["requirementsSnapshot"],
 			compatibilitySnapshot: doc.compatibilitySnapshot as AssignmentRecord["compatibilitySnapshot"],
+			executionMode: doc.executionMode as AssignmentRecord["executionMode"],
+			remoteTargetId: doc.remoteTargetId as AssignmentRecord["remoteTargetId"],
 			executorRuntimeAtAssignment:
 				doc.executorRuntimeAtAssignment as AssignmentRecord["executorRuntimeAtAssignment"],
 			acceptedAtMs: doc.acceptedAtMs as number | undefined,
@@ -299,6 +318,8 @@ export interface CreateAssignmentRecordInput {
 	assignedBy?: string;
 	requirementsSnapshot?: AssignmentRecord["requirementsSnapshot"];
 	compatibilitySnapshot?: AssignmentRecord["compatibilitySnapshot"];
+	executionMode?: AssignmentRecord["executionMode"];
+	remoteTargetId?: AssignmentRecord["remoteTargetId"];
 	executorRuntimeAtAssignment?: AssignmentRecord["executorRuntimeAtAssignment"];
 }
 
@@ -320,6 +341,8 @@ export function createAssignmentRecord(input: CreateAssignmentRecordInput): Assi
 		assignedBy: input.assignedBy,
 		requirementsSnapshot: input.requirementsSnapshot,
 		compatibilitySnapshot: input.compatibilitySnapshot,
+		executionMode: input.executionMode,
+		remoteTargetId: input.remoteTargetId,
 		executorRuntimeAtAssignment: input.executorRuntimeAtAssignment,
 		revision: 1,
 	};

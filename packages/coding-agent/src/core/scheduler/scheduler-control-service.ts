@@ -21,6 +21,7 @@
 import type { AssignmentControlService } from "../assignment/assignment-control-service.js";
 import type { AssignmentRecord } from "../assignment/assignment-types.js";
 import { evaluateAssignability, toAssignabilityStatus } from "../assignment/compatibility.js";
+import type { CapabilityRouteEvaluator, RouteCandidate, RoutingEvaluation } from "../capability-routing/route-types.js";
 import type { ExecutorControlService, ExecutorSummary } from "../executor-registry/index.js";
 import {
 	type DurableMissionRecord,
@@ -61,6 +62,14 @@ export interface SchedulerControlServiceOptions {
 	/** Intent id factory; default is the deterministic per-mission id. */
 	intentIdFactory?: (missionId: string) => string;
 	tickIdFactory?: () => string;
+	/**
+	 * Optional Capability Router. When wired, the scheduler derives executor
+	 * eligibility from the router's route candidates (execution mode, remote
+	 * target health) instead of bare executor capability+ONLINE matching. The
+	 * router reports feasibility; the scheduler still selects among eligible
+	 * candidates via policy and creates the durable Assignment.
+	 */
+	router?: CapabilityRouteEvaluator;
 }
 
 export class SchedulerControlService {
@@ -72,6 +81,7 @@ export class SchedulerControlService {
 	private readonly _now: () => number;
 	private readonly _intentIdFactory: (missionId: string) => string;
 	private readonly _tickIdFactory: () => string;
+	private readonly _router?: CapabilityRouteEvaluator;
 
 	constructor(options: SchedulerControlServiceOptions) {
 		this._store = options.store;
@@ -82,6 +92,7 @@ export class SchedulerControlService {
 		this._now = options.now ?? (() => Date.now());
 		this._intentIdFactory = options.intentIdFactory ?? ((missionId) => intentIdForMission(missionId));
 		this._tickIdFactory = options.tickIdFactory ?? (() => newSchedulingTickId());
+		this._router = options.router;
 	}
 
 	get store(): SchedulingIntentStore {
@@ -306,6 +317,8 @@ export class SchedulerControlService {
 					executorId: decision.executorId ?? "",
 					requirements: intent.requirements,
 					assignedBy: "scheduler",
+					executionMode: decision.executionMode,
+					remoteTargetId: decision.remoteTargetId,
 				});
 				if (decision.executorId) {
 					counts.set(decision.executorId, (counts.get(decision.executorId) ?? 0) + 1);
@@ -404,10 +417,108 @@ export class SchedulerControlService {
 			};
 		}
 
-		return this._decideExecutor(intent, executors, counts);
+		return await this._decideExecutor(intent, executors, counts);
 	}
 
-	private _decideExecutor(
+	private async _decideExecutor(
+		intent: SchedulingIntentRecord,
+		executors: ExecutorSummary[],
+		counts: Map<string, number>,
+	): Promise<SchedulingDecision> {
+		if (this._router) return this._decideExecutorRouted(intent, counts);
+		return this._decideExecutorLocal(intent, executors, counts);
+	}
+
+	/**
+	 * Routed executor decision: eligibility comes from the Capability Router's
+	 * route candidates (execution mode + remote target health are honored), while
+	 * the deterministic Scheduler policy still selects among eligible candidates.
+	 */
+	private async _decideExecutorRouted(
+		intent: SchedulingIntentRecord,
+		counts: Map<string, number>,
+	): Promise<SchedulingDecision> {
+		const evaluation = await this._router!.evaluate({
+			requirements: intent.requirements ?? {},
+			missionId: intent.missionId,
+		});
+		const byId = new Map<string, RouteCandidate>(
+			evaluation.candidates.map((candidate) => [candidate.executorId, candidate]),
+		);
+
+		const eligibility: ExecutorEligibility[] = [];
+		const candidates: ExecutorCandidate[] = [];
+
+		for (const candidate of evaluation.candidates) {
+			eligibility.push({
+				executorId: candidate.executorId,
+				status: candidate.workerStatus,
+				compatible: candidate.capabilityMatch,
+				assignable: candidate.eligible,
+				chosen: false,
+				reason: candidate.eligible ? undefined : candidate.rejectionReasons.join("; "),
+				executionMode: candidate.executionMode,
+				remoteTargetId: candidate.remoteTargetId,
+				targetHealth: candidate.targetHealth,
+				routabilityStatus: candidate.status,
+				preferenceScore: candidate.preferenceScore,
+				preferenceReasons: candidate.preferenceReasons,
+			});
+			if (candidate.eligible) {
+				candidates.push({
+					executorId: candidate.executorId,
+					status: candidate.workerStatus,
+					assignability: {
+						compatible: candidate.capabilityMatch,
+						assignable: candidate.eligible,
+						status: toAssignabilityStatus(candidate.workerStatus),
+						compatibility: {
+							compatible: candidate.capabilityMatch,
+							satisfied: candidate.matchedRequirements,
+							unsatisfied: candidate.rejectedRequirements,
+							warnings: [],
+						},
+					},
+					currentAssignmentCount: counts.get(candidate.executorId) ?? 0,
+				});
+			}
+		}
+
+		const chosen = chooseExecutor(candidates, this._policy.mode);
+		if (!chosen) {
+			return {
+				intentId: intent.intentId,
+				missionId: intent.missionId,
+				decision: "UNSCHEDULABLE",
+				reason: this._unschedulableReason(evaluation),
+				eligibility,
+			};
+		}
+
+		const marked = eligibility.map((entry) =>
+			entry.executorId === chosen.executorId ? { ...entry, chosen: true } : entry,
+		);
+		const chosenCandidate = byId.get(chosen.executorId);
+		return {
+			intentId: intent.intentId,
+			missionId: intent.missionId,
+			decision: "ASSIGN",
+			executorId: chosen.executorId,
+			executionMode: chosenCandidate?.executionMode,
+			remoteTargetId: chosenCandidate?.remoteTargetId,
+			eligibility: marked,
+		};
+	}
+
+	private _unschedulableReason(evaluation: RoutingEvaluation): string {
+		if (evaluation.candidates.length === 0) return "no execution routes available";
+		const summary = evaluation.candidates
+			.map((candidate) => `${candidate.executorId}=${candidate.status}`)
+			.join(", ");
+		return `no eligible execution route (${summary})`;
+	}
+
+	private _decideExecutorLocal(
 		intent: SchedulingIntentRecord,
 		executors: ExecutorSummary[],
 		counts: Map<string, number>,

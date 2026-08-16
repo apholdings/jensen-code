@@ -18,8 +18,10 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { MissionRequirements } from "../assignment/assignment-types.js";
+import type { ExecutionRouteMode, MissionRequirements } from "../assignment/assignment-types.js";
+import type { RoutabilityStatus } from "../capability-routing/route-types.js";
 import type { ExecutorLivenessStatus } from "../executor-registry/executor-registry-types.js";
+import type { RemoteTargetHealth } from "../remote-execution/remote-target-types.js";
 
 // =============================================================================
 // Structured errors
@@ -158,6 +160,13 @@ export interface ExecutorEligibility {
 	/** True when the policy selected this executor. */
 	chosen: boolean;
 	reason?: string;
+	/** Routing provenance (present when a Capability Router is wired). */
+	executionMode?: ExecutionRouteMode;
+	remoteTargetId?: string;
+	targetHealth?: RemoteTargetHealth;
+	routabilityStatus?: RoutabilityStatus;
+	preferenceScore?: number;
+	preferenceReasons?: string[];
 }
 
 export type SchedulingDecisionKind = "ASSIGN" | "RECONCILE" | "UNSCHEDULABLE";
@@ -174,6 +183,9 @@ export interface SchedulingDecision {
 	executorId?: string;
 	assignmentId?: string;
 	reason?: string;
+	/** Execution-route provenance of the chosen executor (routed scheduling). */
+	executionMode?: ExecutionRouteMode;
+	remoteTargetId?: string;
 	/** Full executor eligibility (empty when the mission itself is unschedulable). */
 	eligibility: ExecutorEligibility[];
 }

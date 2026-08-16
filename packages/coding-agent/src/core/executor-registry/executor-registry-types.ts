@@ -232,6 +232,8 @@ export interface ExecutorSummary {
 	expiresAtMs?: number;
 	labels: string[];
 	capabilities: ExecutorCapabilities;
+	/** Optional remote target binding (explicit placement metadata). */
+	remoteTargetId?: string;
 }
 
 export interface ExecutorDetail {

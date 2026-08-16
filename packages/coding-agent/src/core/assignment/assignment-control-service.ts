@@ -267,6 +267,8 @@ export class AssignmentControlService {
 			assignedBy: input.assignedBy,
 			requirementsSnapshot: input.requirements,
 			compatibilitySnapshot: assignability.compatibility,
+			executionMode: input.executionMode,
+			remoteTargetId: input.remoteTargetId,
 			executorRuntimeAtAssignment: {
 				runtimeInstanceId: detail.runtime?.runtimeInstanceId,
 				runtimeEpoch: detail.runtimeEpoch,
@@ -340,6 +342,8 @@ export class AssignmentControlService {
 			assignedBy: input.assignedBy,
 			requirementsSnapshot: input.requirements,
 			compatibilitySnapshot: assignability.compatibility,
+			executionMode: input.executionMode,
+			remoteTargetId: input.remoteTargetId,
 			executorRuntimeAtAssignment: {
 				runtimeInstanceId: detail.runtime?.runtimeInstanceId,
 				runtimeEpoch: detail.runtimeEpoch,
@@ -734,6 +738,8 @@ export class AssignmentControlService {
 			consumedByExecutionId: record.consumedByExecutionId,
 			terminalMissionState: record.terminalMissionState,
 			reason: record.reason,
+			executionMode: record.executionMode,
+			remoteTargetId: record.remoteTargetId,
 		};
 	}
 

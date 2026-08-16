@@ -568,6 +568,7 @@ export class ExecutorControlService {
 			expiresAtMs: record.runtime?.expiresAtMs,
 			labels: [...record.labels],
 			capabilities,
+			remoteTargetId: record.remoteTargetId,
 		};
 	}
 }
