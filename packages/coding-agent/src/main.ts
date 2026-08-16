@@ -45,6 +45,7 @@ import { handleSchedulerCommand } from "./core/scheduler/cli.js";
 import { type CreateAgentSessionOptions, createAgentSession } from "./core/sdk.js";
 import { SessionManager, validateSessionFile } from "./core/session-manager.js";
 import { SettingsManager } from "./core/settings-manager.js";
+import { handleAgentsCommand, handleInferenceCommand } from "./core/shared-inference/cli.js";
 import { handleSubagentCommand } from "./core/subagent-cli.js";
 import { printTimings, time } from "./core/timings.js";
 import { buildTodoStatusReport, formatTodoStatus, type TodoDiagnosticInput } from "./core/todo/todo-cli.js";
@@ -940,6 +941,14 @@ export async function main(args: string[]) {
 	}
 
 	if (await handleSchedulerCommand(args)) {
+		return;
+	}
+
+	if (await handleInferenceCommand(args)) {
+		return;
+	}
+
+	if (await handleAgentsCommand(args)) {
 		return;
 	}
 

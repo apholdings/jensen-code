@@ -208,6 +208,8 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} route ...              Deterministic execution-location routing preview (Capability Routing)
   ${APP_NAME} worker ...             Durable worker daemon (Worker Daemon Foundation)
   ${APP_NAME} remote ...             Remote execution targets (Remote Execution Foundation)
+  ${APP_NAME} inference ...          Shared inference scheduler status/queue/resources (Shared Inference Scheduler)
+  ${APP_NAME} agents ...             List logical agents (Local Subagent Runtime)
   ${APP_NAME} mcp ...                Connect/call MCP servers and record evidence (MCP Client Foundation)
 
 ${chalk.bold("Options:")}

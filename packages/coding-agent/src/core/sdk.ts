@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { Agent, type AgentMessage, type ThinkingLevel } from "@apholdings/jensen-agent-core";
+import { Agent, type AgentMessage, type StreamFn, type ThinkingLevel } from "@apholdings/jensen-agent-core";
 import {
 	assertValidChatCompletionsPayload,
 	assertValidResponsesPayload,
@@ -25,6 +25,7 @@ import type { ResourceLoader } from "./resource-loader.js";
 import { DefaultResourceLoader } from "./resource-loader.js";
 import { SessionManager } from "./session-manager.js";
 import { SettingsManager } from "./settings-manager.js";
+import { resolveSharedInferenceRuntime } from "./shared-inference/config.js";
 import { time } from "./timings.js";
 import {
 	allTools,
@@ -111,6 +112,13 @@ export interface CreateAgentSessionOptions {
 
 	/** Settings manager. Default: SettingsManager.create(cwd, agentDir) */
 	settingsManager?: SettingsManager;
+
+	/**
+	 * Optional custom stream function. When omitted, the session uses the
+	 * configured shared-inference scheduler stream (if active) or the default
+	 * provider stream.
+	 */
+	streamFn?: StreamFn;
 }
 
 /** Result from createAgentSession */
@@ -411,6 +419,10 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			})
 		: undefined;
 
+	const sharedInference = resolveSharedInferenceRuntime({
+		sessionId: sessionManager.getSessionId(),
+	});
+
 	agent = new Agent({
 		initialState: {
 			systemPrompt: "",
@@ -418,6 +430,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			thinkingLevel,
 			tools: [],
 		},
+		streamFn: options.streamFn ?? sharedInference?.streamFn,
 		convertToLlm: convertToLlmWithBlockImages,
 		onPayload: async (payload, model) => {
 			const runner = extensionRunnerRef.current;
