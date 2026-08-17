@@ -21,7 +21,7 @@ import { RemoteSchedulerAdmissionClient } from "./remote-admission-client.js";
 import { LocalSubagentRuntime } from "./runtime.js";
 import { SharedInferenceScheduler } from "./scheduler.js";
 import { createScheduledStreamFn } from "./stream-fn.js";
-import type { SharedInferenceResource } from "./types.js";
+import type { InferencePriority, InferenceRequestDependency, SharedInferenceResource } from "./types.js";
 
 export const DEFAULT_SHARED_INFERENCE_RESOURCES: readonly SharedInferenceResource[] = [
 	{
@@ -106,6 +106,8 @@ export interface ResolveSharedInferenceRuntimeOptions {
 	missionId?: string;
 	assignmentId?: string;
 	executionId?: string;
+	priority?: InferencePriority;
+	dependency?: InferenceRequestDependency;
 	queueDir?: string;
 	agentDir?: string;
 	ownerId?: string;
@@ -127,6 +129,14 @@ export function resolveSharedInferenceRuntime(
 	if (!isSharedInferenceEnabled()) return undefined;
 
 	const resources = sharedInferenceResources();
+	const envPriority = Number(process.env.JENSEN_INFERENCE_PRIORITY);
+	const envUnblocks = Number(process.env.JENSEN_INFERENCE_UNBLOCKS);
+	const priority =
+		options.priority ?? (Number.isSafeInteger(envPriority) && envPriority >= 0 ? { base: envPriority } : undefined);
+	const dependency =
+		options.dependency ??
+		(Number.isSafeInteger(envUnblocks) && envUnblocks >= 0 ? { unblocksCount: envUnblocks } : undefined);
+	const verification = process.env.JENSEN_INFERENCE_VERIFICATION === "1";
 	const endpoint = resolveAdmissionEndpoint();
 
 	let admission: SharedInferenceAdmissionPort;
@@ -159,6 +169,8 @@ export function resolveSharedInferenceRuntime(
 			missionId: options.missionId ?? process.env.JENSEN_MISSION_ID,
 			assignmentId: options.assignmentId ?? process.env.JENSEN_ASSIGNMENT_ID,
 			executionId: options.executionId ?? process.env.JENSEN_EXECUTION_ID,
+			priority: verification ? { ...(priority ?? { base: 0 }), verification: true } : priority,
+			dependency,
 		}),
 	});
 

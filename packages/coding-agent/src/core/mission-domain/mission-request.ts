@@ -57,6 +57,26 @@ export interface MissionModelPolicy {
 	model: string;
 }
 
+export type MissionWorkspaceAccess = "READ_ONLY" | "WRITE";
+export type MissionOrchestrationNodeKind = "DIRECT" | "CHILD" | "SYNTHESIS" | "REVIEW" | "VERIFICATION";
+export type MissionOrchestrationNodeRequirement = "REQUIRED" | "OPTIONAL" | "VERIFICATION_GATING";
+
+/** Durable provenance for a mission materialized from an orchestration plan. */
+export interface MissionOrchestrationMetadata {
+	orchestrationId: string;
+	planRevision: number;
+	nodeId: string;
+	role: string;
+	nodeKind: MissionOrchestrationNodeKind;
+	requirement: MissionOrchestrationNodeRequirement;
+	workspaceAccess: MissionWorkspaceAccess;
+	independenceReason?: string;
+	/** Scheduler-facing dependency criticality derived from the plan DAG. */
+	dependencyCriticality?: number;
+	priority?: number;
+	verification?: boolean;
+}
+
 // =============================================================================
 // MissionRequest
 // =============================================================================
@@ -99,6 +119,8 @@ export interface MissionRequest {
 	readonly constraints?: readonly string[];
 	/** Immutable reference/context package for the mission. */
 	readonly context?: Readonly<Record<string, unknown>>;
+	/** Orchestration metadata for a child mission; execution remains owned by Mission/Scheduler. */
+	readonly orchestration?: MissionOrchestrationMetadata;
 	readonly createdAtMs: number;
 }
 
@@ -122,6 +144,7 @@ export interface CreateMissionRequestInput {
 	childSessionId?: string;
 	constraints?: readonly string[];
 	context?: Readonly<Record<string, unknown>>;
+	orchestration?: MissionOrchestrationMetadata;
 	/** Timestamp override for deterministic construction (defaults to now). */
 	now?: number;
 }
@@ -152,6 +175,7 @@ export function createMissionRequest(input: CreateMissionRequestInput): MissionR
 		childSessionId: input.childSessionId,
 		constraints: input.constraints ? Object.freeze([...input.constraints]) : undefined,
 		context: input.context ? Object.freeze({ ...input.context }) : undefined,
+		orchestration: input.orchestration ? Object.freeze({ ...input.orchestration }) : undefined,
 		createdAtMs: input.now ?? Date.now(),
 	});
 }
@@ -186,7 +210,8 @@ export type MissionRequestValidationError =
 	| "INVALID_EXECUTION_MODE"
 	| "DUPLICATE_CRITERION_ID"
 	| "UNSAFE_CHILD_SESSION_ID"
-	| "INVALID_CONSTRAINTS";
+	| "INVALID_CONSTRAINTS"
+	| "INVALID_ORCHESTRATION_METADATA";
 
 export type MissionRequestValidationResult =
 	| { valid: true; request: MissionRequest }
@@ -252,6 +277,30 @@ export function validateMissionRequest(request: MissionRequest): MissionRequestV
 		(!Array.isArray(request.constraints) || request.constraints.some((c) => typeof c !== "string"))
 	) {
 		errors.push("INVALID_CONSTRAINTS");
+	}
+
+	if (request.orchestration !== undefined) {
+		const metadata = request.orchestration;
+		if (
+			typeof metadata !== "object" ||
+			metadata === null ||
+			typeof metadata.orchestrationId !== "string" ||
+			typeof metadata.planRevision !== "number" ||
+			!Number.isSafeInteger(metadata.planRevision) ||
+			metadata.planRevision < 1 ||
+			typeof metadata.nodeId !== "string" ||
+			typeof metadata.role !== "string" ||
+			!(["DIRECT", "CHILD", "SYNTHESIS", "REVIEW", "VERIFICATION"] as const).includes(metadata.nodeKind) ||
+			!(["REQUIRED", "OPTIONAL", "VERIFICATION_GATING"] as const).includes(metadata.requirement) ||
+			!(["READ_ONLY", "WRITE"] as const).includes(metadata.workspaceAccess) ||
+			(metadata.independenceReason !== undefined && typeof metadata.independenceReason !== "string") ||
+			(metadata.dependencyCriticality !== undefined &&
+				(!Number.isSafeInteger(metadata.dependencyCriticality) || metadata.dependencyCriticality < 0)) ||
+			(metadata.priority !== undefined && (!Number.isSafeInteger(metadata.priority) || metadata.priority < 0)) ||
+			(metadata.verification !== undefined && typeof metadata.verification !== "boolean")
+		) {
+			errors.push("INVALID_ORCHESTRATION_METADATA");
+		}
 	}
 
 	if (errors.length > 0) return { valid: false, errors };

@@ -108,7 +108,11 @@ describe("createScheduledStreamFn — provider seam", () => {
 			scheduler,
 			runtime,
 			delegate,
-			getCorrelation: () => ({ logicalAgentId: "agent_seam" }),
+			getCorrelation: () => ({
+				logicalAgentId: "agent_seam",
+				priority: { base: 7 },
+				dependency: { unblocksCount: 3 },
+			}),
 		});
 		await runtime.register({ logicalAgentId: "agent_seam", sessionId: "session_seam" });
 

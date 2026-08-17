@@ -88,6 +88,7 @@ export {
 	type StructuredSnapshotSelectorCandidate,
 	type StructuredSnapshotSelectorIssue,
 } from "./memory-snapshot-contract.js";
+export * from "./orchestration/index.js";
 export {
 	buildWorkingContext,
 	buildWorkingContextDelegatedWorkSummary,

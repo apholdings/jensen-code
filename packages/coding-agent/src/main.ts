@@ -36,6 +36,7 @@ import { createFileDurableMissionStore } from "./core/mission-durable/index.js";
 import { ModelRegistry } from "./core/model-registry.js";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
 import { handleOperabilityCommand } from "./core/operability-cli.js";
+import { handleOrchestratorCommand } from "./core/orchestration/cli.js";
 import { DefaultPackageManager } from "./core/package-manager.js";
 import { handleRemoteCommand } from "./core/remote-execution/remote-cli.js";
 import { DefaultResourceLoader } from "./core/resource-loader.js";
@@ -917,6 +918,10 @@ export async function main(args: string[]) {
 	}
 
 	if (await handleOperabilityCommand(args)) {
+		return;
+	}
+
+	if (await handleOrchestratorCommand(args)) {
 		return;
 	}
 

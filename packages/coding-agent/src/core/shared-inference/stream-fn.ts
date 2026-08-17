@@ -31,12 +31,15 @@ import {
 import { LocalSchedulerAdmissionClient, type SharedInferenceAdmissionPort } from "./admission-port.js";
 import type { LocalSubagentRuntime } from "./runtime.js";
 import type { SharedInferenceScheduler } from "./scheduler.js";
+import type { InferencePriority, InferenceRequestDependency } from "./types.js";
 
 export interface ScheduledStreamCorrelation {
 	logicalAgentId: string;
 	missionId?: string;
 	assignmentId?: string;
 	executionId?: string;
+	priority?: InferencePriority;
+	dependency?: InferenceRequestDependency;
 }
 
 export interface ScheduledStreamFnOptions {
@@ -142,6 +145,8 @@ export function createScheduledStreamFn(options: ScheduledStreamFnOptions): Stre
 			missionId: correlation.missionId,
 			assignmentId: correlation.assignmentId,
 			executionId: correlation.executionId,
+			priority: correlation.priority,
+			dependency: correlation.dependency,
 			estimatedInputTokens: options.estimateInputTokens
 				? options.estimateInputTokens(context)
 				: estimateTokensHeuristic(context),

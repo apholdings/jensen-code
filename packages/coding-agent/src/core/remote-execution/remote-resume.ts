@@ -193,6 +193,14 @@ export function buildRemoteAssignedExecutor(options: BuildRemoteAssignedExecutor
 						JENSEN_CODING_AGENT_DIR: agentDir,
 						JENSEN_CODE_CODING_AGENT_DIR: agentDir,
 						PI_CODING_AGENT_DIR: agentDir,
+						JENSEN_MISSION_ID: request.missionId,
+						...(request.orchestration?.priority !== undefined
+							? { JENSEN_INFERENCE_PRIORITY: String(request.orchestration.priority) }
+							: {}),
+						...(request.orchestration?.dependencyCriticality !== undefined
+							? { JENSEN_INFERENCE_UNBLOCKS: String(request.orchestration.dependencyCriticality) }
+							: {}),
+						...(request.orchestration?.verification ? { JENSEN_INFERENCE_VERIFICATION: "1" } : {}),
 					},
 				};
 			},

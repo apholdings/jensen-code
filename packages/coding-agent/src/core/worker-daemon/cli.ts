@@ -85,7 +85,22 @@ function buildChildCliResumeLaunch(): BuildAssignedResumeLaunch {
 			launchArgs.push("--tools", request.capabilities.join(","));
 		}
 		launchArgs.push(resumePrompt);
-		return { command, args: launchArgs, cwd: request.workspaceScope?.cwd ?? process.cwd() };
+		const orchestration = request.orchestration;
+		return {
+			command,
+			args: launchArgs,
+			cwd: request.workspaceScope?.cwd ?? process.cwd(),
+			env: {
+				JENSEN_MISSION_ID: request.missionId,
+				...(orchestration?.priority !== undefined
+					? { JENSEN_INFERENCE_PRIORITY: String(orchestration.priority) }
+					: {}),
+				...(orchestration?.dependencyCriticality !== undefined
+					? { JENSEN_INFERENCE_UNBLOCKS: String(orchestration.dependencyCriticality) }
+					: {}),
+				...(orchestration?.verification ? { JENSEN_INFERENCE_VERIFICATION: "1" } : {}),
+			},
+		};
 	};
 }
 

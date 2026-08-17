@@ -521,6 +521,9 @@ export {
 	type MissionHandle,
 	type MissionLaunchOptions,
 	type MissionModelPolicy,
+	type MissionOrchestrationMetadata,
+	type MissionOrchestrationNodeKind,
+	type MissionOrchestrationNodeRequirement,
 	type MissionRequest,
 	type MissionRequestValidationError,
 	type MissionRequestValidationResult,
@@ -531,6 +534,7 @@ export {
 	type MissionTransitionResult,
 	type MissionUsage,
 	type MissionVerification,
+	type MissionWorkspaceAccess,
 	type MissionWorkspaceScope,
 	missionRequestsEqual,
 	newChildSessionId,
@@ -599,6 +603,8 @@ export {
 	simulateReplay,
 	storagePrune,
 } from "./core/operability-runtime.js";
+export { handleOrchestratorCommand, printOrchestrationUsage } from "./core/orchestration/cli.js";
+export * from "./core/orchestration/index.js";
 export type {
 	PackageManager,
 	PathMetadata,

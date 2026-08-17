@@ -68,6 +68,7 @@ export type BuildAssignedResumeLaunch = (input: {
 	command: string;
 	args: readonly string[];
 	cwd: string;
+	env?: Record<string, string | undefined>;
 };
 
 /**
