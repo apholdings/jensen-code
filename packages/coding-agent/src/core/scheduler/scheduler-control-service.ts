@@ -219,9 +219,10 @@ export class SchedulerControlService {
 		const intentId = this._intentIdFor(missionId);
 		const now = this._now();
 
+		const assignedCurrent = await this._assignments.getCurrentForMission(missionId);
 		const result = await this._store.mutate(intentId, (current) => {
 			if (current.state === "CANCELLED") return { kind: "noop", value: current };
-			if (current.state === "ASSIGNED") {
+			if (current.state === "ASSIGNED" && assignedCurrent?.assignmentId === current.assignmentId) {
 				throw new SchedulingError(
 					"INTENT_ALREADY_ASSIGNED",
 					`Intent ${intentId} is already ASSIGNED; release the assignment instead of cancelling the intent`,

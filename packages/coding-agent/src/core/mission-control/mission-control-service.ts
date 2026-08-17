@@ -351,25 +351,32 @@ export class MissionControlService {
 		const coordinator = new DurableMissionCoordinator(this._store, built.executor, this._coordinatorOptions);
 		const resume = coordinator.resume(missionId, { signal: options.signal });
 		this._active.set(missionId, { coordinator, resume });
-		const terminal = await resume;
+		try {
+			const terminal = await resume;
 
-		const lastAttempt = terminal.attempts[terminal.attempts.length - 1];
-		if (!terminal.result) {
-			throw new MissionControlError("MISSION_NOT_RESUMABLE", `Mission ${missionId} did not reach a terminal result`);
+			const lastAttempt = terminal.attempts[terminal.attempts.length - 1];
+			if (!terminal.result) {
+				throw new MissionControlError(
+					"MISSION_NOT_RESUMABLE",
+					`Mission ${missionId} did not reach a terminal result`,
+				);
+			}
+			return {
+				missionId: terminal.missionId,
+				parentMissionId: terminal.parentMissionId,
+				childSessionId: terminal.request.childSessionId,
+				attemptId: lastAttempt?.attemptId ?? "",
+				executionId: terminal.resultExecutionId ?? lastAttempt?.executionId,
+				missionState: terminal.state,
+				fencingToken: terminal.fencingToken,
+				success: terminal.result.success,
+				result: terminal.result,
+				record: terminal,
+				heartbeatTelemetry: coordinator.heartbeatTelemetry(missionId),
+			};
+		} finally {
+			this._active.delete(missionId);
 		}
-		return {
-			missionId: terminal.missionId,
-			parentMissionId: terminal.parentMissionId,
-			childSessionId: terminal.request.childSessionId,
-			attemptId: lastAttempt?.attemptId ?? "",
-			executionId: terminal.resultExecutionId ?? lastAttempt?.executionId,
-			missionState: terminal.state,
-			fencingToken: terminal.fencingToken,
-			success: terminal.result.success,
-			result: terminal.result,
-			record: terminal,
-			heartbeatTelemetry: coordinator.heartbeatTelemetry(missionId),
-		};
 	}
 
 	/**

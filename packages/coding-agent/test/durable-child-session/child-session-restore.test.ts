@@ -6,7 +6,7 @@
  * model or process boundary.
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import type { Message } from "@apholdings/jensen-ai";
@@ -205,6 +205,22 @@ describe("TEST G/W — session survives interruption; corrupt binding fails safe
 		const binding = reopened.getLatestChildBinding();
 		expect(binding?.missionId).toBe(missionId);
 		expect(binding?.sessionId).toBe(id);
+	});
+
+	it("persists a binding when the existing session file contains only its header", async () => {
+		const id = newChildSessionId();
+		const sessionPath = path.join(sessionDir, `header-only-${id}.jsonl`);
+		writeFileSync(
+			sessionPath,
+			`${JSON.stringify({ type: "session", version: 3, id, timestamp: new Date().toISOString(), cwd })}\n`,
+		);
+		const sm = SessionManager.open(sessionPath, sessionDir);
+		bindChildSession(sm, "mission_header_only");
+		const reopened = SessionManager.open(sessionPath, sessionDir);
+		expect(reopened.getLatestChildBinding()).toMatchObject({
+			sessionId: id,
+			missionId: "mission_header_only",
+		});
 	});
 
 	it("W1 corrupt binding data is not trusted (treated as absent, then fail-closed)", async () => {

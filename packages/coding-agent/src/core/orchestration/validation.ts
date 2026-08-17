@@ -137,11 +137,27 @@ function validateWriterSafety(
 	}
 }
 
+/**
+ * Validation options for `validateOrchestrationPlan`.
+ *
+ * `operatorAgents` is the explicit operator-set hook: node agents may
+ * additionally resolve to the supplied operator names (for example the
+ * canonical operator roster names exposed by the Qwen planner). The canonical
+ * subagent registry remains the primary authority; it is only extended by an
+ * explicitly supplied set, never by ambient configuration.
+ */
+export interface OrchestrationValidationOptions {
+	parentDepth?: number;
+	/** Explicit operator agent names accepted on top of the canonical registry. */
+	operatorAgents?: readonly string[];
+}
+
 export function validateOrchestrationPlan(
 	plan: OrchestrationPlan,
-	options: { parentDepth?: number } = {},
+	options: OrchestrationValidationOptions = {},
 ): OrchestrationValidationResult {
 	const issues: OrchestrationValidationIssue[] = [];
+	const operatorAgents = options.operatorAgents ? new Set(options.operatorAgents) : undefined;
 	if (!plan.orchestrationId || !plan.parentMissionId)
 		issue(issues, "ORCHESTRATION_PLAN_INVALID", "plan", "orchestrationId and parentMissionId are required");
 	if (
@@ -184,7 +200,9 @@ export function validateOrchestrationPlan(
 		if (!node.objective.trim() || !node.role.trim() || !node.agent.trim())
 			issue(issues, "ORCHESTRATION_PLAN_INVALID", `nodes.${node.nodeId}`, "role, agent, and objective are required");
 		const resolvedAgent = getCanonicalSubagentRegistry().resolve(node.agent);
-		if ("code" in resolvedAgent)
+		// Roster-only names are legal only through the explicit operator set;
+		// the canonical registry stays the primary authority.
+		if ("code" in resolvedAgent && !operatorAgents?.has(node.agent))
 			issue(issues, "ORCHESTRATION_INVALID_ROLE", `nodes.${node.nodeId}.agent`, `Unknown agent ${node.agent}`);
 	}
 	validateDag(plan.nodes, plan.edges, issues);

@@ -77,6 +77,28 @@ export interface MissionOrchestrationMetadata {
 	verification?: boolean;
 }
 
+/**
+ * Typed parent orchestration execution contract.
+ *
+ * Present only on a mission that OWNS an orchestration plan it must drive to
+ * completion (the parent side; `orchestration` above is the child side). It
+ * is executor-independent and provider-independent, like the rest of the
+ * request: it names the plan identity and the child execution authority,
+ * never a process, a port instance, or a PID. The durable request names the
+ * authority; the runtime (orchestration layer) resolves the name to an
+ * `OrchestrationChildExecutionPort` instance.
+ */
+export interface MissionOrchestrationExecution {
+	/** Identity of the orchestration plan this mission owns and must execute. */
+	orchestrationId: string;
+	/**
+	 * Stable identity of the child execution authority for this orchestration.
+	 * Required: a parent orchestration execution without a named child
+	 * execution authority is rejected, never defaulted.
+	 */
+	childExecutionAuthority: string;
+}
+
 // =============================================================================
 // MissionRequest
 // =============================================================================
@@ -121,6 +143,13 @@ export interface MissionRequest {
 	readonly context?: Readonly<Record<string, unknown>>;
 	/** Orchestration metadata for a child mission; execution remains owned by Mission/Scheduler. */
 	readonly orchestration?: MissionOrchestrationMetadata;
+	/**
+	 * Typed parent orchestration execution contract. Present only on a mission
+	 * that owns an orchestration plan it must drive; names the plan identity
+	 * and the child execution authority. Absent for children and for missions
+	 * without orchestration.
+	 */
+	readonly orchestrationExecution?: MissionOrchestrationExecution;
 	readonly createdAtMs: number;
 }
 
@@ -145,6 +174,7 @@ export interface CreateMissionRequestInput {
 	constraints?: readonly string[];
 	context?: Readonly<Record<string, unknown>>;
 	orchestration?: MissionOrchestrationMetadata;
+	orchestrationExecution?: MissionOrchestrationExecution;
 	/** Timestamp override for deterministic construction (defaults to now). */
 	now?: number;
 }
@@ -176,6 +206,9 @@ export function createMissionRequest(input: CreateMissionRequestInput): MissionR
 		constraints: input.constraints ? Object.freeze([...input.constraints]) : undefined,
 		context: input.context ? Object.freeze({ ...input.context }) : undefined,
 		orchestration: input.orchestration ? Object.freeze({ ...input.orchestration }) : undefined,
+		orchestrationExecution: input.orchestrationExecution
+			? Object.freeze({ ...input.orchestrationExecution })
+			: undefined,
 		createdAtMs: input.now ?? Date.now(),
 	});
 }
@@ -211,7 +244,8 @@ export type MissionRequestValidationError =
 	| "DUPLICATE_CRITERION_ID"
 	| "UNSAFE_CHILD_SESSION_ID"
 	| "INVALID_CONSTRAINTS"
-	| "INVALID_ORCHESTRATION_METADATA";
+	| "INVALID_ORCHESTRATION_METADATA"
+	| "INVALID_ORCHESTRATION_EXECUTION";
 
 export type MissionRequestValidationResult =
 	| { valid: true; request: MissionRequest }
@@ -300,6 +334,20 @@ export function validateMissionRequest(request: MissionRequest): MissionRequestV
 			(metadata.verification !== undefined && typeof metadata.verification !== "boolean")
 		) {
 			errors.push("INVALID_ORCHESTRATION_METADATA");
+		}
+	}
+
+	if (request.orchestrationExecution !== undefined) {
+		const execution = request.orchestrationExecution;
+		if (
+			typeof execution !== "object" ||
+			execution === null ||
+			typeof execution.orchestrationId !== "string" ||
+			execution.orchestrationId.trim().length === 0 ||
+			typeof execution.childExecutionAuthority !== "string" ||
+			execution.childExecutionAuthority.trim().length === 0
+		) {
+			errors.push("INVALID_ORCHESTRATION_EXECUTION");
 		}
 	}
 

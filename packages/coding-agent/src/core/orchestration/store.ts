@@ -3,6 +3,8 @@ import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import lockfile from "proper-lockfile";
+import { getAgentDir } from "../../config.js";
+import { loadOperatorRoster, OPERATOR_ROSTER_NAMES } from "../operator-roster.js";
 import type { OrchestrationPlanDocument, OrchestrationStore } from "./types.js";
 import { validateOrchestrationPlan } from "./validation.js";
 
@@ -36,6 +38,23 @@ export class FileOrchestrationStore implements OrchestrationStore {
 	private file(id: string): string {
 		if (!safeId(id)) throw new Error(`Unsafe orchestration id: ${id}`);
 		return path.join(this.root, `${id}${SUFFIX}`);
+	}
+	/**
+	 * Explicit operator set for this file-backed store's plan validation.
+	 * The canonical subagent registry remains the primary authority; this
+	 * only extends it with the operator roster names loaded from
+	 * `getAgentDir()/agents/*.md`, so a roster-based plan created through the
+	 * automatic path stays readable (status/join) after the fact. A roster
+	 * that cannot be read must not break store reads: in that case the
+	 * canonical operator roles — which the roster guarantees to exist —
+	 * remain the accepted fallback.
+	 */
+	private operatorAgents(): readonly string[] {
+		try {
+			return loadOperatorRoster({ agentDir: getAgentDir() }).agents.map((agent) => agent.name);
+		} catch {
+			return [...OPERATOR_ROSTER_NAMES];
+		}
 	}
 	private async read(id: string): Promise<OrchestrationPlanDocument | undefined> {
 		try {
@@ -107,7 +126,9 @@ export class FileOrchestrationStore implements OrchestrationStore {
 			document.plan.orchestrationId !== orchestrationId
 		)
 			return { status: "corrupt" as const, diagnostic: "invalid orchestration schema or identity" };
-		const validation = validateOrchestrationPlan(document.plan);
+		const validation = validateOrchestrationPlan(document.plan, {
+			operatorAgents: this.operatorAgents(),
+		});
 		if (!validation.valid)
 			return {
 				status: "corrupt" as const,

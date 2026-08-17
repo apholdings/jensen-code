@@ -111,3 +111,98 @@ describe("MissionRequest contract", () => {
 		if (!result.valid) expect(result.errors).toContain("DUPLICATE_CRITERION_ID");
 	});
 });
+
+/**
+ * MissionRequest.orchestrationExecution — typed parent orchestration
+ * execution contract (presence, cloning, validation).
+ */
+
+describe("MissionRequest.orchestrationExecution contract", () => {
+	it("E1 a parent request carries the typed orchestration execution contract", () => {
+		const request = createMissionRequest({
+			objective: "drive the orchestration",
+			agent: "worker",
+			executionMode: "execute",
+			acceptanceCriteria: [],
+			orchestrationExecution: {
+				orchestrationId: "orch_parent_1",
+				childExecutionAuthority: "scheduler_authority",
+			},
+		});
+		expect(request.orchestrationExecution).toEqual({
+			orchestrationId: "orch_parent_1",
+			childExecutionAuthority: "scheduler_authority",
+		});
+		expect(validateMissionRequest(request).valid).toBe(true);
+	});
+
+	it("E2 absent by default and independent of child orchestration metadata", () => {
+		const request = createMissionRequest({
+			objective: "child work",
+			agent: "worker",
+			executionMode: "plan",
+			acceptanceCriteria: [],
+			parent: { missionId: "mission_parent", depth: 0 },
+			orchestration: {
+				orchestrationId: "orch_parent_1",
+				planRevision: 1,
+				nodeId: "n1",
+				role: "recon",
+				nodeKind: "CHILD",
+				requirement: "REQUIRED",
+				workspaceAccess: "READ_ONLY",
+			},
+		});
+		expect(request.orchestration).toBeDefined();
+		expect(request.orchestrationExecution).toBeUndefined();
+		expect(validateMissionRequest(request).valid).toBe(true);
+	});
+
+	it("E3 cloning freezes the contract and isolates it from the input object", () => {
+		const input = { orchestrationId: "orch_clone", childExecutionAuthority: "auth_1" };
+		const request = createMissionRequest({
+			objective: "x",
+			agent: "worker",
+			executionMode: "execute",
+			acceptanceCriteria: [],
+			orchestrationExecution: input,
+		});
+		expect(Object.isFrozen(request.orchestrationExecution)).toBe(true);
+		input.orchestrationId = "orch_tampered";
+		input.childExecutionAuthority = "auth_2";
+		expect(request.orchestrationExecution?.orchestrationId).toBe("orch_clone");
+		expect(request.orchestrationExecution?.childExecutionAuthority).toBe("auth_1");
+	});
+
+	it("E4 malformed execution contracts are rejected with INVALID_ORCHESTRATION_EXECUTION", () => {
+		const base: MissionRequest = createMissionRequest({
+			objective: "x",
+			agent: "worker",
+			executionMode: "execute",
+			acceptanceCriteria: [],
+		});
+		const cases: Array<{ label: string; value: unknown }> = [
+			{ label: "missing orchestrationId", value: { childExecutionAuthority: "auth_1" } },
+			{ label: "blank orchestrationId", value: { orchestrationId: "   ", childExecutionAuthority: "auth_1" } },
+			{ label: "non-string orchestrationId", value: { orchestrationId: 7, childExecutionAuthority: "auth_1" } },
+			{ label: "missing childExecutionAuthority", value: { orchestrationId: "orch_1" } },
+			{
+				label: "blank childExecutionAuthority",
+				value: { orchestrationId: "orch_1", childExecutionAuthority: "  " },
+			},
+			{
+				label: "non-string childExecutionAuthority",
+				value: { orchestrationId: "orch_1", childExecutionAuthority: null },
+			},
+			{ label: "non-object contract", value: null },
+		];
+		for (const { label, value } of cases) {
+			const result = validateMissionRequest({
+				...base,
+				orchestrationExecution: value as MissionRequest["orchestrationExecution"],
+			});
+			expect(result.valid, label).toBe(false);
+			if (!result.valid) expect(result.errors, label).toContain("INVALID_ORCHESTRATION_EXECUTION");
+		}
+	});
+});

@@ -8,16 +8,25 @@ import {
 	type DurableMissionStore,
 } from "../mission-domain/durable-store.js";
 import { createMissionRequest, type MissionRequest } from "../mission-domain/mission-request.js";
-import type { SchedulerControlService } from "../scheduler/scheduler-control-service.js";
+import { isTerminalMissionState } from "../mission-domain/mission-state.js";
 import { SessionManager } from "../session-manager.js";
 import type { LocalSubagentRuntime } from "../shared-inference/runtime.js";
+import {
+	createParentOrchestrationExecution,
+	DEFAULT_ORCHESTRATION_CHILD_AUTHORITY,
+	type ParentOrchestrationExecution,
+	type ParentOrchestrationExecutionOptions,
+} from "./parent-execution.js";
+import { createQwenPlanner } from "./qwen-planner.js";
 import type { OrchestrationStore } from "./types.js";
 import {
+	type OrchestrationChildExecutionPort,
 	type OrchestrationJoinResult,
 	type OrchestrationNode,
 	type OrchestrationNodeStatus,
 	type OrchestrationPlan,
 	type OrchestrationPlanDocument,
+	type OrchestrationPlanner,
 	type OrchestrationPlanProposal,
 	type OrchestrationProposalInput,
 	type OrchestrationReason,
@@ -31,7 +40,6 @@ export interface OrchestratorOptions {
 	store: OrchestrationStore;
 	missions: DurableMissionStore;
 	logicalRuntime?: LocalSubagentRuntime;
-	scheduler?: SchedulerControlService;
 	sessionDir?: string;
 	now?: () => number;
 	orchestrationIdFactory?: () => string;
@@ -39,6 +47,24 @@ export interface OrchestratorOptions {
 	maxChildrenPerNode?: number;
 	maxTotalLogicalAgents?: number;
 	maxReplans?: number;
+	/**
+	 * Explicit operator agent names accepted by plan validation on top of the
+	 * canonical subagent registry. Takes precedence over any roster a planner
+	 * exposes through `allowedAgents()`.
+	 */
+	operatorAgents?: readonly string[];
+	/**
+	 * Planner for the automatic start/preview path. Default:
+	 * `createQwenPlanner()` (the local Qwen planner). Inject a mocked planner
+	 * or a planner with a deterministic stream seam in tests.
+	 */
+	planner?: OrchestrationPlanner;
+	/**
+	 * Child execution authority port. It is exposed through the
+	 * `childExecutionPort` seam and reused by automatic execution when no
+	 * explicit execution port is supplied.
+	 */
+	childExecutionPort?: OrchestrationChildExecutionPort;
 }
 
 export interface CreateOrchestrationOptions {
@@ -46,12 +72,66 @@ export interface CreateOrchestrationOptions {
 	proposal: OrchestrationPlanProposal;
 	parentDepth?: number;
 	rationale?: string;
+	/** Per-call operator agent set; overrides the service-level option. */
+	operatorAgents?: readonly string[];
+}
+
+export interface OrchestrationPreview {
+	plan?: OrchestrationPlan;
+	validation: OrchestrationValidationResult;
+	issues: unknown[];
 }
 
 export interface OrchestrationReconcileResult {
 	status: OrchestrationStatus;
 	materializedMissionIds: string[];
 	unblockedNodeIds: string[];
+}
+
+/** Result of an automatic start: the created plan plus the materialization. */
+export interface AutomaticStartResult extends OrchestrationReconcileResult {
+	plan: OrchestrationPlan;
+}
+
+/**
+ * Options for `startAutomatic`. `childExecutionAuthority` names the child
+ * execution authority that will drive the created plan: when present, the
+ * parent mission's durable request is updated (atomically) to carry the
+ * `orchestrationExecution` contract BEFORE the result is returned. When
+ * absent the status quo holds: children are materialized but no parent
+ * execution contract is persisted.
+ */
+export interface StartAutomaticOptions {
+	/**
+	 * Named child execution authority persisted on the parent's durable
+	 * request as `orchestrationExecution.childExecutionAuthority`. Verified,
+	 * never defaulted: an empty/whitespace name is rejected.
+	 */
+	childExecutionAuthority?: string;
+}
+
+export interface AutomaticExecuteOptions extends StartAutomaticOptions {
+	/** Existing parent execution stack. When omitted, `executionOptions` builds one. */
+	execution?: ParentOrchestrationExecution;
+	/** Production factory inputs used when `execution` is omitted. */
+	executionOptions?: Omit<ParentOrchestrationExecutionOptions, "orchestrator" | "store" | "missions">;
+	/** Coordinator resume options, including an optional cancellation signal. */
+	resumeOptions?: { signal?: AbortSignal };
+}
+
+/** Recognize planners that expose their allowed agent set (roster hook). */
+function plannerAllowedAgents(planner: OrchestrationPlanner): readonly string[] | undefined {
+	return planner.allowedAgents ? planner.allowedAgents() : undefined;
+}
+
+/** Planner input derived from the parent mission's durable work contract. */
+function proposalInputFor(parent: DurableMissionRecord, maxTotalLogicalAgents: number): OrchestrationProposalInput {
+	return {
+		parentMissionId: parent.missionId,
+		objective: parent.request.objective,
+		constraints: parent.request.constraints ?? [],
+		maxTotalLogicalAgents,
+	};
 }
 
 function terminalForDependency(record: DurableMissionRecord | undefined): boolean {
@@ -98,10 +178,12 @@ export class OrchestratorService {
 	private readonly _store: OrchestrationStore;
 	private readonly _missions: DurableMissionStore;
 	private readonly _runtime?: LocalSubagentRuntime;
-	private readonly _scheduler?: SchedulerControlService;
 	private readonly _sessionDir?: string;
 	private readonly _now: () => number;
 	private readonly _idFactory: () => string;
+	private readonly _operatorAgents?: readonly string[];
+	private readonly _planner?: OrchestrationPlanner;
+	private readonly _childExecutionPort?: OrchestrationChildExecutionPort;
 	private readonly _limits: Pick<
 		OrchestrationPlan,
 		"maxDepth" | "maxChildrenPerNode" | "maxTotalLogicalAgents" | "maxReplans"
@@ -111,12 +193,14 @@ export class OrchestratorService {
 		this._store = options.store;
 		this._missions = options.missions;
 		this._runtime = options.logicalRuntime;
-		this._scheduler = options.scheduler;
 		this._sessionDir = options.sessionDir;
 		this._now = options.now ?? (() => Date.now());
 		this._idFactory =
 			options.orchestrationIdFactory ??
 			(() => `orch_${createHash("sha256").update(`${Date.now()}_${randomUUID()}`).digest("hex").slice(0, 24)}`);
+		this._operatorAgents = options.operatorAgents;
+		this._planner = options.planner;
+		this._childExecutionPort = options.childExecutionPort;
 		this._limits = {
 			maxDepth: options.maxDepth ?? 2,
 			maxChildrenPerNode: options.maxChildrenPerNode ?? 20,
@@ -125,18 +209,47 @@ export class OrchestratorService {
 		};
 	}
 
-	async preview(
-		input: CreateOrchestrationOptions,
-	): Promise<{ plan?: OrchestrationPlan; validation: OrchestrationValidationResult; issues: unknown[] }> {
+	/**
+	 * Access seam for the child execution authority port.
+	 *
+	 * Returns the port configured for this orchestrator, when present. The
+	 * parent lifecycle executor — never materialization — owns child launch.
+	 */
+	get childExecutionPort(): OrchestrationChildExecutionPort | undefined {
+		return this._childExecutionPort;
+	}
+
+	/**
+	 * Resolve the effective operator agent set for plan validation: an
+	 * explicit per-call override, then the service-level option, then the
+	 * roster exposed by the planner (when any). The canonical subagent
+	 * registry remains the primary authority in all cases.
+	 */
+	private effectiveOperatorAgents(
+		overrideAgents: readonly string[] | undefined,
+		planner: OrchestrationPlanner | undefined,
+	): readonly string[] | undefined {
+		if (overrideAgents) return overrideAgents;
+		if (this._operatorAgents) return this._operatorAgents;
+		return planner ? plannerAllowedAgents(planner) : undefined;
+	}
+
+	async preview(input: CreateOrchestrationOptions): Promise<OrchestrationPreview> {
 		const plan = this.buildPlan(input);
-		const validation = validateOrchestrationPlan(plan, { parentDepth: input.parentDepth });
+		const validation = validateOrchestrationPlan(plan, {
+			parentDepth: input.parentDepth,
+			operatorAgents: this.effectiveOperatorAgents(input.operatorAgents, undefined),
+		});
 		return { plan: validation.valid ? plan : undefined, validation, issues: validation.issues };
 	}
 
 	async create(input: CreateOrchestrationOptions): Promise<OrchestrationPlan> {
 		const parent = await this.loadMission(input.parentMissionId);
 		const plan = this.buildPlan({ ...input, parentDepth: input.parentDepth ?? parent.depth });
-		const validation = validateOrchestrationPlan(plan, { parentDepth: parent.depth });
+		const validation = validateOrchestrationPlan(plan, {
+			parentDepth: parent.depth,
+			operatorAgents: this.effectiveOperatorAgents(input.operatorAgents, undefined),
+		});
 		if (!validation.valid)
 			throw new Error(`ORCHESTRATION_PLAN_INVALID: ${validation.issues.map((item) => item.message).join("; ")}`);
 		const criticality = validation.dependencyCriticality;
@@ -149,8 +262,9 @@ export class OrchestratorService {
 
 	async createFromPlanner(
 		input: OrchestrationProposalInput,
-		planner: { propose(input: OrchestrationProposalInput): Promise<unknown> },
+		planner: OrchestrationPlanner,
 	): Promise<OrchestrationPlan> {
+		const operatorAgents = this.effectiveOperatorAgents(undefined, planner);
 		let feedback = "";
 		for (let attempt = 0; attempt <= this._limits.maxReplans; attempt++) {
 			const proposed = await planner.propose({
@@ -160,7 +274,11 @@ export class OrchestratorService {
 			const parsed = validatePlanProposal(proposed);
 			if (parsed.valid) {
 				try {
-					return await this.create({ parentMissionId: input.parentMissionId, proposal: parsed.proposal });
+					return await this.create({
+						parentMissionId: input.parentMissionId,
+						proposal: parsed.proposal,
+						operatorAgents,
+					});
 				} catch (error) {
 					feedback = error instanceof Error ? error.message : String(error);
 					continue;
@@ -169,6 +287,197 @@ export class OrchestratorService {
 			feedback = parsed.issues.map((item) => `${item.code}:${item.message}`).join("; ");
 		}
 		throw new Error("ORCHESTRATION_REPLAN_EXHAUSTED: no valid plan after bounded retries");
+	}
+
+	/**
+	 * Automatic orchestration start. Loads the parent mission's objective and
+	 * constraints, asks the planner (default: `createQwenPlanner()`) to
+	 * propose a plan with bounded replans, creates it, and materializes the
+	 * ready child nodes. Children are never launched here; execution remains
+	 * owned by Mission/Scheduler. The explicit proposal API (`preview` /
+	 * `create`) remains the operator's debug override.
+	 *
+	 * When `options.childExecutionAuthority` is provided, the parent mission's
+	 * durable request is atomically updated (DurableMissionStore `mutate`) to
+	 * carry the `orchestrationExecution` contract naming this plan and that
+	 * authority, BEFORE the result is returned. The returned plan is reloaded
+	 * after materialization so it reflects persisted node state.
+	 */
+	async startAutomatic(parentMissionId: string, options: StartAutomaticOptions = {}): Promise<AutomaticStartResult> {
+		const parent = await this.loadMission(parentMissionId);
+		if (isTerminalMissionState(parent.state))
+			throw new Error(`PARENT_MISSION_TERMINAL: ${parentMissionId} is terminal and cannot own an orchestration`);
+
+		const existingExecution = parent.request.orchestrationExecution;
+		if (existingExecution) {
+			if (
+				options.childExecutionAuthority !== undefined &&
+				options.childExecutionAuthority.trim() !== existingExecution.childExecutionAuthority
+			)
+				throw new Error(
+					`AUTHORITY_MISMATCH: parent contract names '${existingExecution.childExecutionAuthority}', ` +
+						`requested '${options.childExecutionAuthority}'`,
+				);
+			const loaded = await this._store.load(existingExecution.orchestrationId);
+			if (loaded.status === "missing")
+				throw new Error(`ORCHESTRATION_NOT_FOUND: ${existingExecution.orchestrationId}`);
+			if (loaded.status === "corrupt") throw new Error(`ORCHESTRATION_PLAN_CORRUPT: ${loaded.diagnostic}`);
+			if (loaded.document.plan.parentMissionId !== parentMissionId)
+				throw new Error(
+					`ORCHESTRATION_PARENT_MISMATCH: orchestration ${existingExecution.orchestrationId} belongs to ` +
+						`${loaded.document.plan.parentMissionId}, not ${parentMissionId}`,
+				);
+			const reconcile = await this.materializeReady(existingExecution.orchestrationId);
+			const updated = await this._store.load(existingExecution.orchestrationId);
+			if (updated.status !== "ok") throw new Error(`ORCHESTRATION_NOT_FOUND: ${existingExecution.orchestrationId}`);
+			return { ...reconcile, plan: updated.document.plan };
+		}
+
+		const planner = this._planner ?? createQwenPlanner();
+		const plan = await this.createFromPlanner(proposalInputFor(parent, this._limits.maxTotalLogicalAgents), planner);
+		if (options.childExecutionAuthority !== undefined)
+			await this.attachOrchestrationExecution(
+				parentMissionId,
+				plan.orchestrationId,
+				options.childExecutionAuthority,
+			);
+		const reconcile = await this.materializeReady(plan.orchestrationId);
+		const updated = await this._store.load(plan.orchestrationId);
+		if (updated.status !== "ok") throw new Error(`ORCHESTRATION_NOT_FOUND: ${plan.orchestrationId}`);
+		return { ...reconcile, plan: updated.document.plan };
+	}
+
+	/**
+	 * Plan, materialize, and explicitly resume the durable parent mission through
+	 * the existing coordinator. The parent request contract is attached before
+	 * `resume`, and no execution stack is constructed unless requested.
+	 */
+	async startAutomaticAndExecute(
+		parentMissionId: string,
+		options: AutomaticExecuteOptions,
+	): Promise<DurableMissionRecord> {
+		const existingParent = await this.loadMission(parentMissionId);
+		if (isTerminalMissionState(existingParent.state)) return existingParent;
+		if (!options.execution && !options.executionOptions)
+			throw new Error("EXECUTION_OPTIONS_REQUIRED: executionOptions are required when execution is omitted");
+		const execution =
+			options.execution ??
+			createParentOrchestrationExecution({
+				...(options.executionOptions ?? {}),
+				...(options.executionOptions?.port || this._childExecutionPort
+					? { port: options.executionOptions?.port ?? this._childExecutionPort }
+					: {}),
+				missions: this._missions,
+				store: this._store,
+				orchestrator: this,
+			});
+		const authority =
+			options.childExecutionAuthority ?? execution.port.authority ?? DEFAULT_ORCHESTRATION_CHILD_AUTHORITY;
+		if (execution.port.authority !== authority)
+			throw new Error(
+				`AUTHORITY_MISMATCH: parent contract names '${authority}', execution provides '${execution.port.authority}'`,
+			);
+		await this.startAutomatic(parentMissionId, { childExecutionAuthority: authority });
+		const resume = (signal?: AbortSignal) => execution.coordinator.resume(parentMissionId, { signal });
+		if (execution.driver)
+			return execution.driver.execute((signal) => resume(signal), {
+				signal: options.resumeOptions?.signal,
+				parentMissionId,
+			});
+		return resume(options.resumeOptions?.signal);
+	}
+
+	/**
+	 * Persist the parent orchestration execution contract on the parent
+	 * mission's durable request: atomically (DurableMissionStore `mutate`)
+	 * update `request.orchestrationExecution` to name `orchestrationId` and
+	 * `childExecutionAuthority`.
+	 *
+	 * Verified, never defaulted, never overwritten:
+	 *   - `CHILD_EXECUTION_AUTHORITY_REQUIRED` — empty/whitespace authority
+	 *   - `PARENT_MISSION_NOT_FOUND` / `PARENT_MISSION_CORRUPT`
+	 *   - `PARENT_ALREADY_OWNS_ORCHESTRATION` — the parent already carries a
+	 *     DIFFERENT contract (re-attaching the identical contract is
+	 *     idempotent and writes nothing)
+	 *   - `PARENT_MISSION_TERMINAL` — a terminal parent cannot own an
+	 *     executable orchestration
+	 *
+	 * The contract is declarative: this writes no plan state and never
+	 * launches anything. The parent lifecycle executor resolves the named
+	 * authority later, at execution time.
+	 */
+	async attachOrchestrationExecution(
+		parentMissionId: string,
+		orchestrationId: string,
+		childExecutionAuthority: string,
+	): Promise<DurableMissionRecord> {
+		const authority = childExecutionAuthority.trim();
+		if (authority.length === 0)
+			throw new Error("CHILD_EXECUTION_AUTHORITY_REQUIRED: a named child execution authority is required");
+		const now = this._now();
+
+		type AttachOutcome = { status: "attached" | "already_attached" | "conflict" | "terminal" };
+		const result = await this._missions.mutate<AttachOutcome>(parentMissionId, (current) => {
+			const existing = current.request.orchestrationExecution;
+			if (existing) {
+				if (existing.orchestrationId === orchestrationId && existing.childExecutionAuthority === authority)
+					return { kind: "noop", value: { status: "already_attached" as const } };
+				return { kind: "noop", value: { status: "conflict" as const } };
+			}
+			if (isTerminalMissionState(current.state)) return { kind: "noop", value: { status: "terminal" as const } };
+			const next: DurableMissionRecord = {
+				...current,
+				request: Object.freeze({
+					...current.request,
+					orchestrationExecution: Object.freeze({ orchestrationId, childExecutionAuthority: authority }),
+				}),
+				updatedAtMs: now,
+				revision: current.revision + 1,
+			};
+			return { kind: "write", next, value: { status: "attached" as const } };
+		});
+
+		if (result.status === "missing") throw new Error(`PARENT_MISSION_NOT_FOUND: ${parentMissionId}`);
+		if (result.status === "corrupt")
+			throw new Error(`PARENT_MISSION_CORRUPT: ${parentMissionId} is corrupt: ${result.diagnostic}`);
+		switch (result.value.status) {
+			case "attached":
+			case "already_attached": {
+				const loaded = await this.loadMission(parentMissionId);
+				return loaded;
+			}
+			case "conflict":
+				throw new Error(
+					`PARENT_ALREADY_OWNS_ORCHESTRATION: ${parentMissionId} already carries a different ` +
+						`orchestration execution contract`,
+				);
+			case "terminal":
+				throw new Error(`PARENT_MISSION_TERMINAL: ${parentMissionId} is terminal and cannot own an orchestration`);
+		}
+	}
+
+	/**
+	 * Automatic orchestration preview. A single bounded planner probe (no
+	 * replans, nothing persisted) reporting the plan `startAutomatic` would
+	 * create for the parent mission.
+	 */
+	async previewAutomatic(parentMissionId: string): Promise<OrchestrationPreview> {
+		const parent = await this.loadMission(parentMissionId);
+		const planner = this._planner ?? createQwenPlanner();
+		const proposed = await planner.propose(proposalInputFor(parent, this._limits.maxTotalLogicalAgents));
+		const parsed = validatePlanProposal(proposed);
+		if (!parsed.valid)
+			return {
+				plan: undefined,
+				validation: { valid: false, issues: parsed.issues, dependencyCriticality: new Map() },
+				issues: parsed.issues,
+			};
+		const plan = this.buildPlan({ parentMissionId, proposal: parsed.proposal, parentDepth: parent.depth });
+		const validation = validateOrchestrationPlan(plan, {
+			parentDepth: parent.depth,
+			operatorAgents: this.effectiveOperatorAgents(undefined, planner),
+		});
+		return { plan: validation.valid ? plan : undefined, validation, issues: validation.issues };
 	}
 
 	private buildPlan(input: CreateOrchestrationOptions): OrchestrationPlan {
@@ -317,13 +626,6 @@ export class OrchestratorService {
 				activity: nodeDependencies(plan, node.nodeId).length > 0 ? "BLOCKED_DEPENDENCY" : "RUNNABLE",
 				priority: node.priority ?? 0,
 			});
-		if (this._scheduler) {
-			const schedulingPriority = node.priority ?? 0;
-			await this._scheduler.enqueueIntent(missionId, {
-				requirements: node.requirements,
-				priority: schedulingPriority,
-			});
-		}
 		return { ...request, childSessionId: sessionId };
 	}
 

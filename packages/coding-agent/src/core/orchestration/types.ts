@@ -6,6 +6,8 @@ import type {
 	MissionWorkspaceAccess,
 } from "../mission-domain/mission-request.js";
 import type { MissionState } from "../mission-domain/mission-state.js";
+import type { SchedulingIntentState } from "../scheduler/scheduler-types.js";
+import type { WorkerActivity, WorkerDaemonState } from "../worker-daemon/worker-types.js";
 
 export const ORCHESTRATION_SCHEMA_VERSION = 1 as const;
 
@@ -182,6 +184,15 @@ export interface OrchestrationProposalInput {
 
 export interface OrchestrationPlanner {
 	propose(input: OrchestrationProposalInput): Promise<unknown>;
+	/**
+	 * Optional: the agent names this planner may assign to nodes (for example
+	 * the operator roster a Qwen planner derives from). When exposed,
+	 * `OrchestratorService` passes the set to `validateOrchestrationPlan` as
+	 * `operatorAgents`, keeping the planner's roster in sync with plan
+	 * validation. Planners without this method are validated against the
+	 * canonical subagent registry alone.
+	 */
+	allowedAgents?(): readonly string[];
 }
 
 export interface OrchestrationPlanProposal {
@@ -229,6 +240,101 @@ export interface OrchestrationStore {
 			save: (document: OrchestrationPlanDocument) => Promise<void>,
 		) => Promise<T>,
 	): Promise<T>;
+}
+
+// =============================================================================
+// Child execution authority port
+// =============================================================================
+
+/**
+ * Structured identity of a materialized orchestration child whose execution
+ * the parent lifecycle executor wants to authorize and launch. Carries only
+ * durable structured identity from the plan node — never PID, prompt text, or
+ * ephemeral process state.
+ */
+export interface OrchestrationChildExecutionRequest {
+	orchestrationId: string;
+	nodeId: string;
+	childMissionId: string;
+	childSessionId: string;
+	workspaceAccess: MissionWorkspaceAccess;
+}
+
+/** Receipt issued by a child execution authority for an execution request. */
+export interface OrchestrationChildExecutionReceipt {
+	/** Whether child execution was authorized and launched. */
+	accepted: boolean;
+	/** Authority identity that issued the receipt. */
+	authority: string;
+	/** Declined reason when `accepted` is false. */
+	reason?: string;
+}
+
+/** Per-worker read-model snapshot for child status polling. */
+export interface OrchestrationChildWorkerStatus {
+	workerId: string;
+	daemonState: WorkerDaemonState;
+	activity: WorkerActivity;
+	/** Set only when this worker's current assignment is the polled child mission. */
+	executingChildMissionId?: string;
+}
+
+/**
+ * Status/terminal polling snapshot of one materialized orchestration child.
+ * Read-only: produced from the durable mission store, the scheduling intent
+ * store, and the worker read model — never from process state.
+ */
+export interface OrchestrationChildExecutionStatus {
+	orchestrationId: string;
+	nodeId: string;
+	childMissionId: string;
+	childSessionId: string;
+	/** Current mission state, or "MISSING" when the child was never materialized. */
+	missionState: MissionState | "MISSING";
+	/** True once the mission reached a terminal state. */
+	terminal: boolean;
+	/** True only for a terminal success result (SUCCEEDED). */
+	success: boolean;
+	/** Authoritative child result verification status, when terminal. */
+	verificationStatus?: "verified" | "unverified" | "failed";
+	/** Authoritative Completion Gate decision, when terminal. */
+	completionDecision?: "accepted" | "rejected" | "unavailable";
+	/** Compact deterministic verification summary, when available. */
+	verificationSummary?: string;
+	/** Scheduling intent for the child, when one has been enqueued. */
+	intent?: {
+		intentId: string;
+		state: SchedulingIntentState;
+		assignmentId?: string;
+		unschedulableReason?: string;
+	};
+	/** Read-model snapshots of the configured workers (never launched by this port). */
+	workers: OrchestrationChildWorkerStatus[];
+}
+
+/**
+ * Child execution authority port.
+ *
+ * `OrchestratorService` stores this as an option (`childExecutionPort`) and
+ * exposes it through its access seam; the parent lifecycle executor resolves
+ * the authority named by
+ * `MissionRequest.orchestrationExecution.childExecutionAuthority` against
+ * `port.authority` and launches materialized children through `executeChild`.
+ * The orchestrator never launches children itself — a port implementation
+ * owns the launch (Mission/Scheduler, local runtime, or remote executor).
+ */
+export interface OrchestrationChildExecutionPort {
+	/** Stable identity of this child execution authority. */
+	readonly authority: string;
+	/** Authorize and launch execution of a materialized orchestration child. */
+	executeChild(request: OrchestrationChildExecutionRequest): Promise<OrchestrationChildExecutionReceipt>;
+	/**
+	 * Optional: status/terminal polling for a materialized child. Ports that
+	 * own execution outside the Scheduler/Worker chain (local runtime, remote
+	 * executor) may omit it; the parent lifecycle executor treats a missing
+	 * implementation as a hard error, never a default.
+	 */
+	childStatus?(request: OrchestrationChildExecutionRequest): Promise<OrchestrationChildExecutionStatus>;
 }
 
 export function orchestrationMetadataForNode(

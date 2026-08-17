@@ -504,6 +504,12 @@ architecture, authority model, lifecycle, and extension points.
 
 ---
 
+## Automatic orchestration
+
+`jensen orchestrator preview <PARENT_MISSION_ID>` asks the configured local Qwen planner for a bounded plan without persisting it. `jensen orchestrator start <PARENT_MISSION_ID>` persists the plan and materializes ready child missions; `--proposal JSON` remains an explicit operator/debug override. Materialization creates durable child identities only. Child execution is owned by the configured child execution port, normally the Scheduler -> Assignment -> Worker path, and the port is the only scheduler enqueue authority. Parent completion is terminal only after required children pass their authoritative status/verification gates; all-optional plans complete once every optional child is terminal. Bounded parent drivers perform mandatory terminal cleanup through Scheduler and Assignment, without writing mission state themselves.
+
+The Qwen planner path is wired and deterministic seams are covered by tests, but live Qwen inference remains deferred qualification: production readiness depends on the configured local model, registry, and deployment health rather than this planning contract alone.
+
 ## Subagents and Cavecrew
 
 Inspect the canonical registry and skill dependency state with:

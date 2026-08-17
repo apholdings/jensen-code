@@ -62,6 +62,20 @@ export {
 	isExecutionLeaseActive,
 	newExecutorOwnerId,
 } from "./execution-lease.js";
+// Real in-process executor (2.16.0): drives a mission through the normal
+// createAgentSession() session path (real model, real tools, no process).
+export {
+	buildInProcessMissionPrompt,
+	createInProcessMissionExecutor,
+	createInProcessMissionRunner,
+	InProcessMissionExecutor,
+	type InProcessMissionExecutorOptions,
+	type InProcessMissionOutcome,
+	type InProcessMissionRunner,
+	type InProcessMissionVerification,
+	type InProcessMissionVerifier,
+	type InProcessMissionVerifierInput,
+} from "./in-process-mission-executor.js";
 export {
 	MissionExecutionService,
 	type MissionExecutor,
@@ -80,6 +94,7 @@ export {
 	type MissionBudget,
 	type MissionExecutionMode,
 	type MissionModelPolicy,
+	type MissionOrchestrationExecution,
 	type MissionOrchestrationMetadata,
 	type MissionOrchestrationNodeKind,
 	type MissionOrchestrationNodeRequirement,

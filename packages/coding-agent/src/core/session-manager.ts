@@ -1219,7 +1219,16 @@ export class SessionManager {
 	 * this session belongs to so a mismatched restore can fail closed.
 	 */
 	appendChildBinding(binding: ChildMissionBinding): string {
-		return this.appendCustomEntry(SESSION_CHILD_BINDING_CUSTOM_TYPE, binding);
+		const entryId = this.appendCustomEntry(SESSION_CHILD_BINDING_CUSTOM_TYPE, binding);
+		// A durable child must be discoverable by the worker before its first
+		// assistant response exists. The normal session persistence policy defers
+		// empty sessions, but the binding itself is the durable child identity
+		// contract and therefore needs a file-backed record immediately.
+		if (this.persist && this.sessionFile && !this.flushed) {
+			this._rewriteFile();
+			this.flushed = true;
+		}
+		return entryId;
 	}
 
 	/** Latest durable child mission binding on the current branch, if any. */

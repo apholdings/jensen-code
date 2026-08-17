@@ -201,7 +201,7 @@ export class WorkerControlService {
 	 * a second concurrent `start()` for the same executor fails closed with
 	 * EXECUTOR_ALREADY_ACTIVE (the duplicate-daemon single-owner fence).
 	 */
-	async start(options: { reconcile?: boolean } = {}): Promise<WorkerStartOutcome> {
+	async start(options: { reconcile?: boolean; polling?: boolean } = {}): Promise<WorkerStartOutcome> {
 		if (this._daemonState !== "STOPPED") {
 			workerError("WORKER_ALREADY_STARTED", `Worker ${this._workerId} is already ${this._daemonState}`);
 		}
@@ -235,7 +235,7 @@ export class WorkerControlService {
 
 		this._daemonState = "RUNNING";
 		this._heartbeatTimer = setInterval(() => void this._heartbeat(), this._heartbeatMs);
-		this._pollTimer = setInterval(() => void this._poll(), this._pollMs);
+		if (options.polling !== false) this._pollTimer = setInterval(() => void this._poll(), this._pollMs);
 		return {
 			identity: this._identity!,
 			runtimeInstanceId: activation.runtimeInstanceId,
