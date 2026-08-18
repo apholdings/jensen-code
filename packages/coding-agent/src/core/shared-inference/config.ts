@@ -14,6 +14,8 @@
  */
 
 import type { StreamFn } from "@apholdings/jensen-agent-core";
+import { governancePolicyFromEnv } from "../governance/evaluator.js";
+import { GovernanceService } from "../governance/service.js";
 import { LocalSchedulerAdmissionClient, type SharedInferenceAdmissionPort } from "./admission-port.js";
 import { createFileInferenceQueueStore } from "./file-inference-queue-store.js";
 import { createFileLogicalAgentStore } from "./file-logical-agent-store.js";
@@ -112,6 +114,7 @@ export interface ResolveSharedInferenceRuntimeOptions {
 	agentDir?: string;
 	ownerId?: string;
 	now?: () => number;
+	governance?: GovernanceService;
 }
 
 /**
@@ -161,6 +164,9 @@ export function resolveSharedInferenceRuntime(
 		runtime = new LocalSubagentRuntime({ store: createFileLogicalAgentStore(options.agentDir) });
 	}
 
+	const governance =
+		options.governance ??
+		(options.missionId ? new GovernanceService({ policy: governancePolicyFromEnv() }) : undefined);
 	const streamFn = createScheduledStreamFn({
 		admission,
 		runtime,
@@ -172,6 +178,7 @@ export function resolveSharedInferenceRuntime(
 			priority: verification ? { ...(priority ?? { base: 0 }), verification: true } : priority,
 			dependency,
 		}),
+		governance,
 	});
 
 	return { admission, runtime, streamFn, resources };

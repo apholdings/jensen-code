@@ -36,9 +36,18 @@ async function main(): Promise<void> {
 	const agent = arg(process.argv.slice(2), "--agent") ?? "agent";
 	const requests = num(process.argv.slice(2), "--requests", 5);
 	const holdMs = num(process.argv.slice(2), "--hold-ms", 20);
+	const leaseDurationMs = num(process.argv.slice(2), "--lease-ms", 600_000);
+	const recover = process.argv.includes("--recover");
+	const probeUnknown = process.argv.includes("--probe-unknown");
+	const crashAfterAdmit = process.argv.includes("--crash-after-admit");
 
 	const store = new FileInferenceQueueStore({ root: dir });
-	const scheduler = new SharedInferenceScheduler({ store, waitPollMs: 5, ownerId: `owner_${agent}` });
+	const scheduler = new SharedInferenceScheduler({
+		store,
+		waitPollMs: 5,
+		leaseDurationMs,
+		ownerId: `owner_${agent}`,
+	});
 	const resource = {
 		resourceId: "qwen38-bucephalus",
 		backend: "llamacpp-qwen38-bucephalus",
@@ -48,14 +57,18 @@ async function main(): Promise<void> {
 		state: "available" as const,
 	};
 	await scheduler.registerResource(resource);
+	const recovered = recover ? (await scheduler.recover()).reconciledRequests : [];
+	const unknownStatus = probeUnknown ? (await scheduler.admissionStatus("unknown-request")).status : undefined;
 
 	let admittedCount = 0;
 	let violations = 0;
 	for (let i = 0; i < requests; i++) {
+		const inferenceRequestId = `${agent}-${i + 1}`;
 		const outcome = await scheduler.acquire({
 			logicalAgentId: agent,
 			resource,
 			model: { provider: resource.backend, id: resource.model },
+			inferenceRequestId,
 			priority: { base: 0 },
 		});
 		if (outcome.status !== "admitted") {
@@ -64,6 +77,8 @@ async function main(): Promise<void> {
 		}
 
 		admittedCount += 1;
+		process.stdout.write(`${JSON.stringify({ event: "admitted", inferenceRequestId })}\n`);
+		if (crashAfterAdmit) await new Promise(() => undefined);
 		const loaded = await store.load(resource.resourceId);
 		if (loaded.status === "ok" && loaded.ledger.running.length > 1) {
 			violations += 1;
@@ -73,7 +88,7 @@ async function main(): Promise<void> {
 		await scheduler.release(outcome.admitted, { state: "COMPLETED" });
 	}
 
-	console.log(JSON.stringify({ agent, admittedCount, violations }));
+	console.log(JSON.stringify({ agent, admittedCount, violations, recovered, unknownStatus }));
 }
 
 main().catch((error) => {

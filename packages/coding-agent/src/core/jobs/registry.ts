@@ -7,6 +7,7 @@ import { identityMatches, readProcessIdentity } from "./process-identity.js";
 import type {
 	AdoptionEvidence,
 	BackgroundJobEvent,
+	BackgroundJobOwnership,
 	BackgroundJobRecord,
 	BackgroundJobState,
 	JobLogsRequest,
@@ -35,6 +36,7 @@ export interface StartJobOptions {
 	cwd?: string;
 	workspaceId?: string;
 	ownerRunId?: string;
+	ownership?: BackgroundJobOwnership;
 	env?: Record<string, string>;
 	restartPolicy?: string;
 	startupTimeoutMs?: number;
@@ -139,6 +141,7 @@ export class BackgroundJobRegistry {
 			jobId,
 			ownerRunId: options.ownerRunId ?? this.ownerRunId,
 			workspaceId: options.workspaceId ?? this.workspaceId,
+			ownership: options.ownership,
 			commandIdentity: [options.executable, ...(options.args ?? [])].join(" "),
 			executable: options.executable,
 			sanitizedArguments: sanitizeArgs(options.args ?? []),
@@ -406,6 +409,7 @@ export class BackgroundJobRegistry {
 			cwd: record.cwd,
 			workspaceId: record.workspaceId,
 			ownerRunId: record.ownerRunId,
+			ownership: record.ownership,
 			restartPolicy: record.restartPolicy,
 		});
 		newRecord.restarts = [

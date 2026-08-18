@@ -17,10 +17,21 @@ export type BackgroundJobState =
 	| "orphaned"
 	| "adoption_required";
 
+export interface BackgroundJobOwnership {
+	/** Authority namespace that may reconcile or clean up this process. */
+	ownerKind: string;
+	/** Stable owner identity within the namespace. */
+	ownerId: string;
+	missionId?: string;
+	assignmentId?: string;
+	executionId?: string;
+}
+
 export interface BackgroundJobRecord {
 	jobId: string;
 	ownerRunId?: string;
 	workspaceId?: string;
+	ownership?: BackgroundJobOwnership;
 	commandIdentity: string;
 	executable: string;
 	/** Sanitized args (secrets redacted). */

@@ -11,6 +11,44 @@ import type { MissionHandle } from "./mission-handle.js";
 import type { MissionRequest } from "./mission-request.js";
 import { type MissionResult, shouldContinueMissionChain } from "./mission-result.js";
 
+/** Stable correlation carried by execution observers and remote transports. */
+export interface MissionExecutionCorrelation {
+	missionId: string;
+	assignmentId?: string;
+	attemptId?: string;
+	executionId?: string;
+	sessionId?: string;
+}
+
+export type MissionExecutionEvent =
+	| {
+			type: "attempt_started" | "execution_launch_started" | "execution_started";
+			eventId: string;
+			atMs: number;
+			correlation: MissionExecutionCorrelation;
+	  }
+	| {
+			type: "execution_retry";
+			eventId: string;
+			atMs: number;
+			retryClass: "execution" | "remote_execution";
+			retryIndex: number;
+			reason: string;
+			correlation: MissionExecutionCorrelation;
+	  }
+	| {
+			type: "execution_completed" | "execution_failed" | "execution_cancelled";
+			eventId: string;
+			atMs: number;
+			correlation: MissionExecutionCorrelation;
+			state: MissionResult["state"];
+			executionOutcome: MissionResult["executionOutcome"];
+	  };
+
+export interface MissionExecutionObserver {
+	onEvent: (event: MissionExecutionEvent) => void;
+}
+
 export interface MissionLaunchOptions {
 	signal?: AbortSignal;
 	/**
@@ -21,6 +59,13 @@ export interface MissionLaunchOptions {
 	 * authorization.
 	 */
 	fencing?: { leaseId: string; fencingToken: number };
+	/** Authoritative attempt identity for runtime correlation. */
+	executionId?: string;
+	attemptId?: string;
+	/** One-based attempt number; >1 identifies an actual execution retry. */
+	attemptNumber?: number;
+	assignmentId?: string;
+	sessionId?: string;
 }
 
 export interface MissionExecutor {

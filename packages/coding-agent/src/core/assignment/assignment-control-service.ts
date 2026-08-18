@@ -80,6 +80,7 @@ export type BuildAssignedExecutor = (input: {
 	record: DurableMissionRecord;
 	sessionManager: SessionManager;
 	childSessionId: string;
+	assignmentId: string;
 }) => BuiltChildResume;
 
 export interface AssignmentControlServiceOptions {
@@ -586,6 +587,7 @@ export class AssignmentControlService {
 					record: resolved.record,
 					sessionManager: resolved.sessionManager,
 					childSessionId: resolved.childSessionId,
+					assignmentId,
 				})
 			: buildChildResumeExecutor({
 					record: resolved.record,
@@ -600,6 +602,7 @@ export class AssignmentControlService {
 		const coordinator = new DurableMissionCoordinator(this._missions, built.executor, {
 			...this._coordinatorOptions,
 			ownerId: begun.executionOwnerIdentity.ownerId,
+			assignmentId,
 		});
 
 		try {

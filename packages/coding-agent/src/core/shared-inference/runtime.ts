@@ -49,7 +49,6 @@ export class LocalSubagentRuntime {
 	private readonly _store: LogicalAgentStore;
 	private readonly _now: () => number;
 	private readonly _idFactory: () => string;
-
 	constructor(options: LocalSubagentRuntimeOptions) {
 		this._store = options.store;
 		this._now = options.now ?? (() => Date.now());
@@ -137,10 +136,12 @@ export class LocalSubagentRuntime {
 				...current,
 				activity,
 				waitingReason: options.waitingReason,
-				pendingInferenceRequestId: options.pendingInferenceRequestId ?? current.pendingInferenceRequestId,
-				executionId: options.executionId ?? current.executionId,
-				attemptId: options.attemptId ?? current.attemptId,
-				assignmentId: options.assignmentId ?? current.assignmentId,
+				pendingInferenceRequestId: Object.hasOwn(options, "pendingInferenceRequestId")
+					? options.pendingInferenceRequestId
+					: current.pendingInferenceRequestId,
+				executionId: Object.hasOwn(options, "executionId") ? options.executionId : current.executionId,
+				attemptId: Object.hasOwn(options, "attemptId") ? options.attemptId : current.attemptId,
+				assignmentId: Object.hasOwn(options, "assignmentId") ? options.assignmentId : current.assignmentId,
 				updatedAtMs: this._now(),
 			};
 			const saved = await this._store.save(next, { expectedRevision: current.revision });
@@ -151,7 +152,10 @@ export class LocalSubagentRuntime {
 
 	/** Park a logical agent (durable identity + reason preserved; no hot KV reservation). */
 	async park(logicalAgentId: string, reason: string): Promise<LogicalAgentRecord> {
-		return this.transition(logicalAgentId, "PARKED", { waitingReason: reason });
+		return this.transition(logicalAgentId, "PARKED", {
+			waitingReason: reason,
+			pendingInferenceRequestId: undefined,
+		});
 	}
 
 	/** Resume a parked/waiting agent back to RUNNABLE. */

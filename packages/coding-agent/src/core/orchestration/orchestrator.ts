@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { bindChildSession } from "../durable-child-session/child-session-restore.js";
 import { defaultChildSessionDir } from "../durable-child-session/index.js";
+import type { GovernanceService } from "../governance/service.js";
 import {
 	createDurableMissionRecord,
 	type DurableMissionRecord,
@@ -65,6 +66,7 @@ export interface OrchestratorOptions {
 	 * explicit execution port is supplied.
 	 */
 	childExecutionPort?: OrchestrationChildExecutionPort;
+	governance?: GovernanceService;
 }
 
 export interface CreateOrchestrationOptions {
@@ -184,6 +186,7 @@ export class OrchestratorService {
 	private readonly _operatorAgents?: readonly string[];
 	private readonly _planner?: OrchestrationPlanner;
 	private readonly _childExecutionPort?: OrchestrationChildExecutionPort;
+	private readonly _governance?: GovernanceService;
 	private readonly _limits: Pick<
 		OrchestrationPlan,
 		"maxDepth" | "maxChildrenPerNode" | "maxTotalLogicalAgents" | "maxReplans"
@@ -201,6 +204,7 @@ export class OrchestratorService {
 		this._operatorAgents = options.operatorAgents;
 		this._planner = options.planner;
 		this._childExecutionPort = options.childExecutionPort;
+		this._governance = options.governance;
 		this._limits = {
 			maxDepth: options.maxDepth ?? 2,
 			maxChildrenPerNode: options.maxChildrenPerNode ?? 20,
@@ -267,6 +271,14 @@ export class OrchestratorService {
 		const operatorAgents = this.effectiveOperatorAgents(undefined, planner);
 		let feedback = "";
 		for (let attempt = 0; attempt <= this._limits.maxReplans; attempt++) {
+			if (attempt > 0 && this._governance)
+				await this._governance.recordRetry(
+					input.parentMissionId,
+					`orchestration:${input.parentMissionId}:planner-repair:${attempt}`,
+					"planner",
+					this._now(),
+					{ parentMissionId: input.parentMissionId, phase: "planner_repair", attempt },
+				);
 			const proposed = await planner.propose({
 				...input,
 				constraints: [...input.constraints, feedback].filter(Boolean),
@@ -281,6 +293,14 @@ export class OrchestratorService {
 					});
 				} catch (error) {
 					feedback = error instanceof Error ? error.message : String(error);
+					if (this._governance)
+						await this._governance.recordRetry(
+							input.parentMissionId,
+							`orchestration:${input.parentMissionId}:orchestration-replan:${attempt}`,
+							"replan",
+							this._now(),
+							{ parentMissionId: input.parentMissionId, phase: "orchestration_replan", attempt },
+						);
 					continue;
 				}
 			}
@@ -540,6 +560,26 @@ export class OrchestratorService {
 		});
 		for (const node of nextNodes.filter((candidate) => candidate.status === "READY")) {
 			if (node.childMissionId) continue;
+			if (this._governance) {
+				const admission = await this._governance.recordOrchestrationChild({
+					missionId: plan.parentMissionId,
+					eventId: `orchestration:${plan.orchestrationId}:child:${node.nodeId}`,
+					childId: childMissionId(plan.orchestrationId, node.nodeId),
+					orchestrationDepth: 1,
+					atMs: this._now(),
+					correlation: {
+						parentMissionId: plan.parentMissionId,
+						orchestrationId: plan.orchestrationId,
+						nodeId: node.nodeId,
+						phase: "child_materialization",
+					},
+				});
+				if (!admission.allowed) {
+					const deniedIndex = nextNodes.findIndex((candidate) => candidate.nodeId === node.nodeId);
+					nextNodes[deniedIndex] = { ...node, status: "UNSCHEDULABLE", lastError: admission.reason };
+					continue;
+				}
+			}
 			const materializingIndex = nextNodes.findIndex((candidate) => candidate.nodeId === node.nodeId);
 			nextNodes[materializingIndex] = { ...node, status: "MATERIALIZING" };
 			let created: MissionRequest & { childSessionId: string };

@@ -28,6 +28,7 @@ import {
 	type Model,
 	streamSimple,
 } from "@apholdings/jensen-ai";
+import type { GovernanceService } from "../governance/service.js";
 import { LocalSchedulerAdmissionClient, type SharedInferenceAdmissionPort } from "./admission-port.js";
 import type { LocalSubagentRuntime } from "./runtime.js";
 import type { SharedInferenceScheduler } from "./scheduler.js";
@@ -58,6 +59,12 @@ export interface ScheduledStreamFnOptions {
 	) => ScheduledStreamCorrelation;
 	/** Metadata-only input-token estimate (never the prompt). */
 	estimateInputTokens?: (context: Context) => number | undefined;
+	/** Optional host/resource-pressure check used to park before admission. */
+	resourcePressure?: (model: Model<any>, context: Context) => boolean | Promise<boolean>;
+	/** Wait for a pressure change; the default yields to the event loop. */
+	waitForResourcePressure?: () => Promise<void>;
+	/** Optional Governance admission/accounting authority. */
+	governance?: GovernanceService;
 }
 
 const ZERO_USAGE: AssistantMessage["usage"] = {
@@ -115,29 +122,91 @@ export function createScheduledStreamFn(options: ScheduledStreamFnOptions): Stre
 	const delegate = options.delegate ?? streamSimple;
 	const admission =
 		options.admission ?? (options.scheduler ? new LocalSchedulerAdmissionClient(options.scheduler) : undefined);
-	if (!admission) {
-		throw new Error("createScheduledStreamFn requires an admission port or a local scheduler");
+	if (!admission && !options.governance) {
+		throw new Error("createScheduledStreamFn requires an admission port, local scheduler, or Governance service");
 	}
 
 	return async (model, context, streamOptions) => {
-		const resource = admission.resourceFor(model);
-		if (!resource) {
-			// Non-shared provider: unchanged behavior.
-			return delegate(model, context, streamOptions);
-		}
-
+		const resource = admission?.resourceFor(model);
 		const correlation = options.getCorrelation
 			? options.getCorrelation(model, context, (streamOptions ?? {}) as Record<string, unknown>)
 			: { logicalAgentId: "unknown" };
 		const logicalAgentId = correlation.logicalAgentId;
 		const inferenceRequestId = `inference_${randomUUID()}`;
+		if (options.governance && correlation.missionId) {
+			const governanceAdmission = await options.governance.admitInference({
+				missionId: correlation.missionId,
+				eventId: inferenceRequestId,
+				provider: model.provider,
+				model: model.id,
+				atMs: Date.now(),
+			});
+			if (!governanceAdmission.allowed)
+				return errorStream(model, `Governance admission denied: ${governanceAdmission.reason ?? "unknown"}`);
+		}
+
+		if (!resource) {
+			const delegateStream = delegate(model, context, streamOptions);
+			if (!options.governance || !correlation.missionId) return delegateStream;
+			const stream = createAssistantMessageEventStream();
+			void (async () => {
+				try {
+					for await (const event of delegateStream) {
+						if (event.type === "done") {
+							await options.governance?.recordInferenceResult({
+								missionId: correlation.missionId!,
+								eventId: `${inferenceRequestId}:result`,
+								provider: model.provider,
+								model: model.id,
+								inputTokens: event.message.usage?.input,
+								outputTokens: event.message.usage?.output,
+								costUsd: model.provider.startsWith("llamacpp-") ? undefined : event.message.usage?.cost.total,
+								costStatus: model.provider.startsWith("llamacpp-")
+									? undefined
+									: event.message.usage?.cost.total === undefined
+										? "UNKNOWN"
+										: "KNOWN",
+								atMs: Date.now(),
+							});
+						}
+						stream.push(event);
+						if (event.type === "done" || event.type === "error") return;
+					}
+					stream.end();
+				} catch (error) {
+					stream.push({
+						type: "error",
+						reason: "error",
+						error: {
+							role: "assistant",
+							content: [],
+							api: model.api,
+							provider: model.provider,
+							model: model.id,
+							usage: { ...ZERO_USAGE },
+							stopReason: "error",
+							errorMessage: error instanceof Error ? error.message : String(error),
+							timestamp: Date.now(),
+						},
+					});
+					stream.end();
+				}
+			})();
+			return stream;
+		}
+
+		if (options.resourcePressure && (await options.resourcePressure(model, context))) {
+			await options.runtime?.park(logicalAgentId, "resource pressure");
+			await (options.waitForResourcePressure ?? (() => new Promise((resolve) => setImmediate(resolve)))());
+			await options.runtime?.resume(logicalAgentId);
+		}
 
 		await options.runtime?.transition(logicalAgentId, "WAITING_INFERENCE", {
 			waitingReason: "shared inference admission",
 			pendingInferenceRequestId: inferenceRequestId,
 		});
 
-		const acquired = await admission.acquire({
+		const acquired = await admission!.acquire({
 			logicalAgentId,
 			resource,
 			model,
@@ -187,33 +256,62 @@ export function createScheduledStreamFn(options: ScheduledStreamFnOptions): Stre
 			timestamp: Date.now(),
 		});
 
-		const releaseOnce = async (message: AssistantMessage, failed: boolean): Promise<void> => {
-			if (released) return;
+		const releaseOnce = async (message: AssistantMessage, failed: boolean): Promise<Error | undefined> => {
+			if (released) return undefined;
 			released = true;
+			let accountingError: Error | undefined;
+			if (options.governance && correlation.missionId) {
+				try {
+					await options.governance.recordInferenceResult({
+						missionId: correlation.missionId,
+						eventId: `${inferenceRequestId}:result`,
+						provider: model.provider,
+						model: model.id,
+						inputTokens: message.usage?.input,
+						outputTokens: message.usage?.output,
+						costUsd: model.provider.startsWith("llamacpp-") ? undefined : message.usage?.cost.total,
+						costStatus: model.provider.startsWith("llamacpp-")
+							? undefined
+							: message.usage?.cost.total === undefined
+								? "UNKNOWN"
+								: "KNOWN",
+						atMs: Date.now(),
+					});
+				} catch (error) {
+					accountingError = error instanceof Error ? error : new Error(String(error));
+				}
+			}
 			try {
-				await admission.release(acquired.admitted, {
-					state: failed ? "FAILED" : "COMPLETED",
-					usage: failed ? undefined : { input: message.usage?.input, output: message.usage?.output },
-					errorMessage: failed ? message.errorMessage : undefined,
+				await admission!.release(acquired.admitted, {
+					state: failed || accountingError ? "FAILED" : "COMPLETED",
+					usage:
+						failed || accountingError
+							? undefined
+							: { input: message.usage?.input, output: message.usage?.output },
+					errorMessage: accountingError?.message ?? (failed ? message.errorMessage : undefined),
 				});
-				if (failed) {
+				if (failed || accountingError)
 					await options.runtime?.transition(logicalAgentId, "RUNNABLE", {
 						waitingReason: undefined,
 						pendingInferenceRequestId: undefined,
 					});
-				} else {
-					await options.runtime?.resume(logicalAgentId);
-				}
-			} catch {
-				// Best-effort; recovery reconciles a corrupt ledger honestly.
+				else await options.runtime?.resume(logicalAgentId);
+			} catch (error) {
+				return error instanceof Error ? error : new Error(String(error));
 			}
+			return accountingError;
 		};
 
 		void (async () => {
 			try {
 				for await (const event of delegateStream) {
 					if (event.type === "done") {
-						await releaseOnce(event.message, false);
+						const releaseError = await releaseOnce(event.message, false);
+						if (releaseError) {
+							stream.push({ type: "error", reason: "error", error: syntheticFailure(releaseError.message) });
+							stream.end();
+							return;
+						}
 						stream.push(event);
 						return;
 					}

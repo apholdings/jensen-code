@@ -337,6 +337,7 @@ export {
 } from "./core/extensions/index.js";
 // Footer data provider (git branch + extension statuses - data not otherwise available to extensions)
 export type { ReadonlyFooterDataProvider } from "./core/footer-data-provider.js";
+export * from "./core/governance/index.js";
 // Durable background-job registry (1.4.0)
 export { type BackgroundJobRecord, BackgroundJobRegistry, createJobTools } from "./core/jobs/index.js";
 // Native Language Server Protocol subsystem (1.4.0)

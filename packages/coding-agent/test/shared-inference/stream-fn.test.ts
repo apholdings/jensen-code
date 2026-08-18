@@ -130,6 +130,60 @@ describe("createScheduledStreamFn — provider seam", () => {
 		expect(record?.activity).toBe("RUNNABLE");
 	});
 
+	it("releases the physical lease when Governance result accounting fails", async () => {
+		const { delegate, calls } = fakeDelegate();
+		const governance = {
+			admitInference: async () => ({ allowed: true }),
+			recordInferenceResult: async () => {
+				throw new Error("ACCOUNTING_FAILURE");
+			},
+		} as never;
+		const streamFn = createScheduledStreamFn({
+			scheduler,
+			runtime,
+			delegate,
+			governance,
+			getCorrelation: () => ({
+				logicalAgentId: "agent_accounting_failure",
+				missionId: "mission_accounting_failure",
+			}),
+		});
+		await runtime.register({ logicalAgentId: "agent_accounting_failure", sessionId: "session_accounting_failure" });
+		const stream = await streamFn(SHARED_MODEL, CONTEXT, {});
+		const result = await stream.result();
+		expect(result.stopReason).toBe("error");
+		expect(calls()).toBe(1);
+		expect((await scheduler.status()).aggregate.busySlots).toBe(0);
+	});
+
+	it("parks under injected resource pressure and waits without a busy loop", async () => {
+		const { delegate, calls } = fakeDelegate();
+		let pressured = true;
+		let checks = 0;
+		let waits = 0;
+		const streamFn = createScheduledStreamFn({
+			scheduler,
+			runtime,
+			delegate,
+			resourcePressure: async () => {
+				checks += 1;
+				return pressured;
+			},
+			waitForResourcePressure: async () => {
+				waits += 1;
+				pressured = false;
+			},
+			getCorrelation: () => ({ logicalAgentId: "agent_pressure" }),
+		});
+		await runtime.register({ logicalAgentId: "agent_pressure", sessionId: "session_pressure" });
+		const stream = await streamFn(SHARED_MODEL, CONTEXT, {});
+		expect(calls()).toBe(1);
+		expect(waits).toBe(0);
+		expect(checks).toBe(1);
+		await stream.result();
+		expect((await runtime.inspect("agent_pressure"))?.activity).toBe("RUNNABLE");
+	});
+
 	it("does not invoke the delegate while the shared slot is busy", async () => {
 		const { delegate, calls } = fakeDelegate();
 		const streamFn = createScheduledStreamFn({

@@ -510,6 +510,23 @@ architecture, authority model, lifecycle, and extension points.
 
 The Qwen planner path is wired and deterministic seams are covered by tests, but live Qwen inference remains deferred qualification: production readiness depends on the configured local model, registry, and deployment health rather than this planning contract alone.
 
+## Mission Governance
+
+Governance is a deterministic policy, admission, and decision layer over missions and orchestration. It does not replace Orchestrator, Scheduler, Assignment, Worker, SharedInferenceScheduler, Capability Routing, Mission coordination, Verification, or the Completion Gate. Those authorities still perform their own actions.
+
+Governance keeps independent accounting for logical-agent work, inference requests, tools, executor work, wall-clock, turns, retries, replans, fan-out/depth, cloud spend, and local inference pressure. Local Qwen (`llamacpp-qwen38-bucephalus/qwen3.8-27b`) has no invented monetary price; queue pressure and wall-clock remain observable separately. Paid inference with unknown pricing is `UNKNOWN`, not zero, and a paid hard-cap decision fails closed.
+
+Policy precedence is operator hard caps, mission policy, orchestration/role policy, provider/model defaults, then Jensen defaults. A lower layer can reduce a hard cap but never raise it. Model escalation preserves mission/orchestration/node correlation and is selective: a critical child can move from local Qwen to the configured cloud model without changing Mission identity.
+
+Durable inspection is available without launching work:
+
+```bash
+jensen governance policy
+jensen governance status <MISSION_ID>
+```
+
+The durable ledger is locked and atomic across processes. Retry classes, escalation history, cloud accounting, and consumed limits survive restart. Empty result envelopes use a separately bounded result-only retry; resource/dependency waiting parks without consuming an inference lease or being classified as reasoning stagnation.
+
 ## Subagents and Cavecrew
 
 Inspect the canonical registry and skill dependency state with:

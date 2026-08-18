@@ -16,7 +16,11 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { MissionExecutor, MissionLaunchOptions } from "../mission-domain/mission-executor.js";
+import type {
+	MissionExecutionCorrelation,
+	MissionExecutor,
+	MissionLaunchOptions,
+} from "../mission-domain/mission-executor.js";
 import { createMissionHandle, type MissionHandle } from "../mission-domain/mission-handle.js";
 import type { MissionRequest } from "../mission-domain/mission-request.js";
 import { validateMissionRequest } from "../mission-domain/mission-request.js";
@@ -31,7 +35,12 @@ import { MissionStateTracker } from "../mission-domain/mission-state.js";
 import type { ProcessMissionOutcome, ProcessMissionVerifier } from "../mission-domain/process-mission-executor.js";
 import { RemoteExecutionError } from "./remote-execution-error.js";
 import type { RemoteExecutionTarget } from "./remote-target-types.js";
-import type { RemoteChildLaunch, RemoteCommandRunner, RemoteExecutionTransport } from "./remote-transport.js";
+import type {
+	RemoteChildLaunch,
+	RemoteCommandRunner,
+	RemoteExecutionTransport,
+	RemoteTransportEvent,
+} from "./remote-transport.js";
 import { buildRemoteAcceptanceCriteriaVerifier } from "./remote-verification.js";
 
 // =============================================================================
@@ -85,6 +94,8 @@ export interface RemoteMissionExecutorOptions {
 	timeoutMs?: number;
 	heartbeatMs?: number;
 	now?: () => number;
+	/** Observer for actual remote execution and retry events; excludes polling. */
+	eventObserver?: (event: RemoteTransportEvent) => void;
 }
 
 interface ActiveMission {
@@ -97,6 +108,7 @@ interface ActiveMission {
 	startedAtMs: number;
 	finishedAtMs?: number;
 	controller: AbortController;
+	correlation: MissionExecutionCorrelation;
 	handle: import("./remote-transport.js").RemoteExecutionHandle;
 	cancelled: boolean;
 }
@@ -128,6 +140,7 @@ export class RemoteMissionExecutor implements MissionExecutor {
 	private readonly _timeoutMs?: number;
 	private readonly _heartbeatMs?: number;
 	private readonly _now: () => number;
+	private readonly _eventObserver?: (event: RemoteTransportEvent) => void;
 	private readonly _active = new Map<string, ActiveMission>();
 	private readonly _launchedIds = new Set<string>();
 
@@ -149,6 +162,7 @@ export class RemoteMissionExecutor implements MissionExecutor {
 		this._timeoutMs = options.timeoutMs;
 		this._heartbeatMs = options.heartbeatMs;
 		this._now = options.now ?? (() => Date.now());
+		this._eventObserver = options.eventObserver;
 	}
 
 	async launch(request: MissionRequest, options: MissionLaunchOptions = {}): Promise<MissionHandle> {
@@ -157,8 +171,21 @@ export class RemoteMissionExecutor implements MissionExecutor {
 			throw new Error(`Invalid MissionRequest: ${validation.errors.join(", ")}`);
 		}
 
-		const executionId = this._executionIdFactory(request);
+		const executionId = options.executionId ?? this._executionIdFactory(request);
 		const launchId = this._launchIdFactory();
+		const correlation: MissionExecutionCorrelation = {
+			missionId: request.missionId,
+			assignmentId: options.assignmentId,
+			attemptId: options.attemptId,
+			executionId,
+			sessionId: options.sessionId ?? request.childSessionId,
+		};
+		this._emitEvent({
+			eventId: `${request.missionId}:${executionId}:connected`,
+			type: "connected",
+			atMs: this._now(),
+			payload: { correlation },
+		});
 
 		if (this._launchedIds.has(executionId)) {
 			throw new RemoteExecutionError(
@@ -225,6 +252,20 @@ export class RemoteMissionExecutor implements MissionExecutor {
 				admissionTunnel: this._admission
 					? { localPort: this._admission.localPort, remotePort: this._admission.remotePort }
 					: undefined,
+				correlation,
+				callbacks: {
+					onFrame: (frame) =>
+						this._emitEvent({
+							type: "frame",
+							atMs: this._now(),
+							payload: {
+								eventId: `${request.missionId}:${executionId}:frame:${frame.type}`,
+								correlation,
+								frame,
+							},
+						}),
+					onEvent: (event) => this._emitEvent(event),
+				},
 			},
 			{ signal: controller.signal },
 		);
@@ -238,6 +279,7 @@ export class RemoteMissionExecutor implements MissionExecutor {
 			tracker,
 			startedAtMs: this._now(),
 			controller,
+			correlation,
 			handle,
 			cancelled: false,
 		};
@@ -265,6 +307,12 @@ export class RemoteMissionExecutor implements MissionExecutor {
 		let raw: import("./remote-transport.js").RemoteTransportOutcome | undefined;
 		try {
 			raw = await active.handle.outcomePromise;
+			if (raw.errorCode) {
+				const knownCode: RemoteExecutionError["code"] = raw.errorCode as RemoteExecutionError["code"];
+				throw new RemoteExecutionError(knownCode, `remote transport error: ${raw.errorCode}`, {
+					executionId: active.executionId,
+				});
+			}
 			outcome = {
 				exitCode: raw.exitCode,
 				stdout: raw.stdout,
@@ -275,6 +323,34 @@ export class RemoteMissionExecutor implements MissionExecutor {
 			active.finishedAtMs = this._now();
 		} catch (error) {
 			active.finishedAtMs = this._now();
+			const remoteCode = error instanceof RemoteExecutionError ? error.code : undefined;
+			if (
+				remoteCode &&
+				[
+					"REMOTE_TARGET_UNAVAILABLE",
+					"REMOTE_CONNECT_TIMEOUT",
+					"REMOTE_EXECUTION_LOST",
+					"REMOTE_HEARTBEAT_TIMEOUT",
+				].includes(remoteCode)
+			) {
+				this._emitEvent({
+					type: "transport_error",
+					eventId: `${active.request.missionId}:${active.executionId}:transport_error`,
+					atMs: active.finishedAtMs,
+					payload: {
+						eventId: `${active.request.missionId}:${active.executionId}:transport_error`,
+						errorCode: remoteCode,
+						reason: error instanceof Error ? error.message : String(error),
+						correlation: {
+							missionId: active.request.missionId,
+							assignmentId: active.correlation.assignmentId,
+							attemptId: active.correlation.attemptId,
+							executionId: active.executionId,
+							sessionId: active.correlation.sessionId,
+						},
+					},
+				});
+			}
 			// A structured transport failure (duplicate/launch/lost/timeout) is a
 			// hard executor failure, never a fabricated success.
 			const diagnostics = this._diagnostics(undefined);
@@ -334,6 +410,17 @@ export class RemoteMissionExecutor implements MissionExecutor {
 			await active.handle.cancel(reason);
 		} catch {
 			// Best-effort; the fenced terminal write remains the authority.
+		}
+	}
+
+	private _emitEvent(event: Omit<RemoteTransportEvent, "eventId"> & { eventId?: string }): void {
+		try {
+			this._eventObserver?.({
+				...event,
+				eventId: event.eventId ?? `remote:${event.type}:${event.atMs}`,
+			});
+		} catch {
+			// Observers are telemetry only and never alter execution authority.
 		}
 	}
 

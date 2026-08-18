@@ -33,6 +33,8 @@ import { getAgentDir } from "../../config.js";
 import type { AgentSession } from "../agent-session.js";
 import { AuthStorage } from "../auth-storage.js";
 import { defaultChildSessionDir } from "../durable-child-session/index.js";
+import { governancePolicyFromEnv, resolveGovernanceModel } from "../governance/evaluator.js";
+import type { GovernanceService } from "../governance/service.js";
 import { ModelRegistry } from "../model-registry.js";
 import { createAgentSession } from "../sdk.js";
 import { SessionManager } from "../session-manager.js";
@@ -74,6 +76,8 @@ export interface InProcessMissionOutcome extends ExecutorOutcome {
 export type InProcessMissionRunner = (
 	request: MissionRequest,
 	signal?: AbortSignal,
+	executionId?: string,
+	correlation?: { assignmentId?: string; sessionId?: string },
 ) => Promise<InProcessMissionOutcome>;
 
 // =============================================================================
@@ -165,6 +169,8 @@ export function createInProcessMissionRunner(options: {
 	/** Existing durable session resolved by the worker for this child. */
 	sessionManager?: SessionManager;
 	streamFn?: StreamFn;
+	/** Durable Governance observer for actual model transitions. */
+	governance?: GovernanceService;
 }): InProcessMissionRunner {
 	const cwd = options.cwd ?? process.cwd();
 	const agentDir = options.agentDir ?? getAgentDir();
@@ -173,16 +179,21 @@ export function createInProcessMissionRunner(options: {
 	const sessionDir = options.sessionDir ?? defaultChildSessionDir(agentDir);
 	const resolvedSessionManager = options.sessionManager;
 
-	return async (request, signal) => {
+	return async (request, signal, executionId, correlation) => {
 		if (signal?.aborted) return { exitCode: null, cancelled: true };
 
 		const policy = request.modelPolicy;
 		if (!policy)
 			throw new Error(`MISSION_MODEL_POLICY_REQUIRED: mission ${request.missionId} declares no model policy`);
-		const model: Model<any> | undefined = modelRegistry.find(policy.provider, policy.model);
+		const governancePolicy = governancePolicyFromEnv();
+		const resolvedPolicy = resolveGovernanceModel(governancePolicy, policy);
+		const model: Model<any> | undefined = modelRegistry.find(
+			resolvedPolicy.selected.provider,
+			resolvedPolicy.selected.model,
+		);
 		if (!model)
 			throw new Error(
-				`MISSION_MODEL_UNAVAILABLE: ${policy.provider}/${policy.model} is not registered in the model registry`,
+				`MISSION_MODEL_UNAVAILABLE: ${resolvedPolicy.selected.provider}/${resolvedPolicy.selected.model} is not registered in the model registry`,
 			);
 
 		const missionCwd = request.workspaceScope?.cwd ?? cwd;
@@ -211,6 +222,9 @@ export function createInProcessMissionRunner(options: {
 				tools: toolsForRequest(request, missionCwd),
 				sessionManager,
 				streamFn: options.streamFn,
+				missionId: request.missionId,
+				assignmentId: correlation?.assignmentId ?? (request.context?.assignmentId as string | undefined),
+				executionId,
 			});
 			session = created.session;
 			await created.session.prompt(buildInProcessMissionPrompt(request), { expandPromptTemplates: false });
@@ -300,7 +314,7 @@ export class InProcessMissionExecutor implements MissionExecutor {
 			throw new Error(`Invalid MissionRequest: ${validation.errors.join(", ")}`);
 		}
 
-		const executionId = this._executionIdFactory(request);
+		const executionId = options.executionId ?? this._executionIdFactory(request);
 		const controller = new AbortController();
 		if (options.signal) {
 			if (options.signal.aborted) controller.abort();
@@ -317,7 +331,10 @@ export class InProcessMissionExecutor implements MissionExecutor {
 			tracker,
 			startedAtMs: Date.now(),
 			controller,
-			outcomePromise: this._run(request, controller.signal),
+			outcomePromise: this._run(request, controller.signal, executionId, {
+				assignmentId: options.assignmentId,
+				sessionId: options.sessionId ?? request.childSessionId,
+			}),
 			cancelled: false,
 		};
 		this._active.set(request.missionId, active);
@@ -382,10 +399,15 @@ export class InProcessMissionExecutor implements MissionExecutor {
 		await this._cancelActive(active, reason);
 	}
 
-	private _run(request: MissionRequest, signal: AbortSignal): Promise<InProcessMissionOutcome> {
+	private _run(
+		request: MissionRequest,
+		signal: AbortSignal,
+		executionId: string,
+		correlation: { assignmentId?: string; sessionId?: string },
+	): Promise<InProcessMissionOutcome> {
 		// A failing runner (session creation, model resolution, stream error)
 		// is a launch failure, never an unhandled rejection.
-		return this._runner(request, signal).catch((error) => ({
+		return this._runner(request, signal, executionId, correlation).catch((error) => ({
 			exitCode: null,
 			launchError: error instanceof Error ? error.message : String(error),
 		}));

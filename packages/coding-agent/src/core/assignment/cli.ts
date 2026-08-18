@@ -371,7 +371,12 @@ async function startViaControl(
 					launchArgs.push("--tools", request.capabilities.join(","));
 				}
 				launchArgs.push(resumePrompt);
-				return { command, args: launchArgs, cwd: request.workspaceScope?.cwd ?? process.cwd() };
+				return {
+					command,
+					args: launchArgs,
+					cwd: request.workspaceScope?.cwd ?? process.cwd(),
+					env: { JENSEN_MISSION_ID: request.missionId, JENSEN_ASSIGNMENT_ID: assignmentId },
+				};
 			},
 		},
 	);

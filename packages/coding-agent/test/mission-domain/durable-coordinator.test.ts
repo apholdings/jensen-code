@@ -27,6 +27,7 @@ import {
 	type DurableMissionSaveOptions,
 	type DurableMissionSaveResult,
 	type DurableMissionStore,
+	type MissionExecutionEvent,
 	type MissionExecutionOutcome,
 	type MissionExecutor,
 	type MissionHandle,
@@ -44,10 +45,12 @@ interface PlannedOutcome {
 class CountingExecutor implements MissionExecutor {
 	readonly executorId = "test";
 	launchCount = 0;
+	launchOptions: Array<Parameters<MissionExecutor["launch"]>[1]> = [];
 	outcomes: PlannedOutcome[] = [];
 	private next = 0;
 
-	async launch(request: MissionRequest): Promise<MissionHandle> {
+	async launch(request: MissionRequest, options?: Parameters<MissionExecutor["launch"]>[1]): Promise<MissionHandle> {
+		this.launchOptions.push(options);
 		this.launchCount += 1;
 		const executionId = `exec_test_${this.launchCount}`;
 		return createMissionHandle({
@@ -255,6 +258,34 @@ describe("TEST D — resume creates a new execution attempt", () => {
 		expect(resumed.transitions.map((t) => t.to)).toContain("INTERRUPTED");
 		expect(resumed.transitions.map((t) => t.to)).toContain("QUEUED");
 		expect(resumed.transitions.map((t) => t.to)).toContain("LAUNCHING");
+	});
+});
+
+describe("execution observer correlation", () => {
+	it("emits deterministic attempt/execution events without recovery polling", async () => {
+		const executor = new CountingExecutor();
+		executor.outcomes.push({ state: "PARTIAL", executionOutcome: "COMPLETED" });
+		const events: MissionExecutionEvent[] = [];
+		const coordinator = new DurableMissionCoordinator(new FileDurableMissionStore({ root }), executor, {
+			now: () => 100,
+			attemptIdFactory: () => "attempt_fixed",
+			leaseIdFactory: () => "lease_fixed",
+			assignmentId: "assignment_fixed",
+			executionObserver: { onEvent: (event) => events.push(event) },
+		});
+		await coordinator.createMission(request("mission_events"));
+		await coordinator.resume("mission_events");
+		expect(executor.launchOptions[0]).toMatchObject({
+			attemptId: "attempt_fixed",
+			assignmentId: "assignment_fixed",
+		});
+		expect(events.map((event) => event.eventId)).toEqual([
+			"mission_events:attempt_fixed:attempt_started",
+			"mission_events:attempt_fixed:execution_launch_started",
+			"mission_events:attempt_fixed:exec_test_1:execution_started",
+			"mission_events:attempt_fixed:exec_test_1:terminal",
+		]);
+		expect(events.every((event) => event.correlation.missionId === "mission_events")).toBe(true);
 	});
 });
 

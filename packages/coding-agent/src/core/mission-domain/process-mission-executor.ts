@@ -221,7 +221,7 @@ export class ProcessMissionExecutor implements MissionExecutor {
 			throw new Error(`Invalid MissionRequest: ${validation.errors.join(", ")}`);
 		}
 
-		const executionId = this._executionIdFactory(request);
+		const executionId = options.executionId ?? this._executionIdFactory(request);
 		const controller = new AbortController();
 		if (options.signal) {
 			if (options.signal.aborted) controller.abort();

@@ -73,6 +73,7 @@ export {
 	type TurnEndEvent,
 	type TurnStartEvent,
 } from "./extensions/index.js";
+export * from "./governance/index.js";
 export {
 	buildStructuredMemoryCompareData,
 	buildStructuredMemoryHistoryData,

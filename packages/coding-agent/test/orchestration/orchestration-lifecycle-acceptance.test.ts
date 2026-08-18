@@ -8,6 +8,7 @@ import { FileAssignmentStore } from "../../src/core/assignment/index.js";
 import { FileDurableMissionStore } from "../../src/core/mission-durable/index.js";
 import { createFileOrchestrationStore } from "../../src/core/orchestration/index.js";
 import { FileSchedulerStore } from "../../src/core/scheduler/index.js";
+import { terminateDetached, waitForChildExit } from "../utils/detached-process.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "../../../../");
@@ -29,6 +30,7 @@ function spawnFixture(root: string, operation: string, ...args: string[]): Child
 		{
 			cwd: PACKAGE_ROOT,
 			stdio: ["ignore", "pipe", "pipe"],
+			detached: process.platform !== "win32",
 		},
 	);
 	let stdout = "";
@@ -39,9 +41,8 @@ function spawnFixture(root: string, operation: string, ...args: string[]): Child
 	child.stderr.on("data", (data: Buffer) => {
 		stderr += data.toString();
 	});
-	const exit = new Promise<{ code: number | null; signal: string | null }>((resolve) => {
-		child.on("exit", (code, signal) => resolve({ code, signal }));
-	});
+	activeChildren.add(child);
+	const exit = waitForChildExit(child, 15_000);
 	return {
 		get stdout() {
 			return stdout;
@@ -65,11 +66,18 @@ async function waitFor(condition: () => boolean, timeoutMs: number, label: strin
 
 async function successfulFixture(root: string, operation: string, ...args: string[]): Promise<Record<string, unknown>> {
 	const child = spawnFixture(root, operation, ...args);
-	const result = await child.exit;
-	expect(result.code, `${operation} stderr: ${child.stderr}`).toBe(0);
-	const line = child.stdout.trim().split("\n").filter(Boolean).at(-1);
-	if (!line) throw new Error(`${operation} produced no JSON output; stderr: ${child.stderr}`);
-	return JSON.parse(line) as Record<string, unknown>;
+	try {
+		const result = await child.exit;
+		expect(result.code, `${operation} stderr: ${child.stderr}`).toBe(0);
+		const line = child.stdout.trim().split("\n").filter(Boolean).at(-1);
+		if (!line) throw new Error(`${operation} produced no JSON output; stderr: ${child.stderr}`);
+		return JSON.parse(line) as Record<string, unknown>;
+	} finally {
+		if (activeChildren.has(child.process)) {
+			await terminateDetached(child.process);
+			activeChildren.delete(child.process);
+		}
+	}
 }
 
 function rootFixture(): string {
@@ -77,9 +85,22 @@ function rootFixture(): string {
 }
 
 let root: string;
+const activeChildren = new Set<ChildProcess>();
 
-afterEach(() => {
+afterEach(async () => {
+	const results = await Promise.allSettled(
+		[...activeChildren].map(async (child) => {
+			await terminateDetached(child);
+			activeChildren.delete(child);
+		}),
+	);
+	const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
 	if (root) rmSync(root, { recursive: true, force: true });
+	if (failures.length > 0)
+		throw new AggregateError(
+			failures.map((failure) => failure.reason),
+			"child cleanup failed",
+		);
 });
 
 describe("parent orchestration lifecycle acceptance", () => {
@@ -88,10 +109,20 @@ describe("parent orchestration lifecycle acceptance", () => {
 		await successfulFixture(root, "start");
 
 		const crashed = spawnFixture(root, "crash");
-		await waitFor(() => existsSync(path.join(root, "crash-started")), 30_000, "crash execution marker");
-		crashed.process.kill("SIGKILL");
-		const crashedResult = await crashed.exit;
-		expect(crashedResult.signal).toBe("SIGKILL");
+		try {
+			await waitFor(() => existsSync(path.join(root, "crash-started")), 30_000, "crash execution marker");
+			const crashedResult = await terminateDetached(crashed.process, {
+				signal: "SIGKILL",
+				gracefulTimeoutMs: 100,
+				forceTimeoutMs: 1000,
+			});
+			expect(crashedResult.signal).toBe("SIGKILL");
+		} finally {
+			if (activeChildren.has(crashed.process)) {
+				await terminateDetached(crashed.process, { signal: "SIGKILL" });
+				activeChildren.delete(crashed.process);
+			}
+		}
 
 		await new Promise((resolve) => setTimeout(resolve, 600));
 		const recovered = await successfulFixture(root, "recover");
@@ -125,7 +156,6 @@ describe("parent orchestration lifecycle acceptance", () => {
 		if (child.status === "ok") {
 			expect(child.record.attempts).toHaveLength(1);
 			expect(child.record.attempts[0]).toMatchObject({
-				executionId: "exec_gpt_luna_acceptance",
 				endReason: "INTERRUPTED",
 			});
 			expect(child.record.result).toBeUndefined();
@@ -157,7 +187,6 @@ describe("parent orchestration lifecycle acceptance", () => {
 			operation: "execute",
 			missionState: "SUCCEEDED",
 			childMissionId: "mission_orch_orch_acceptance_write-result",
-			executionId: "exec_gpt_luna_acceptance",
 		});
 
 		const missions = new FileDurableMissionStore({ root: path.join(root, "missions") });
@@ -194,7 +223,7 @@ describe("parent orchestration lifecycle acceptance", () => {
 				completionDecision: "accepted",
 			});
 			expect(child.record.attempts).toHaveLength(1);
-			expect(child.record.attempts[0]?.executionId).toBe("exec_gpt_luna_acceptance");
+			expect(child.record.attempts[0]?.executionId).toMatch(/^exec_/u);
 			expect(child.record.request.childSessionId).toBe("child_orch_orch_acceptance_write-result");
 		}
 	});

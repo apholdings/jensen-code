@@ -18,6 +18,8 @@ import {
 } from "./context-runtime/index.js";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
 import type { ExtensionRunner, LoadExtensionsResult, ToolDefinition } from "./extensions/index.js";
+import { governancePolicyFromEnv } from "./governance/evaluator.js";
+import { GovernanceService } from "./governance/service.js";
 import { convertToLlm } from "./messages.js";
 import { ModelRegistry } from "./model-registry.js";
 import { findInitialModel } from "./model-resolver.js";
@@ -119,6 +121,10 @@ export interface CreateAgentSessionOptions {
 	 * provider stream.
 	 */
 	streamFn?: StreamFn;
+	/** Structured runtime correlation for durable mission governance. */
+	missionId?: string;
+	assignmentId?: string;
+	executionId?: string;
 }
 
 /** Result from createAgentSession */
@@ -419,8 +425,13 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			})
 		: undefined;
 
+	const governance = options.missionId ? new GovernanceService({ policy: governancePolicyFromEnv() }) : undefined;
 	const sharedInference = resolveSharedInferenceRuntime({
 		sessionId: sessionManager.getSessionId(),
+		missionId: options.missionId ?? process.env.JENSEN_MISSION_ID,
+		assignmentId: options.assignmentId ?? process.env.JENSEN_ASSIGNMENT_ID,
+		executionId: options.executionId ?? process.env.JENSEN_EXECUTION_ID,
+		governance,
 	});
 
 	agent = new Agent({
@@ -525,6 +536,45 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		contextGovernor,
 	});
 	const extensionsResult = resourceLoader.getExtensions();
+	if (governance && options.missionId) {
+		const seenToolCalls = new Set<string>();
+		let turnSequence = 0;
+		let retrySequence = 0;
+		session.subscribe((event) => {
+			void (async () => {
+				if (event.type === "turn_end") {
+					turnSequence += 1;
+					await governance.consume(options.missionId!, {
+						eventId: `${sessionManager.getSessionId()}:turn:${turnSequence}`,
+						scope: "session",
+						resource: "turns",
+						amount: 1,
+						atMs: Date.now(),
+					});
+				} else if (event.type === "tool_execution_start" && !seenToolCalls.has(event.toolCallId)) {
+					seenToolCalls.add(event.toolCallId);
+					await governance.consume(options.missionId!, {
+						eventId: `${sessionManager.getSessionId()}:tool:${event.toolCallId}`,
+						scope: "session",
+						resource: "toolCalls",
+						amount: 1,
+						atMs: Date.now(),
+					});
+				} else if (event.type === "auto_retry_start") {
+					retrySequence += 1;
+					await governance.recordRetry(
+						options.missionId!,
+						`${sessionManager.getSessionId()}:provider-retry:${retrySequence}`,
+						"provider",
+						Date.now(),
+					);
+				}
+			})().catch(() => {
+				// Governance failures are surfaced by the governed stream/admission path;
+				// event observers never create an unhandled session rejection.
+			});
+		});
+	}
 
 	// Bind the governor's checkpoint provider to the session's durable-projection
 	// checkpoint so a rollover rehydrates operational state across the SAME mission.

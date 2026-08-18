@@ -144,7 +144,7 @@ export interface BuildRemoteAssignedExecutorOptions {
  * dir and the durable child-session path.
  */
 export function buildRemoteAssignedExecutor(options: BuildRemoteAssignedExecutorOptions): BuildAssignedExecutor {
-	return ({ record, sessionManager, childSessionId }) => {
+	return ({ record, sessionManager, childSessionId, assignmentId }) => {
 		return buildRemoteChildResumeExecutor({
 			record,
 			childSessionId,
@@ -194,6 +194,8 @@ export function buildRemoteAssignedExecutor(options: BuildRemoteAssignedExecutor
 						JENSEN_CODE_CODING_AGENT_DIR: agentDir,
 						PI_CODING_AGENT_DIR: agentDir,
 						JENSEN_MISSION_ID: request.missionId,
+						JENSEN_ASSIGNMENT_ID: assignmentId,
+						JENSEN_SESSION_ID: sessionId,
 						...(request.orchestration?.priority !== undefined
 							? { JENSEN_INFERENCE_PRIORITY: String(request.orchestration.priority) }
 							: {}),

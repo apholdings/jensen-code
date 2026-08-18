@@ -530,6 +530,12 @@ export class SshRemoteExecutionTransport implements RemoteExecutionTransport, Re
 		}
 
 		const start = Date.now();
+		spec.callbacks?.onEvent?.({
+			eventId: `${spec.executionId}:${spec.launchId}:launch_started`,
+			type: "connected",
+			atMs: start,
+			payload: { correlation: spec.correlation },
+		});
 		const sshOptions = spec.admissionTunnel
 			? ["-R", `${spec.admissionTunnel.remotePort}:127.0.0.1:${spec.admissionTunnel.localPort}`]
 			: undefined;
@@ -601,6 +607,12 @@ export class SshRemoteExecutionTransport implements RemoteExecutionTransport, Re
 			if (!frame) continue;
 			seenTypes.add(frame.type);
 			lastFrameAtMs = Date.now();
+			spec.callbacks?.onEvent?.({
+				eventId: `${spec.executionId}:${spec.launchId}:frame:${frame.type}`,
+				type: "frame",
+				atMs: lastFrameAtMs,
+				payload: { correlation: spec.correlation, frame: { type: frame.type, payload: frame.payload } },
+			});
 			this._applyFrame(frame.type, frame.payload, {
 				onStarted: (p) => {
 					started = true;
@@ -635,6 +647,12 @@ export class SshRemoteExecutionTransport implements RemoteExecutionTransport, Re
 			});
 		}
 		if (ssh.launchError) {
+			spec.callbacks?.onEvent?.({
+				eventId: `${spec.executionId}:${spec.launchId}:transport_error`,
+				type: "transport_error",
+				atMs: Date.now(),
+				payload: { correlation: spec.correlation, errorCode: "REMOTE_TARGET_UNAVAILABLE" },
+			});
 			throw new RemoteExecutionError("REMOTE_TARGET_UNAVAILABLE", ssh.launchError, {
 				executionId: spec.executionId,
 			});
@@ -653,6 +671,17 @@ export class SshRemoteExecutionTransport implements RemoteExecutionTransport, Re
 		}
 		if (!seenTypes.has("REMOTE_EXIT")) {
 			// Transport closed without a terminal result: not success.
+			spec.callbacks?.onEvent?.({
+				eventId: `${spec.executionId}:${spec.launchId}:remote_retry:1`,
+				type: "transport_error",
+				atMs: Date.now(),
+				payload: {
+					correlation: spec.correlation,
+					retryClass: "remote_execution",
+					retryIndex: 1,
+					reason: "transport closed without terminal result",
+				},
+			});
 			throw new RemoteExecutionError("REMOTE_EXECUTION_LOST", "transport closed without terminal result", {
 				executionId: spec.executionId,
 			});

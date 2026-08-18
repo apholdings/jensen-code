@@ -77,6 +77,9 @@ export {
 	type InProcessMissionVerifierInput,
 } from "./in-process-mission-executor.js";
 export {
+	type MissionExecutionCorrelation,
+	type MissionExecutionEvent,
+	type MissionExecutionObserver,
 	MissionExecutionService,
 	type MissionExecutor,
 	type MissionLaunchOptions,

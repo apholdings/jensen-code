@@ -8,6 +8,7 @@
  * executor.
  */
 
+import type { MissionExecutionCorrelation } from "../mission-domain/mission-executor.js";
 import type { RemoteExecutionTarget, RemoteTargetHealth } from "./remote-target-types.js";
 
 // =============================================================================
@@ -32,6 +33,8 @@ export interface RemoteLaunchSpec {
 	remoteTargetId: string;
 	/** Fencing identity carried for correlation; the durable authority stays central. */
 	fencing?: { leaseId: string; fencingToken: number };
+	/** Stable mission/assignment/attempt/session attribution for remote events. */
+	correlation?: MissionExecutionCorrelation;
 	/** Remote temp root for the execution-scoped workspace (already resolved). */
 	workspaceDir: string;
 	/** The remote agent directory to materialise (models.json, child-sessions, ...). */
@@ -54,6 +57,7 @@ export interface RemoteLaunchSpec {
 	/** Optional framing/adapter callback hooks for tests and observability. */
 	callbacks?: {
 		onFrame?: (frame: { type: string; payload: unknown }) => void;
+		onEvent?: (event: RemoteTransportEvent) => void;
 	};
 	/**
 	 * Optional reverse port-forward for the duration of the remote child
@@ -70,6 +74,7 @@ export interface RemoteLaunchSpec {
 // =============================================================================
 
 export interface RemoteTransportEvent {
+	eventId: string;
 	type:
 		| "connected"
 		| "launch_acknowledged"

@@ -51,7 +51,12 @@ import {
 	isExecutionLeaseActive,
 	newExecutorOwnerId,
 } from "./execution-lease.js";
-import type { MissionExecutor, MissionLaunchOptions } from "./mission-executor.js";
+import type {
+	MissionExecutionEvent,
+	MissionExecutionObserver,
+	MissionExecutor,
+	MissionLaunchOptions,
+} from "./mission-executor.js";
 import type { MissionHandle } from "./mission-handle.js";
 import type { MissionRequest } from "./mission-request.js";
 import { validateMissionRequest } from "./mission-request.js";
@@ -81,6 +86,10 @@ export interface DurableMissionCoordinatorOptions {
 	renewalSafetyMarginMs?: number;
 	/** Injectable timer scheduler for deterministic heartbeat tests. */
 	heartbeatScheduler?: HeartbeatScheduler;
+	/** Assignment identity used for execution/Governance attribution. */
+	assignmentId?: string;
+	/** Observer for actual attempt/execution lifecycle events; recovery/polling is excluded. */
+	executionObserver?: MissionExecutionObserver;
 }
 
 export interface DurableRecoveryReport {
@@ -155,6 +164,8 @@ export class DurableMissionCoordinator {
 	private readonly _leaseIdFactory: () => string;
 	private readonly _heartbeatTiming: ResolvedHeartbeatTiming;
 	private readonly _heartbeatScheduler: HeartbeatScheduler;
+	private readonly _executionObserver?: MissionExecutionObserver;
+	private readonly _assignmentId?: string;
 	private readonly _heartbeats = new Map<string, ExecutionHeartbeat>();
 	private readonly _activeExecutions = new Map<string, ActiveExecution>();
 
@@ -172,6 +183,8 @@ export class DurableMissionCoordinator {
 			renewalSafetyMarginMs: options.renewalSafetyMarginMs,
 		});
 		this._heartbeatScheduler = options.heartbeatScheduler ?? defaultHeartbeatScheduler;
+		this._executionObserver = options.executionObserver;
+		this._assignmentId = options.assignmentId;
 	}
 
 	/** The underlying persistence port (exposed for tests and load paths). */
@@ -588,6 +601,7 @@ export class DurableMissionCoordinator {
 	async resume(missionId: string, options: MissionLaunchOptions = {}): Promise<DurableMissionRecord> {
 		const { record: queued, lease } = await this.acquireOwnership(missionId);
 		const proof: ExecutionLeaseProof = { leaseId: lease.leaseId, fencingToken: lease.fencingToken };
+		const attemptNumber = queued.attempts.length + 1;
 		let record = queued;
 
 		// Combine the caller's cancellation signal with the authority-loss signal
@@ -620,6 +634,35 @@ export class DurableMissionCoordinator {
 			// survives durably and restart reconciliation marks it interrupted.
 			const attemptId = this._attemptIdFactory();
 			const launchAtMs = this._now();
+			const correlation = {
+				missionId: record.missionId,
+				assignmentId: this._assignmentId ?? record.missionId,
+				attemptId,
+				sessionId: record.request.childSessionId,
+			};
+			this._emitExecutionEvent({
+				type: "attempt_started",
+				eventId: `${record.missionId}:${attemptId}:attempt_started`,
+				atMs: launchAtMs,
+				correlation,
+			});
+			if (attemptNumber > 1) {
+				this._emitExecutionEvent({
+					type: "execution_retry",
+					eventId: `${record.missionId}:${attemptId}:execution_retry:${attemptNumber - 1}`,
+					atMs: launchAtMs,
+					retryClass: "execution",
+					retryIndex: attemptNumber - 1,
+					reason: "explicit resume after prior execution attempt",
+					correlation,
+				});
+			}
+			this._emitExecutionEvent({
+				type: "execution_launch_started",
+				eventId: `${record.missionId}:${attemptId}:execution_launch_started`,
+				atMs: launchAtMs,
+				correlation,
+			});
 			let next = this._withTransition(record, "LAUNCHING", {
 				reason: "launch initiated",
 				attemptId,
@@ -637,11 +680,23 @@ export class DurableMissionCoordinator {
 			try {
 				handle = await executor.launch(record.request, {
 					signal,
+					attemptId,
+					attemptNumber,
+					assignmentId: this._assignmentId ?? record.missionId,
+					sessionId: record.request.childSessionId,
 					fencing: { leaseId: lease.leaseId, fencingToken: lease.fencingToken },
 				});
 				activeExecution.handle = handle;
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
+				this._emitExecutionEvent({
+					type: "execution_failed",
+					eventId: `${record.missionId}:${attemptId}:execution_failed`,
+					atMs: this._now(),
+					correlation,
+					state: "FAILED",
+					executionOutcome: "CRASHED",
+				});
 				const failed = await this._commitFenced(
 					record,
 					this._failLaunch(record, attemptId, message, launchAtMs),
@@ -652,6 +707,12 @@ export class DurableMissionCoordinator {
 			}
 
 			const executionId = handle.executionId;
+			this._emitExecutionEvent({
+				type: "execution_started",
+				eventId: `${record.missionId}:${attemptId}:${executionId}:execution_started`,
+				atMs: this._now(),
+				correlation: { ...correlation, executionId },
+			});
 			next = this._withTransition(record, "RUNNING", {
 				reason: "executor launched",
 				executionId,
@@ -676,6 +737,14 @@ export class DurableMissionCoordinator {
 			// result, never write a terminal record: the fence (or the lease
 			// expiry + recovery path) remains the authority.
 			if (authorityLostInfo) {
+				this._emitExecutionEvent({
+					type: "execution_failed",
+					eventId: `${record.missionId}:${attemptId}:${executionId}:execution_failed`,
+					atMs: this._now(),
+					correlation: { ...correlation, executionId },
+					state: "FAILED",
+					executionOutcome: "CRASHED",
+				});
 				throw new ExecutionAuthorityLostError(authorityLostInfo);
 			}
 
@@ -702,6 +771,19 @@ export class DurableMissionCoordinator {
 			};
 
 			const terminal = await this._commitFenced(record, next, lease);
+			this._emitExecutionEvent({
+				type:
+					result.state === "CANCELLED"
+						? "execution_cancelled"
+						: result.state === "FAILED" || result.state === "CRASHED" || result.state === "TIMED_OUT"
+							? "execution_failed"
+							: "execution_completed",
+				eventId: `${record.missionId}:${attemptId}:${executionId}:terminal`,
+				atMs: result.finishedAtMs,
+				correlation: { ...correlation, executionId },
+				state: result.state,
+				executionOutcome: result.executionOutcome,
+			});
 			completed = true;
 			return terminal;
 		} finally {
@@ -769,6 +851,14 @@ export class DurableMissionCoordinator {
 	// =========================================================================
 	// Internals
 	// =========================================================================
+
+	private _emitExecutionEvent(event: MissionExecutionEvent): void {
+		try {
+			this._executionObserver?.onEvent(event);
+		} catch {
+			// Observers are telemetry only and never alter execution authority.
+		}
+	}
 
 	private _buildHeartbeat(
 		missionId: string,

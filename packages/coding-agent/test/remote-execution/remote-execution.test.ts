@@ -297,6 +297,44 @@ describe("RemoteMissionExecutor", () => {
 		expect(result.success).toBe(false);
 	});
 
+	it("emits stable remote retry correlation for transport loss", async () => {
+		transport.launchImpl = async () => ({
+			executionId: "exec_test",
+			launchId: "launch_test",
+			outcomePromise: Promise.reject(
+				new RemoteExecutionError("REMOTE_EXECUTION_LOST", "transport closed without terminal result", {}),
+			),
+			cancel: async () => {},
+		});
+		const events: Array<{ eventId: string; type: string; payload?: unknown }> = [];
+		const executor = makeExecutor({ eventObserver: (event) => events.push(event) });
+		const handle = await executor.launch(request({ missionId: "mission_remote_events" }), {
+			attemptId: "attempt_remote",
+			assignmentId: "assignment_remote",
+			executionId: "exec_test",
+			sessionId: "session_remote",
+		});
+		await executor.awaitResult(handle);
+		expect(events[0]).toMatchObject({
+			eventId: "mission_remote_events:exec_test:connected",
+			type: "connected",
+		});
+		expect(events.find((event) => event.eventId.endsWith(":transport_error"))).toMatchObject({
+			type: "transport_error",
+		});
+		const retry = events.find((event) => event.eventId.endsWith(":transport_error"));
+		expect(retry?.payload).toMatchObject({
+			errorCode: "REMOTE_EXECUTION_LOST",
+			correlation: {
+				missionId: "mission_remote_events",
+				assignmentId: "assignment_remote",
+				attemptId: "attempt_remote",
+				executionId: "exec_test",
+				sessionId: "session_remote",
+			},
+		});
+	});
+
 	it("transport drop after launch (lost terminal) never fabricates success (TEST N)", async () => {
 		transport.launchImpl = async () => ({
 			executionId: "exec_test",

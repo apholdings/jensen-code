@@ -377,8 +377,8 @@ export class SharedInferenceScheduler {
 		resourceId: string,
 		request: InferenceRequestRecord,
 	): Promise<AcquireInferenceOutcome> {
-		const now = this._now();
 		const result = await this._store.mutate<AcquireInferenceOutcome>(resourceId, (ledger) => {
+			const now = this._now();
 			const running = ledger.running.find((r) => r.inferenceRequestId === request.inferenceRequestId);
 			if (running?.lease) {
 				return { kind: "noop", value: { status: "admitted" as const, admitted: this._toAdmitted(running) } };
@@ -442,8 +442,8 @@ export class SharedInferenceScheduler {
 			errorMessage?: string;
 		},
 	): Promise<ReleaseInferenceOutcome> {
-		const now = this._now();
 		const result = await this._store.mutate<ReleaseInferenceOutcome>(admitted.resourceId, (ledger) => {
+			const now = this._now();
 			const index = ledger.running.findIndex((r) => r.inferenceRequestId === admitted.inferenceRequestId);
 			if (index < 0) return { kind: "noop", value: { status: "not_found" as const } };
 			const running = ledger.running[index];
@@ -457,9 +457,9 @@ export class SharedInferenceScheduler {
 
 			const finishedAtMs = now;
 			const queueWaitMs = running.admittedAtMs
-				? running.admittedAtMs - running.enqueuedAtMs
-				: now - running.enqueuedAtMs;
-			const inferenceWallMs = running.admittedAtMs ? finishedAtMs - running.admittedAtMs : 0;
+				? Math.max(0, running.admittedAtMs - running.enqueuedAtMs)
+				: Math.max(0, now - running.enqueuedAtMs);
+			const inferenceWallMs = running.admittedAtMs ? Math.max(0, finishedAtMs - running.admittedAtMs) : 0;
 			const summary = {
 				inferenceRequestId: running.inferenceRequestId,
 				logicalAgentId: running.logicalAgentId,
@@ -597,6 +597,7 @@ export class SharedInferenceScheduler {
 
 			const expiredIds = new Set(expired.map((r) => r.inferenceRequestId));
 			const result = await this._store.mutate<{ reconciled: string[] }>(resourceId, (current) => {
+				const mutationNow = this._now();
 				const stillExpired = current.running.filter(
 					(r) => !r.lease || !isInferenceRequestLeaseActive(r.lease, now),
 				);
@@ -613,9 +614,11 @@ export class SharedInferenceScheduler {
 					enqueuedAtMs: r.enqueuedAtMs,
 					state: "INTERRUPTED" as const,
 					admittedAtMs: r.admittedAtMs,
-					finishedAtMs: now,
-					queueWaitMs: r.admittedAtMs ? r.admittedAtMs - r.enqueuedAtMs : now - r.enqueuedAtMs,
-					inferenceWallMs: r.admittedAtMs ? now - r.admittedAtMs : 0,
+					finishedAtMs: mutationNow,
+					queueWaitMs: r.admittedAtMs
+						? Math.max(0, r.admittedAtMs - r.enqueuedAtMs)
+						: Math.max(0, mutationNow - r.enqueuedAtMs),
+					inferenceWallMs: r.admittedAtMs ? Math.max(0, mutationNow - r.admittedAtMs) : 0,
 				}));
 
 				let next: InferenceResourceLedger = {
@@ -623,10 +626,10 @@ export class SharedInferenceScheduler {
 					running: current.running.filter((r) => !idsToExpire.has(r.inferenceRequestId)),
 					history: [...history, ...current.history].slice(0, 1000),
 					interruptedCount: current.interruptedCount + stillExpired.length,
-					updatedAtMs: now,
+					updatedAtMs: mutationNow,
 					revision: current.revision + 1,
 				};
-				next = this._promoteQueued(next, now);
+				next = this._promoteQueued(next, mutationNow);
 				return { kind: "write", next, value: { reconciled: stillExpired.map((r) => r.inferenceRequestId) } };
 			});
 

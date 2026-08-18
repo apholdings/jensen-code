@@ -26,6 +26,7 @@ import { handleEvaluationCommand } from "./core/evaluation/cli.js";
 import { handleExecutorCommand } from "./core/executor-registry/cli.js";
 import { exportFromFile } from "./core/export-html/index.js";
 import type { LoadExtensionsResult } from "./core/extensions/index.js";
+import { handleGovernanceCommand } from "./core/governance/cli.js";
 import { KeybindingsManager } from "./core/keybindings.js";
 import { handleAdaptiveCommand } from "./core/long-horizon/adaptive/cli.js";
 import { handleMcpCommand } from "./core/mcp-foundation/cli.js";
@@ -890,6 +891,10 @@ export async function main(args: string[]) {
 	}
 
 	if (await handleWorkspaceCommand(args)) {
+		return;
+	}
+
+	if (await handleGovernanceCommand(args)) {
 		return;
 	}
 

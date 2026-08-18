@@ -387,6 +387,7 @@ async function resumeViaControl(
 				command,
 				args: launchArgs,
 				cwd: request.workspaceScope?.cwd ?? process.cwd(),
+				env: { JENSEN_MISSION_ID: request.missionId },
 			};
 		},
 	});

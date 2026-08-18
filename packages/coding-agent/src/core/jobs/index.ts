@@ -4,3 +4,4 @@ export { BackgroundJobRegistry } from "./registry.js";
 export * from "./tools.js";
 export { createJobTools } from "./tools.js";
 export type * from "./types.js";
+export type { BackgroundJobOwnership } from "./types.js";
