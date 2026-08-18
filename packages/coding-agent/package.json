@@ -1,7 +1,7 @@
 {
   "name": "@apholdings/jensen-code",
   "title": "Jensen Code",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "description": "Coding agent CLI with read, bash, edit, write tools and session management",
   "type": "module",
   "jensenConfig": {
@@ -45,12 +45,14 @@
     "provenance": true
   },
   "dependencies": {
-    "@apholdings/jensen-agent-core": "2.1.0",
-    "@apholdings/jensen-ai": "2.1.0",
-    "@apholdings/jensen-tui": "2.1.0",
+    "@apholdings/jensen-agent-core": "3.0.0",
+    "@apholdings/jensen-ai": "3.0.0",
+    "@apholdings/jensen-tui": "3.0.0",
     "@mariozechner/jiti": "^2.6.2",
+    "ajv": "^8.17.1",
     "@modelcontextprotocol/client": "^2.0.0",
     "@mozilla/readability": "^0.6.0",
+    "@sinclair/typebox": "^0.34.41",
     "@silvia-odwyer/photon-node": "^0.3.4",
     "chalk": "^5.5.0",
     "chromium-bidi": "1.3.0",

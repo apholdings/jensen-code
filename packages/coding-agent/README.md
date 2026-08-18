@@ -14,7 +14,11 @@
   <a href="https://exe.dev"><img src="docs/images/exy.png" alt="Exy mascot" width="48" /><br />exe.dev</a>
 </p>
 
-Pi is a minimal terminal coding harness. Adapt pi to your workflows, not the other way around, without having to fork and modify pi internals. Extend it with TypeScript [Extensions](#extensions), [Skills](#skills), [Prompt Templates](#prompt-templates), and [Themes](#themes). Put your extensions, skills, prompt templates, and themes in [Pi Packages](#pi-packages) and share them with others via npm or git.
+Jensen Code 3.0.0 is a durable distributed autonomous agent runtime foundation. It retains the interactive coding harness while adding authoritative Missions, restart-safe execution, Scheduler/Assignment/Worker coordination, remote execution, capability routing, modern MCP, shared inference, logical subagents, durable orchestration, verification/completion authority, Governance/Budgets, and Jensen-owned process stewardship.
+
+The persistent daemon/control plane, trusted remote clients, mobile and device capabilities, voice/STT/TTS, and ambient-assistant services are planned for later Jensen 3.x phases; they are not included in this release.
+
+Jensen can be extended with TypeScript [Extensions](#extensions), [Skills](#skills), [Prompt Templates](#prompt-templates), and [Themes](#themes). Put your extensions, skills, prompt templates, and themes in [Pi Packages](#pi-packages) and share them with others via npm or git.
 
 Pi ships with a canonical policy-bound subagent registry and Cavecrew runtime. The `subagent` extension resolves roles, models, tools, budgets, context packets, and output schemas through that registry; Cavecrew runs read-only investigators, a bounded planner, a transactional builder, and a read-only reviewer. User and workspace Markdown prompts cannot broaden runtime policy.
 
@@ -49,9 +53,16 @@ Pi runs in four modes: interactive, print or JSON, RPC for process integration, 
 
 ## Quick Start
 
+Install or upgrade the public CLI with:
+
 ```bash
-npm install -g @apholdings/jensen-code
+npm install -g @apholdings/jensen-code@3.0.0
 ```
+
+Jensen 3.0.0 keeps the default user configuration under `~/.pi/agent` for
+compatibility with existing sessions and provider settings. Mission,
+orchestration, assignment, and Governance stores use their configured durable
+locations; do not copy or edit those stores while a Jensen process owns them.
 
 Authenticate with an API key:
 
@@ -458,17 +469,9 @@ See [docs/rpc.md](docs/rpc.md) for the protocol.
 
 Pi is aggressively extensible so it doesn't have to dictate your workflow. Features that other tools bake in can be built with [extensions](#extensions), [skills](#skills), or installed from third-party [pi packages](#pi-packages). This keeps the core minimal while letting you shape pi to fit how you work.
 
-**No MCP.** Build CLI tools with READMEs (see [Skills](#skills)), or build an extension that adds MCP support. [Why?](https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/)
+Jensen 3.0.0 provides MCP, logical subagents, durable orchestration, explicit Missions, and governed completion through Jensen-owned runtime authorities. These are no longer extension-only concepts.
 
-**No sub-agents.** There's many ways to do this. Spawn pi instances via tmux, or build your own with [extensions](#extensions), or install a package that does it your way.
-
-**No permission popups.** Run in a container, or build your own confirmation flow with [extensions](#extensions) inline with your environment and security requirements.
-
-**No plan mode.** Write plans to files, or build it with [extensions](#extensions), or install a package.
-
-**No built-in to-dos.** They confuse models. Use a TODO.md file, or build your own with [extensions](#extensions).
-
-**No background bash.** Use tmux. Full observability, direct interaction.
+The interactive harness remains extensible and does not provide unrestricted permission popups or background process ownership. Use the documented Mission, Worker, Governance, and process-stewardship paths for durable execution and cleanup.
 
 Read the [blog post](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) for the full rationale.
 
@@ -476,18 +479,23 @@ Read the [blog post](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) 
 
 ## Reliable Agent Runtime
 
-Jensen 2.1.0 adds a **Reliability Kernel**: the model proposes actions and
-completion, while Jensen owns state, execution, evidence, validation, and
-completion. The kernel normalizes model output into a finite set of Jensen-owned
-actions, validates every executable action before execution, records observed
-evidence, runs deterministic verification, and enforces a Completion Gate so a
-model cannot self-certify completion.
+Jensen 3.0.0 includes the Reliability Kernel and the durable distributed runtime
+around it: the model proposes actions and completion, while Jensen owns state,
+execution, evidence, validation, and completion. Durable Missions, the
+Scheduler/Assignment/Worker path, remote execution, capability routing, MCP,
+Shared Inference, orchestration, Governance/Budgets, restart/reconciliation,
+and Jensen-owned process stewardship are available in this release.
+
+The model normalizes output into Jensen-owned actions, validates executable
+actions before execution, records observed evidence, runs deterministic
+verification, and enforces a Completion Gate so a model cannot self-certify
+completion.
 
 **The model proposes completion. Jensen verifies completion.**
 
-### 2.2.0 activation
+### Automatic activation
 
-In 2.2.0 the Reliability Kernel is **automatic** for normal Jensen agent
+In Jensen 3.0.0 the Reliability Kernel is **automatic** for normal Jensen agent
 sessions. Opening Jensen normally means the kernel is active: real tool calls
 flow through reliability hooks, real tool outcomes become authoritative
 evidence, the Completion Gate controls live completion, and mission state
@@ -503,6 +511,19 @@ See [docs/reliable-agent-runtime.md](docs/reliable-agent-runtime.md) for the
 architecture, authority model, lifecycle, and extension points.
 
 ---
+
+## Jensen 3.0 runtime boundary
+
+Jensen 3.0.0 is the distributed autonomous agent runtime foundation. It is
+not a persistent daemon/control plane, mobile assistant, voice assistant,
+IoT platform, public Internet service, or complete cross-platform OS process
+supervisor. Those capabilities are planned for later Jensen 3.x phases.
+
+The 3.0 runtime keeps durable Mission state and session storage authoritative.
+Existing 2.x session/config formats remain readable where their persisted
+schema is supported. Incompatible or corrupted durable state fails closed;
+it is never silently converted into fake success. Review remote-execution,
+shared-inference, and Governance settings before enabling distributed work.
 
 ## Automatic orchestration
 

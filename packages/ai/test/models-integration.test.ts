@@ -10,8 +10,6 @@ const NEW_OPENROUTER_MODELS = [
 	"sakana/sakana-namazu",
 	"upstage/solar-pro4",
 	"~deepseek/deepseek-v4-flash-latest",
-	"bytedance-seed/seed-2-1-turbo",
-	"liquid/lfm-2.5-2.6b:free",
 ] as const;
 
 /** Generic OpenRouter router/special entries that must survive generation. */

@@ -30,7 +30,7 @@ function makeSyntheticCheckout(): string {
 		writeFileSync(path.join(root, "packages", dir, "dist", "index.js"), `// ${dir}\n`);
 		writeFileSync(
 			path.join(root, "packages", dir, "package.json"),
-			JSON.stringify({ name: npmName, version: "2.1.0", type: "module", main: "./dist/index.js" }),
+			JSON.stringify({ name: npmName, version: "3.0.0", type: "module", main: "./dist/index.js" }),
 		);
 	}
 	mkdirSync(path.join(root, "node_modules", "chalk"), { recursive: true });
@@ -68,7 +68,7 @@ describe("buildRuntimeBundle", () => {
 		expect(manifest.runtimeProtocolVersion).toBe(RUNTIME_PROTOCOL_VERSION);
 		expect(manifest.runtimeId).toBe(bundle.runtimeId);
 		expect(manifest.tarballHash).toBe(bundle.tarballHash);
-		expect(manifest.packageVersions["@apholdings/jensen-code"]).toBe("2.1.0");
+		expect(manifest.packageVersions["@apholdings/jensen-code"]).toBe("3.0.0");
 		expect(manifest.workspaceFiles.length).toBeGreaterThan(0);
 		expect(manifest.workspaceFiles.every((f: { sha256: string }) => /^[0-9a-f]{64}$/u.test(f.sha256))).toBe(true);
 
@@ -82,8 +82,8 @@ describe("buildRuntimeBundle", () => {
 		const outA = mkdtempSync(path.join(tmpdir(), "runtime-bundle-a-"));
 		const outB = mkdtempSync(path.join(tmpdir(), "runtime-bundle-b-"));
 
-		const a = await buildRuntimeBundle({ checkoutRoot: checkoutA, outDir: outA, jensenCommit: "c" + "0".repeat(39) });
-		const b = await buildRuntimeBundle({ checkoutRoot: checkoutB, outDir: outB, jensenCommit: "c" + "0".repeat(39) });
+		const a = await buildRuntimeBundle({ checkoutRoot: checkoutA, outDir: outA, jensenCommit: `c${"0".repeat(39)}` });
+		const b = await buildRuntimeBundle({ checkoutRoot: checkoutB, outDir: outB, jensenCommit: `c${"0".repeat(39)}` });
 
 		expect(a.tarballHash).toBe(b.tarballHash);
 		expect(a.runtimeId).toBe(b.runtimeId);

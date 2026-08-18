@@ -1,5 +1,116 @@
 # Changelog
 
+## 3.0.0
+
+### Major Changes
+
+- Jensen 3.0.0 establishes the durable distributed autonomous agent runtime foundation. It adds durable Missions with restart-safe lifecycle and completion authority, Scheduler/Assignment/Worker execution, remote execution and capability routing, modern MCP support, shared-inference admission for local and remote agents, logical subagents, durable orchestration DAGs, and Governance/Budgets with resource-pressure and Jensen-owned process stewardship.
+
+  This release changes the public runtime boundary: execution state is authoritative in Jensen-owned durable stores, model completion is only a candidate until deterministic verification and the Completion Gate accept it, and distributed execution requires explicit mission, assignment, worker, and remote-target configuration. Existing 2.x sessions and provider/model configuration remain readable where their persisted schema is supported; operators should review remote-execution, shared-inference, and governance settings before enabling those capabilities. Invalid or incompatible durable state fails closed rather than being silently converted to success.
+
+  Jensen 3.0.0 does not include the future persistent daemon/control plane, mobile or trusted remote clients, voice/STT/TTS, device capabilities, or ambient-assistant services. Those remain planned for later Jensen 3.x phases.
+
+### Patch Changes
+
+- 6fd00ec: Context Governor production hardening.
+
+  Makes the Context Governor safe against the failure modes that a purely
+  `chars / 4` budget exposed on real long-horizon runs:
+
+  - Tiered, content-class-aware token accounting (CJK/emoji/dense-punctuation/
+    code are never under-counted), with a bounded conservative uplift calibrated
+    from authoritative provider usage that only ever raises estimates.
+  - Durable tool-result virtualization ledger: already-archived results are
+    restored to their virtualized representation across requests, session resume,
+    and process restart instead of reappearing full-sized.
+  - Content-addressed evidence identity reuse: retrieve -> cool -> retrieve
+    cycles collapse back to the original evidence id and never duplicate archive
+    records.
+  - Tool schemas are included in the input estimate; fixed-prefix overflow now
+    fails diagnostically with per-region costs.
+  - `recordOverflow()` is wired into the real provider-boundary recovery path:
+    a provider context overflow tightens an adaptive safety reserve and forces a
+    genuinely smaller, bounded retry.
+  - Reasoning/thinking content is reserved out of the output budget.
+  - Aggressive reduction preserves pinned mission-constraint/checkpoint state.
+  - Opt-in telemetry (`JENSEN_CONTEXT_TELEMETRY`) exposes governor diagnostics,
+    accounting mode, calibration, and overflow/recovery counters.
+
+- 296374a: Durable Child AgentSession Restore.
+
+  Closes the boundary between a durable delegated child mission and a durable
+  child AgentSession. A delegated child no longer executes through the ephemeral
+  `--no-session` path: it acquires a stable `childSessionId` (stored on the
+  immutable MissionRequest) BEFORE external execution, persists its
+  conversation/todo/memory/evidence state through the standard SessionManager,
+  and binds that session to exactly one mission (validated on load, fail-closed).
+
+  An interrupted child remains INTERRUPTED rather than auto-rerunning, and a new
+  `resume-child <MISSION_ID>` command restores the SAME mission + SAME session
+  with a NEW attempt/execution, then continues remaining work from a bounded
+  operational checkpoint (objective, constraints, decisions, completed/pending
+  steps, active files, persisted evidence references) instead of replaying it.
+  Evidence references archived by the Context Governor are now persisted to the
+  session so a resumed child can `retrieve_evidence` for artifacts created before
+  interruption. The DurableMissionStore / Completion Gate remain the sole
+  authority for terminal results; a restored session/checkpoint can never
+  fabricate success.
+
+- baed742: First-Class Mission domain primitives for delegated work.
+
+  Introduces canonical, executor-independent mission primitives
+  (`MissionRequest`, `MissionHandle`, `MissionResult`, and a `MissionState`
+  lifecycle machine) plus a `MissionExecutor` seam with a transitional
+  `ProcessMissionExecutor` adapter. The subagent execution path now derives child
+  mission identity structurally (explicit `parentMissionId` + depth) instead of
+  from PID, classifies outcomes into a structured `MissionResult` (a raw process
+  exit of 0 is never mission `SUCCEEDED`), and reports parallel/chain child
+  outcomes structurally. Reliability `MissionRuntime` / Completion Gate remain the
+  single source of verified success; a `MissionRequest` with deterministic
+  acceptance criteria maps 1:1 into a real `MissionRuntime` contract.
+
+- 4bc8baf: Long-Horizon Context Virtualization.
+
+  Decouples mission horizon from the physical model context window: a
+  provider-independent context capability model (physical/configured window,
+  reserved output, safety reserve, safe input budget), a preflight Context
+  Governor that enforces the hard input budget before every inference, verified
+  iterative compaction that recounts until the request actually fits, and a
+  three-tier memory model (hot working set, warm mission checkpoint, cold
+  evidence archive) with tool-result virtualization and deterministic
+  checkpoint rollover/rehydration. Provider overflow recovery is now bounded and
+  forces progressively stronger reduction instead of a single compact-and-retry.
+  MissionRuntime / Completion Gate remain the sole completion authority; a
+  checkpoint can never fabricate success.
+
+- c58ac4b: Model-Facing Evidence Rehydration.
+
+  Adds a `retrieve_evidence` capability that lets the model page a cold
+  EvidenceArchive artifact back into hot context by its durable evidence id.
+  Retrieval is read-only, bounded (default page cap with a hard maximum), and
+  integrity-verified against the stored content hash (fail-closed on
+  missing/corrupt artifacts). Retrieved content is ordinary untrusted data: it is
+  returned in its archive-scrubbed representation and never carries completion
+  authority. Archived evidence references now survive ContextGovernor rollover via
+  the mission checkpoint, and retrieved-then-re-virtualized content reuses its
+  original evidence id instead of creating duplicate archive records. MissionRuntime
+  / Completion Gate remain the sole completion authority.
+
+- be46f86: Reliability Kernel activation in normal interactive sessions.
+
+  The Reliability Kernel is now authoritative in the real interactive agent path:
+  real tool calls flow through `beforeToolCall`/`afterToolCall` reliability hooks,
+  real tool outcomes become authoritative evidence, the Completion Gate controls
+  live completion (a model "done" is rejected until all acceptance criteria are
+  verified), and mission state persists with the session and restores on
+  `jensen resume <SESSION_ID>`. Adds an `onTurnEnd` agent-loop lifecycle hook.
+
+- Updated dependencies
+- Updated dependencies [be46f86]
+  - @apholdings/jensen-agent-core@3.0.0
+  - @apholdings/jensen-ai@3.0.0
+  - @apholdings/jensen-tui@3.0.0
+
 ## 2.1.0
 
 ### Minor Changes

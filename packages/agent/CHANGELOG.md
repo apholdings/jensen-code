@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.0.0
+
+### Major Changes
+
+- Jensen 3.0.0 establishes the durable distributed autonomous agent runtime foundation. It adds durable Missions with restart-safe lifecycle and completion authority, Scheduler/Assignment/Worker execution, remote execution and capability routing, modern MCP support, shared-inference admission for local and remote agents, logical subagents, durable orchestration DAGs, and Governance/Budgets with resource-pressure and Jensen-owned process stewardship.
+
+  This release changes the public runtime boundary: execution state is authoritative in Jensen-owned durable stores, model completion is only a candidate until deterministic verification and the Completion Gate accept it, and distributed execution requires explicit mission, assignment, worker, and remote-target configuration. Existing 2.x sessions and provider/model configuration remain readable where their persisted schema is supported; operators should review remote-execution, shared-inference, and governance settings before enabling those capabilities. Invalid or incompatible durable state fails closed rather than being silently converted to success.
+
+  Jensen 3.0.0 does not include the future persistent daemon/control plane, mobile or trusted remote clients, voice/STT/TTS, device capabilities, or ambient-assistant services. Those remain planned for later Jensen 3.x phases.
+
+### Patch Changes
+
+- be46f86: Reliability Kernel activation in normal interactive sessions.
+
+  The Reliability Kernel is now authoritative in the real interactive agent path:
+  real tool calls flow through `beforeToolCall`/`afterToolCall` reliability hooks,
+  real tool outcomes become authoritative evidence, the Completion Gate controls
+  live completion (a model "done" is rejected until all acceptance criteria are
+  verified), and mission state persists with the session and restores on
+  `jensen resume <SESSION_ID>`. Adds an `onTurnEnd` agent-loop lifecycle hook.
+
+- Updated dependencies
+  - @apholdings/jensen-ai@3.0.0
+
 ## 2.1.0
 
 ### Minor Changes
